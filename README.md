@@ -1,4 +1,4 @@
-# 🤖 Fetchez-Globato 🌍
+# 🌍 Fetchez-Globato 🤖
 
 **Domo Arigato, Multi-Resolution Globato.**
 
