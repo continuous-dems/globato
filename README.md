@@ -9,7 +9,6 @@
 ### Why Globato?
 
 Building Digital Elevation Models (DEMs) typically involves a "download-then-process" workflow that requires massive storage and directories full of custom scripts.
-You download terabytes of LiDAR, unzip it, convert it, and *then* grid it.
 
 **Globato changes the paradigm.** It acts as a streaming extension to `fetchez`, allowing you to:
 * **Stream, Don't Store:** Process points from remote sources (LiDAR, Multibeam, COGs) on-the-fly without saving raw files to disk.
