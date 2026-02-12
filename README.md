@@ -1,4 +1,4 @@
-# Globato
+# GloBaTo
 
 ***GLObal BAthymetry TOpography***
 
