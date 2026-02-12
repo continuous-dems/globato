@@ -1,0 +1,38 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "globato"
+version = "0.1.0"
+description = "A suite of specialized data processors (Multibeam, Lidar, Raster), etc. for the Fetchez ecosystem."
+readme = "README.md"
+authors = [{ name = "Matthew Love", email = "matthew.love@colorado.edu" }]
+license = { file = "LICENSE" }
+requires-python = ">=3.8"
+keywords = ["geospatial", "fetchez", "multibeam", "lidar", "etl"]
+
+dependencies = [
+    "fetchez>=0.3.3",
+    "transformez",
+    "numpy<2.0.0",
+    "laspy[lazrs,laszip]",
+    "rasterio",
+]
+
+[project.urls]
+Homepage = "https://github.com/ciresdem/globato"
+Repository = "https://github.com/ciresdem/globato"
+
+[project.entry-points."fetchez.plugins"]
+globato = "globato"
+
+[project.scripts]
+globato = "globato.cli:dlim_cli"
+fetchez-index = "globato.cli_index:main"
+
+# --- Build Configuration ---
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["globato*"]
+namespaces = false
