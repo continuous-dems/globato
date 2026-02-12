@@ -23,12 +23,12 @@ Whether you are building a quick 30m regional map or a precision 1m surface, Glo
 
 ### Features
 
-* ** Streaming Gridders:**
+* **Streaming Gridders:**
     * **`simple_stack`**: A lightweight, memory-safe stream for generating standard Z-elevation rasters (weighted mean).
     * **`multi_stack`**: A heavy-duty statistical engine that generates 7-band GeoTIFFs containing Elevation, Weight, Count, Uncertainty, Source Uncertainty, and average X/Y locations for every pixel.
-* ** Provenance Tracking:** Automatically generate bitmask rasters that map exactly which datasets contributed to every pixel in your output.
-* ** Data Readers:**
+* **Provenance Tracking:** Automatically generate bitmask rasters that map exactly which datasets contributed to every pixel in your output.
+* **Data Readers:**
     * **Native BAG Support:** A Bathymetric Attributed Grid reader that handles Variable Resolution (VR).
     * **COG Subsetting:** Windowed fetching for Cloud Optimized GeoTIFFs.
-* ** Modern Architecture:** Built on `rasterio`, `numpy`, and `fetchez`, dropping heavy legacy dependencies for a pure Python experience.
-* ** Declarative Projects:** Define complex, multi-sensor build pipelines in simple `yaml` files.
+* **Modern Architecture:** Built on `rasterio`, `numpy`, and `fetchez`, dropping heavy legacy dependencies for a pure Python experience.
+* **Declarative Projects:** Define complex, multi-sensor build pipelines in simple `yaml` files.
