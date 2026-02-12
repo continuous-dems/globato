@@ -67,12 +67,10 @@ def setup_fetchez(registry_cls):
 #                     "vert_grid": "auto"
 #                 }
 #             },
-#             # 2. Filter (Outliers)
 #             {
 #                 "name": "filter",
 #                 "args": {"method": "outlierz", "threshold": "3.0"}
 #             },
-#             # 3. Grid (Stacker)
 #             {
 #                 "name": "stack",
 #                 "args": {"res": "1s", "mode": "mean", "output": "output_dem.tif"}
