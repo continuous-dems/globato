@@ -14,7 +14,7 @@ Building Digital Elevation Models (DEMs) typically involves a "download-then-pro
 * **Stream, Don't Store:** Process points from remote sources (LiDAR, Multibeam, COGs) on-the-fly without saving raw files to disk.
 * **Harmonize Resolution:** Seamlessly blend high-resolution multibeam with coarse global topography (hence the **M.R.** in *Mr. Globato*).
 * **Standardize Metadata:**
-* **ETC***
+* **ETC**
 
 Whether you are building a quick 30m regional map or a precision 1m surface, Globato keeps your pipeline clean, reproducible, and memory-efficient.
 
