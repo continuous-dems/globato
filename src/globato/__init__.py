@@ -9,7 +9,6 @@ globato
 :license: MIT, see LICENSE for more details.
 """
 
-
 # import the fetchez hook registry
 from fetchez.hooks.registry import HookRegistry
 
