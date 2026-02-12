@@ -32,7 +32,7 @@ Whether you are building a quick 30m regional map or a precision 1m surface, Glo
 * **Modern Architecture:** Built on `rasterio`, `numpy`, and `fetchez`, dropping heavy legacy dependencies for a pure Python experience.
 * **Declarative Projects:** Define complex, multi-sensor build pipelines in simple `yaml` files.
 
-🔌 How Globato Extends Fetchez
+## 🔌 How Globato Extends Fetchez
 
 Globato does not provide a separate CLI tool. Instead, it acts as a plugin suite that injects advanced processing capabilities directly into the fetchez engine.
 
