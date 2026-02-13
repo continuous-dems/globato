@@ -18,6 +18,7 @@ import laspy as lp
 import subprocess
 import json
 
+from fetchez.utils import str_or
 from fetchez.hooks import FetchHook
 
 logger = logging.getLogger(__name__)
@@ -30,15 +31,14 @@ class LASReader:
                  classes='2/29/40', **kwargs):
         
         self.src_fn = src_fn
-        
         try:
-            if isinstance(classes, str):
-                self.classes = [int(x) for x in classes.split('/')]
+            if isinstance(str_or(classes), str):
+                self.classes = [int(x) for x in str(classes).split('/')]
             elif isinstance(classes, (list, tuple)):
                 self.classes = [int(x) for x in classes]
             else:
                 self.classes = []
-        except Exception:
+        except Exception as e:
             self.classes = []
 
             
@@ -73,7 +73,7 @@ class LASReader:
     
     def yield_chunks(self):
         """Yield points from local file using standard laspy."""
-        
+
         try:
             with lp.open(self.src_fn) as lasf:
                 for chunk in lasf.chunk_iterator(2_000_000):

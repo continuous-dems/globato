@@ -116,7 +116,7 @@ class BAGReader(RasterioReader):
             if 'No supergrids' in err_str or 'RESAMPLED_GRID mode not available' in err_str:
                 logger.debug(f'File is standard BAG (not VR): {self.src_fn}')
             else:
-                logger.error(f'Error reading BAG {self.src_fn}: {e}'
+                logger.error(f'Error reading BAG {self.src_fn}: {e}')
                 raise e
 
         # Just open it with rasterio

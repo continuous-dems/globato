@@ -20,7 +20,7 @@ import numpy.lib.recfunctions as rfn
 #from .gdal_proc import GDALReader
 from .rio import RasterioReader
 from .bag import BAGReader
-from .ogr_proc import OGRReader
+#from .ogr_proc import OGRReader
 from .lidar import LASReader
 from .multibeam import MBSReader
 from .xyz import XYZReader

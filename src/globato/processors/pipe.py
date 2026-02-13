@@ -77,9 +77,19 @@ class XYZPrinter(FetchHook):
                     sys.stdout.close()
                 except:
                     pass
-                return entries
+                #return entries
+            except BrokenPipeError:
+                try:
+                    sys.stdout.close()
+                except Exception:
+                    pass
+                #return entries
             except Exception as e:
-                logger.error(f"Error piping XYZ: {e}\n")
+                #logger.error(f"Error piping XYZ: {e}\n")
+                try:
+                    sys.stdout.close()
+                except Exception:
+                    pass
                 
             del entry['stream']
             del entry['stream_type']
