@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 
 """
-globato.processors.fred
+globato.processors.formats.fred
 ~~~~~~~~~~~~~
 
 :copyright: (c) 2010-2026 Regents of the University of Colorado
@@ -23,11 +23,11 @@ logger = logging.getLogger(__name__)
 
 class FredGenerator(FetchHook):
     """Post-Hook: Generates a FRED Index (GeoJSON) of all successful entries.
-    
+
     Usage:
       --hook fred_export:name=my_mission_data
     """
-    
+
     name = "fred_export"
     stage = "post"
     desc = "generate a fred geojson index of the output data"
@@ -39,30 +39,30 @@ class FredGenerator(FetchHook):
             scan (bool): If True, attempts to open files to get precise bounds.
                          If False, uses the Module's requested region (faster).
         """
-        
+
         super().__init__(**kwargs)
         self.index_name = name
         self.output_dir = output_dir or os.getcwd()
         self.scan_files = str(scan).lower() == 'true'
 
-        
+
     def run(self, entries):
         full_path = os.path.join(self.output_dir, self.index_name)
         fred = FRED(full_path, local=True)
-        
+
         count = 0
-        
+
         for mod, entry in entries:
             if entry.get('status', -1) != 0:
                 continue
-                
+
             dst_fn = entry.get('dst_fn')
             if not dst_fn or not os.path.exists(dst_fn):
                 continue
 
             geom = None
             meta = {}
-            
+
             if self.scan_files and hasattr(fred, '_extract_file_metadata'):
                 try:
                     bbox, f_meta = fred._extract_file_metadata(dst_fn)
@@ -98,12 +98,12 @@ class FredGenerator(FetchHook):
                 'HorizontalDatum': meta.get('h_datum'),
                 'VerticalDatum': meta.get('v_datum')
             }
-            
+
             fred.add_survey(geom, **props)
             count += 1
 
         if count > 0:
             fred.save()
             logger.info(f"Generated FRED index '{self.index_name}.geojson' with {count} items.")
-            
+
         return entries

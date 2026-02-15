@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 
 """
-globato.processors.rio
+globato.processors.formats.rio
 ~~~~~~~~~~~~~
 
 Rasterio data parsing
@@ -20,6 +20,7 @@ from fetchez.hooks import FetchHook
 
 logger = logging.getLogger(__name__)
 
+
 class RasterioReader:
     """Streaming Raster Parser using Rasterio."""
 
@@ -28,33 +29,33 @@ class RasterioReader:
         self.band_no = band_no
         self.chunk_size = chunk_size
 
-        
+
     def get_srs(self):
         """Get SRS as WKT."""
-        
+
         try:
             with rasterio.open(self.src_fn) as src:
                 return src.crs.to_wkt() if src.crs else 'EPSG:4326'
         except Exception:
             return 'EPSG:4326'
 
-        
+
     def yield_chunks(self):
         """Yield chunks using Rasterio Windows."""
-        
+
         try:
             with rasterio.open(self.src_fn) as src:
                 ndv = float(src.nodata)
-                height, width = src.shape                
+                height, width = src.shape
                 transform = src.transform
 
                 for y in range(0, height, self.chunk_size):
                     rows = min(self.chunk_size, height - y)
-                    
+
                     for x in range(0, width, self.chunk_size):
                         cols = min(self.chunk_size, width - x)
                         window = Window(x, y, cols, rows)
-                        
+
                         z_data = src.read(self.band_no, window=window)
                         if not np.issubdtype(z_data.dtype, np.floating):
                             z_data = z_data.astype(np.float32)
@@ -66,18 +67,18 @@ class RasterioReader:
 
                         win_transform = src.window_transform(window)
                         xs, ys = rasterio.transform.xy(
-                            win_transform, 
-                            range(rows), 
-                            range(cols), 
+                            win_transform,
+                            range(rows),
+                            range(cols),
                             offset='center' # PixelIsPoint / Center
                         )
-                        
+
                         X, Y = np.meshgrid(xs, ys)
-                        
+
                         flat_z = z_data.flatten()
                         flat_x = X.flatten()
                         flat_y = Y.flatten()
-                        
+
                         valid = ~np.isnan(flat_z)
                         if not np.any(valid): continue
 
@@ -85,7 +86,7 @@ class RasterioReader:
                         flat_u = np.zeros_like(flat_z, dtype=np.float32)
 
                         out_chunk = np.rec.fromarrays(
-                            [flat_x[valid], flat_y[valid], flat_z[valid], flat_w[valid], flat_u[valid]], 
+                            [flat_x[valid], flat_y[valid], flat_z[valid], flat_w[valid], flat_u[valid]],
                             names=['x', 'y', 'z', 'w', 'u']
                         )
 

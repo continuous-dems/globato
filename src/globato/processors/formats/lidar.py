@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 
 """
-globato.processors.lidar
+globato.processors.formats.lidar
 ~~~~~~~~~~~~~
 
 This hook converts lidar to a point stream.
@@ -27,9 +27,9 @@ class LASReader:
     """Process LAS/LAZ lidar files using laspy."""
 
     def __init__(self,
-                 src_fn: str, 
+                 src_fn: str,
                  classes='2/29/40', **kwargs):
-        
+
         self.src_fn = src_fn
         try:
             if isinstance(str_or(classes), str):
@@ -41,10 +41,10 @@ class LASReader:
         except Exception as e:
             self.classes = []
 
-            
+
     def get_srs(self):
         """Attempt to parse EPSG/WKT from LAS Header using laspy."""
-        
+
         try:
             with lp.open(self.src_fn) as lasf:
                 try:
@@ -67,10 +67,10 @@ class LASReader:
                             pass
         except Exception:
             pass
-            
-        return None    
 
-    
+        return None
+
+
     def yield_chunks(self):
         """Yield points from local file using standard laspy."""
 
@@ -86,12 +86,12 @@ class LASReader:
                         points_x = chunk.x
                         points_y = chunk.y
                         points_z = chunk.z
-                    
+
                     if len(points_x) == 0: continue
-                    
+
                     w = np.ones_like(points_z)
                     u = np.zeros_like(points_z)
-                    
+
                     dataset = np.column_stack((points_x, points_y, points_z, w, u))
                     points = np.rec.fromrecords(dataset, names='x, y, z, w, u')
                     yield points
@@ -104,7 +104,7 @@ class LASStream(FetchHook):
     """Process raw las/laz files into XYZ format.
     Updates the entry so downstream tools see the .xyz file, not the .laz.
     """
-    
+
     name = 'las_stream'
     stage = 'file'
     desc = 'stream las data through laspy'
@@ -113,7 +113,7 @@ class LASStream(FetchHook):
         super().__init__(**kwargs)
         self.classes = classes
 
-        
+
     def run(self, entries):
         new_entries = []
         for mod, entry in entries:
@@ -122,7 +122,7 @@ class LASStream(FetchHook):
             if not os.path.exists(src):
                 new_entries.append((mod, entry))
                 continue
-            
+
             # Simple check for LAS/LAZ extension
             if not src.lower().endswith(('.las', '.laz')):
                 new_entries.append((mod, entry))
@@ -136,10 +136,10 @@ class LASStream(FetchHook):
                 entry['stream'] = reader.yield_chunks()
                 entry['stream_type'] = 'xyz_recarray'
                 entry['las_classes'] = self.classes
-                
+
             except Exception as e:
                 logger.error(f"LAS extraction failed for {src}: {e}")
-            
+
             new_entries.append((mod, entry))
-            
+
         return new_entries

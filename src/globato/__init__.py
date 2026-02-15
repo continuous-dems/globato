@@ -12,48 +12,74 @@ globato
 # import the fetchez hook registry
 from fetchez.hooks.registry import HookRegistry
 
-# Import Hooks from processors.
-from .processors.pipe import XYZPrinter
-from .processors.stream_factory import DataStream
-from .processors.provenance import ProvenanceHook
-from .processors.reproject import StreamReproject
-from .processors.pointz import Point2PixelStream
-from .processors.filters import StreamFilter
-from .processors.multi_stack import MultiStackHook
-from .processors.simple_stack import SimpleStack
-from .processors.cog import COGSubset
-from .processors.fred import FredGenerator
+# --- Import Hooks from processors. ---
 
-# Custom fetchez modules
-#from .modules.multibeam import MultibeamXYZ
+# stream factory / formats
+from .processors.formats.stream_factory import DataStream
+from .processors.formats.fred import FredGenerator
+from .processors.cog import COGSubset
+
+# metadata
+from .processors.metadata.provenance import ProvenanceHook
+
+# transforms
+from .processors.transforms.reproject import StreamReproject
+from .processors.transforms.pointz import Point2PixelStream
+
+# filters
+from .processors.filters import StreamFilter
+
+# sinks
+from .processors.sinks.pipe import XYZPrinter
+from .processors.sinks.multi_stack import MultiStackHook
+from .processors.sinks.simple_stack import SimpleStack
+
+# --- Custom fetchez modules ---
+
+# from .modules.multibeam import MultibeamXYZ
 from .modules.gebco import GEBCO_COG
 
 def setup_fetchez(registry_cls):
     """Register All globato capabilities with Fetchez."""
-    
+
     # --- Register Modules  ---
     #registry_cls.register_module('multibeam_xyz', MultibeamXYZ, metadata={'desc': 'Fetch & Convert MB', 'tags': ['multibeam', 'mb', 'xyz', 'bathymetry']})
-    registry_cls.register_module('gebco_cog', GEBCO_COG, metadata={'desc': 'Fetch GEBCO as a COG subset', 'tags': ['gebco', 'bathymetry', 'global', 'tid', 'cog']})
+    registry_cls.register_module(
+        'gebco_cog',
+        GEBCO_COG,
+        metadata={
+            'desc': 'Fetch GEBCO as a COG subset',
+            'tags': ['gebco', 'bathymetry', 'global', 'tid', 'cog']
+        }
+    )
 
-    # --- Register Hooks  ---    
+    # --- Register Hooks  ---
     HookRegistry.register_hook(FredGenerator)
-    
+
     # --- Streams (recarrays) ---
-    HookRegistry.register_hook(XYZPrinter)
+
+    # open stream
     HookRegistry.register_hook(DataStream)
+
+    # metadata
+    HookRegistry.register_hook(ProvenanceHook)
+
+    # transforms
     HookRegistry.register_hook(StreamReproject)
+    HookRegistry.register_hook(Point2PixelStream)
+
+    # filters
     HookRegistry.register_hook(StreamFilter)
 
-    # --- Streams (pointz) ---
-    HookRegistry.register_hook(Point2PixelStream)
+    # sinks
+    HookRegistry.register_hook(XYZPrinter)
     HookRegistry.register_hook(MultiStackHook)
     HookRegistry.register_hook(SimpleStack)
-    HookRegistry.register_hook(ProvenanceHook)
-    
-    
+
+
     # --- Register Presets ---
     #register_multibeam_presets()
-    
+
 # # --- PRESET: MAKE DEM ---
 #     register_global_preset(
 #         name="make-dem",
