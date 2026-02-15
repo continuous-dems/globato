@@ -29,7 +29,7 @@ from fetchez.hooks import FetchHook
 from fetchez.utils import float_or, parse_fmod
 from fetchez import utils
 
-from .pointz import PointPixels
+from ..transforms.pointz import PointPixels
 
 logger = logging.getLogger(__name__)
 

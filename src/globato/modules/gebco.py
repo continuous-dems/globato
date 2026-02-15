@@ -12,28 +12,27 @@ Get gebco as a cog
 """
 
 from fetchez.modules.gebco import GEBCO as CoreGEBCO
-from ..processors.cog import COGSubset
+from ..processors.formats.cog import COGSubset
 
 # Source Cooperative (Alex Leith) - Cloud Optimized GeoTIFFs
 GEBCO_COG_URLS = {
     'grid': 'https://data.source.coop/alexgleith/gebco-2024/GEBCO_2024.tif',
-    'tid': 'https://data.source.coop/alexgleith/gebco-2024/GEBCO_2024_TID.tif', 
+    'tid': 'https://data.source.coop/alexgleith/gebco-2024/GEBCO_2024_TID.tif',
     'sub_ice': 'https://data.source.coop/alexgleith/gebco-2024/GEBCO_2024_sub_ice_topo.tif'
 }
 
 class GEBCO_COG(CoreGEBCO):
-    """Globato Wrapper for GEBCO that uses Cloud Optimized GeoTIFFs 
+    """Globato Wrapper for GEBCO that uses Cloud Optimized GeoTIFFs
     to fetch ONLY the requested region.
     """
-    
+
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self.add_hook(COGSubset())
 
-        
     def run(self):
         """Setup for Cloud Optimized GeoTIFF subsetting."""
-        
+
         url = GEBCO_COG_URLS.get(self.layer)
         if not url:
             logger.error(f"No COG URL available for layer '{self.layer}'.")
@@ -48,6 +47,6 @@ class GEBCO_COG(CoreGEBCO):
         self.add_entry_to_results(
             url=url,
             dst_fn=dst_fn,
-            data_type="raster",        
+            data_type="raster",
             cog=True
         )

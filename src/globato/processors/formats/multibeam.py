@@ -28,7 +28,7 @@ from fetchez.utils import int_or, float_or
 from fetchez.presets import register_global_preset
 from fetchez.presets import register_module_preset
 
-from ..utils import yield_cmd
+from ...utils import yield_cmd
 
 logger = logging.getLogger(__name__)
 

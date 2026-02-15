@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 
 """
-globato.processors.filters
+globato.processors.filters.filters
 ~~~~~~~~~~~~~
 
 pointz filters and hook.
@@ -13,9 +13,10 @@ pointz filters and hook.
 
 import logging
 from fetchez.hooks import FetchHook
-from . import pointz
+from ..transforms import pointz
 
 logger = logging.getLogger(__name__)
+
 
 class StreamFilter(FetchHook):
     """Apply PointZ filters to a data stream.

@@ -21,6 +21,7 @@ from fetchez.hooks import FetchHook
 
 logger = logging.getLogger(__name__)
 
+
 class COGSubset(FetchHook):
     """Intercepts COG entries and performs a smart windowed fetch
     using Rasterio (HTTP Range Requests).
@@ -39,19 +40,22 @@ class COGSubset(FetchHook):
                 src_url = entry['url']
                 dst_fn = entry['dst_fn']
 
-                if not os.path.exists(dst_fn):
-                    if not os.path.exists(os.path.dirname(dst_fn)):
-                        os.makedirs(os.path.dirname(dst_fn))
+                full_dst_path = os.path.join(mod._outdir, entry['dst_fn'])
+                if not os.path.exists(full_dst_path):
+                    out_dir = os.path.dirname(full_dst_path)
+                    if out_dir and not os.path.exists(out_dir):
+                        os.makedirs(out_dir)
+
                     try:
-                        self._fetch_subset(src_url, dst_fn, mod.region)
+                        self._fetch_subset(src_url, full_dst_path, mod.region)
 
                         # Update entry to point to the local subset
                         entry['original_url'] = entry['url']
-                        entry['url'] = f'file://{dst_fn}'
+                        entry['url'] = f'file://{full_dst_path}'
                         entry['status'] = 0
 
                     except Exception as e:
-                        logger.error(f"COG Subset failed for {dst_fn}: {e}")
+                        logger.error(f"COG Subset failed for {full_dst_path}: {e}")
                         pass
 
             new_entries.append((mod, entry))

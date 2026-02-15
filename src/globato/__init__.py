@@ -17,7 +17,7 @@ from fetchez.hooks.registry import HookRegistry
 # stream factory / formats
 from .processors.formats.stream_factory import DataStream
 from .processors.formats.fred import FredGenerator
-from .processors.cog import COGSubset
+from .processors.formats.cog import COGSubset
 
 # metadata
 from .processors.metadata.provenance import ProvenanceHook
@@ -27,7 +27,7 @@ from .processors.transforms.reproject import StreamReproject
 from .processors.transforms.pointz import Point2PixelStream
 
 # filters
-from .processors.filters import StreamFilter
+from .processors.filters.filters import StreamFilter
 
 # sinks
 from .processors.sinks.pipe import XYZPrinter
