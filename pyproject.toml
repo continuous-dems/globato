@@ -31,7 +31,6 @@ Repository = "https://github.com/ciresdem/globato"
 globato = "globato"
 
 [project.scripts]
-#globato = "globato.cli:dlim_cli"
 fetchez-index = "globato.cli_index:main"
 
 # --- Build Configuration ---

@@ -25,10 +25,14 @@ from .processors.metadata.globato_inf import GlobatoInfo
 
 # transforms
 from .processors.transforms.reproject import StreamReproject
-from .processors.transforms.pointz import Point2PixelStream
+from .processors.transforms.point_pixels import Point2PixelStream
 
 # filters
-from .processors.filters.filters import StreamFilter
+from .processors.filters.basic import RangeZ
+from .processors.filters.reference import RasterMask, DiffZ
+from .processors.filters.stats import OutlierZ
+from .processors.filters.thinning import BlockThin
+from .processors.filters.cleaning import DropClass
 
 # sinks
 from .processors.sinks.pipe import XYZPrinter
@@ -71,7 +75,14 @@ def setup_fetchez(registry_cls):
     HookRegistry.register_hook(Point2PixelStream)
 
     # filters
-    HookRegistry.register_hook(StreamFilter)
+    #HookRegistry.register_hook(StreamFilter)
+    HookRegistry.register_hook(RangeZ)
+    HookRegistry.register_hook(RasterMask)
+    HookRegistry.register_hook(DiffZ)
+    HookRegistry.register_hook(OutlierZ)
+    HookRegistry.register_hook(BlockThin)
+    HookRegistry.register_hook(DropClass)
+
 
     # sinks
     HookRegistry.register_hook(XYZPrinter)

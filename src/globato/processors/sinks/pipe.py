@@ -23,7 +23,7 @@ class XYZPrinter(FetchHook):
     """Sink Hook: Prints the XYZ stream to stdout.
     Useful for piping to other tools like GMT, MB-System, or text files.
     If the input stream is 'xyz_recarray', it prints the points,
-    if the input stream is 'pointz_pixels_arrays' it prints the y/x/z pixel locations.
+    if the input stream is 'point_pixels_arrays' it prints the y/x/z pixel locations.
 
     Usage:
       --hook pipe_xyz
