@@ -181,7 +181,7 @@ class PointAccumulator:
 
 class SimpleStack(FetchHook):
     name = "simple_stack"
-    category = "sink"
+    category = "stream sink"
     stage = "file"
 
     def __init__(self, res="1s", output="output.tif", **kwargs):

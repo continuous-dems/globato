@@ -22,14 +22,15 @@ class StreamFilter(FetchHook):
     """Apply PointZ filters to a data stream.
 
     Usage:
-      ... --hook filter:method=outlierz,percentile=95
-      ... --hook filter:method=block_thin,res=10
-      ... --hook filter:method=rangez,min_z=-50,max_z=0
+      --hook filter:method=outlierz,percentile=95
+      --hook filter:method=block_thin,res=10
+      --hook filter:method=rangez,min_z=-50,max_z=0
     """
 
-    name = 'filter'
-    stage = 'file'
-    desc = 'filter a point stream'
+    name = "stream_filter"
+    stage = "file"
+    desc = "filter a point stream"
+    category = "streams"
 
     def __init__(self, method=None, **kwargs):
         super().__init__(**kwargs)
@@ -38,13 +39,13 @@ class StreamFilter(FetchHook):
 
     def run(self, entries):
         for mod, entry in entries:
-            stream = entry.get('stream')
+            stream = entry.get("stream")
             if not stream: continue
 
             filter_obj = self._init_filter(mod.region)
 
             if filter_obj:
-                entry['stream'] = self._apply_filter(stream, filter_obj)
+                entry["stream"] = self._apply_filter(stream, filter_obj)
 
         return entries
 
@@ -60,7 +61,7 @@ class StreamFilter(FetchHook):
                 **self.kwargs
             )
         except Exception as e:
-            logger.error(f'Failed to initialize filter {self.method}: {e}')
+            logger.error(f"Failed to initialize filter {self.method}: {e}")
             return None
 
 

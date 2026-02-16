@@ -32,7 +32,7 @@ class ProvenanceHook(FetchHook):
     """
 
     name = "provenance"
-    category = "sink"
+    category = "stream sink"
     stage = "file"
 
     def __init__(self, res="1s", output="provenance.tif", **kwargs):

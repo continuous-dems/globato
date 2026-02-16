@@ -182,6 +182,7 @@ class DataStream(FetchHook):
 
     name = "stream_data"
     stage = "file"
+    category = "streams"
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)

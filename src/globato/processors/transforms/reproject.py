@@ -35,6 +35,8 @@ class StreamReproject(FetchHook):
 
     name = "stream_reproject"
     stage = "file"
+    desc = "reproject the stream to the desired srs"
+    category = "streams"
 
     def __init__(self, dst_srs, src_srs=None, vert_grid=None, **kwargs):
         super().__init__(**kwargs)

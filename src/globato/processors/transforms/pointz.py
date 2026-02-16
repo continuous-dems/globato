@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 
 """
-globato.processors.filters.pointz
+globato.processors.transforms.pointz
 ~~~~~~~~~~~~~
 
 pointz class to bin point data and a Point Cloud Filtering Engine.
@@ -25,6 +25,7 @@ from scipy.spatial import cKDTree
 from transformez.spatial import TransRegion as Region
 
 logger = logging.getLogger(__name__)
+
 
 # Gridding Helper (From CUDEM)
 class PointPixels:
@@ -280,6 +281,7 @@ class Point2PixelStream(FetchHook):
 
     name = "point2pixel"
     stage = "file"
+    category = "streams"
 
     def __init__(self, x_inc=None, y_inc=None, want_sums=True, **kwargs):
         super().__init__(**kwargs)

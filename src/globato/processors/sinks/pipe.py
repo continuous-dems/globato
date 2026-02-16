@@ -26,12 +26,14 @@ class XYZPrinter(FetchHook):
     if the input stream is 'pointz_pixels_arrays' it prints the y/x/z pixel locations.
 
     Usage:
-      dlim ... --hook pipe_xyz
-      dlim ... --hook pipe_xyz:fmt=%.4f:delimiter=,
+      --hook pipe_xyz
+      --hook pipe_xyz:fmt=%.4f:delimiter=,
     """
 
-    name = "pipe_xyz"
+    name = "stream_pipe_xyz"
     stage = "file"
+    desc = "stream xyz data to stdout"
+    category = "streams"
 
     def __init__(self, fmt='%.6f', delimiter=' ', **kwargs):
         super().__init__(**kwargs)

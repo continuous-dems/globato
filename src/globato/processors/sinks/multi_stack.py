@@ -239,7 +239,7 @@ class MultiStackHook(FetchHook):
     """
 
     name = 'multi_stack'
-    category = 'sink'
+    category = 'stream sink'
     stage = 'file'
 
     def __init__(self, res='1s', output='multi_stack_output.tif', mode='mean', crs=None, **kwargs):
