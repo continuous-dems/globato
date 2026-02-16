@@ -21,6 +21,7 @@ from .processors.formats.cog import COGSubset
 
 # metadata
 from .processors.metadata.provenance import ProvenanceHook
+from .processors.metadata.globato_inf import GlobatoInfo
 
 # transforms
 from .processors.transforms.reproject import StreamReproject
@@ -63,6 +64,7 @@ def setup_fetchez(registry_cls):
 
     # metadata
     HookRegistry.register_hook(ProvenanceHook)
+    HookRegistry.register_hook(GlobatoInfo)
 
     # transforms
     HookRegistry.register_hook(StreamReproject)
