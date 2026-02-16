@@ -17,8 +17,9 @@ import logging
 import numpy as np
 import rasterio
 from rasterio.errors import RasterioIOError
-from .rio import RasterioReader
 from fetchez.utils import float_or
+
+from .rio import RasterioReader
 
 logger = logging.getLogger(__name__)
 

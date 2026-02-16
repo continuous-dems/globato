@@ -13,7 +13,6 @@ This turns files into point streams.
 
 import os
 import logging
-
 import numpy as np
 import numpy.lib.recfunctions as rfn
 
@@ -77,6 +76,7 @@ class StreamFactory:
     def get_stream(src_fn, **kwargs):
         """Returns a generator (yield_chunks) for the given file."""
 
+        logger.info(src_fn)
         if not os.path.exists(src_fn):
             return None
 
@@ -190,13 +190,16 @@ class DataStream(FetchHook):
 
     def run(self, entries):
         for mod, entry in entries:
-            if entry.get('stream'): continue
+            if entry.get('stream'):
+                continue
 
             src = entry.get('dst_fn')
-            if not src: continue
+            if not src:
+                continue
 
             reader = StreamFactory.get_reader(src, **self.reader_kwargs)
-            if not reader: continue
+            if not reader:
+                continue
 
             w = getattr(mod, 'weight', 1.0)
             u = getattr(mod, 'uncertainty', 0.0)

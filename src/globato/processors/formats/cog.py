@@ -36,26 +36,26 @@ class COGSubset(FetchHook):
 
         for mod, entry in entries:
             # Only run if explicitly marked as cog and a region is defined
-            if entry.get('cog') and mod.region:
-                src_url = entry['url']
-                dst_fn = entry['dst_fn']
+            if entry.get("cog") and mod.region:
+                src_url = entry["url"]
+                dst_fn = entry["dst_fn"]
 
-                full_dst_path = os.path.join(mod._outdir, entry['dst_fn'])
-                if not os.path.exists(full_dst_path):
-                    out_dir = os.path.dirname(full_dst_path)
+                #full_dst_path = os.path.join(mod._outdir, entry["dst_fn"])
+                if not os.path.exists(dst_fn):
+                    out_dir = os.path.dirname(dst_fn)
                     if out_dir and not os.path.exists(out_dir):
                         os.makedirs(out_dir)
 
                     try:
-                        self._fetch_subset(src_url, full_dst_path, mod.region)
+                        self._fetch_subset(src_url, dst_fn, mod.region)
 
                         # Update entry to point to the local subset
-                        entry['original_url'] = entry['url']
-                        entry['url'] = f'file://{full_dst_path}'
-                        entry['status'] = 0
+                        entry["original_url"] = entry["url"]
+                        entry["url"] = f"file://{dst_fn}"
+                        entry["status"] = 0
 
                     except Exception as e:
-                        logger.error(f"COG Subset failed for {full_dst_path}: {e}")
+                        logger.error(f"COG Subset failed for {dst_fn}: {e}")
                         pass
 
             new_entries.append((mod, entry))
