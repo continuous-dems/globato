@@ -61,7 +61,7 @@ class XYZPrinter(FetchHook):
                         data = np.column_stack(columns)
                         np.savetxt(sys.stdout, data, fmt=self.fmt, delimiter=self.delimiter)
 
-                elif stream_type == 'pointz_pixels_arrays':
+                elif stream_type == 'point_pixels_arrays':
                     for arrs, srcwin, gt in stream:
 
                         x_vals = arrs['pixel_x'].astype(int)

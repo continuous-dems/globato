@@ -2,7 +2,7 @@
 
 **Domo Arigato, Multi-Resolution Globato.**
 
-> ⚠️ **BETA STATUS:** This project is in active development (v0.1.1).
+> ⚠️ **BETA STATUS:** This project is in active development (v0.1.2).
 
 **Globato** (*Global Bathymetry & Topography*) is the next-generation DEM generation suite for the `fetchez` ecosystem. Originally part of the [CUDEM](https://github.com/ciresdem/cudem) project, Globato unifies data discovery, download, and processing into a single, streaming pipeline.
 

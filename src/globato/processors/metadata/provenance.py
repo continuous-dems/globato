@@ -18,7 +18,7 @@ import numpy as np
 import rasterio
 from fetchez.hooks import FetchHook
 from rasterio.windows import Window
-from ..transforms.pointz import PointPixels
+from ..transforms.point_pixels import PointPixels
 
 logger = logging.getLogger(__name__)
 

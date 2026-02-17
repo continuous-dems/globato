@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "globato"
-version = "0.1.1"
+version = "0.1.2"
 description = "A suite of specialized data processors (Multibeam, Lidar, Raster), etc. for the Fetchez ecosystem."
 readme = "README.md"
 authors = [{ name = "Matthew Love", email = "matthew.love@colorado.edu" }]
