@@ -81,10 +81,16 @@ class RasterMask(FetchHook, RasterSampling):
             if np.any(mask):
                 chunk["classification"][mask] = self.set_class
 
+            logger.info(f"Reclassified {np.count_nonzero(mask)} points using {self.name}")
             yield chunk
 
 class DiffZ(FetchHook, RasterSampling):
     """Filter based on diff from reference raster."""
+
+    name = "diffz"
+    stage = "file"
+    desc = "filter points based on a reference raster residuals"
+    category = "stream-filter"
 
     def __init__(self, raster=None, min_diff=None, max_diff=None, invert=False, **kwargs):
         super().__init__(**kwargs)
@@ -109,7 +115,7 @@ class DiffZ(FetchHook, RasterSampling):
                 chunk = utils.add_field_to_recarray(chunk, "classification", np.uint8, 0)
 
             ref_z = self.sample_raster(self.raster, chunk)
-            diff = chunk['z'] - ref_z
+            diff = chunk["z"] - ref_z
 
             keep = np.ones(len(diff), dtype=bool)
             keep &= ~np.isnan(diff)
@@ -121,4 +127,5 @@ class DiffZ(FetchHook, RasterSampling):
             if np.any(mask):
                 chunk["classification"][mask] = self.set_class
 
+            # logger.info(f"Reclassified {np.count_nonzero(mask)} points using {self.name}")
             yield chunk

@@ -17,6 +17,7 @@ import numpy as np
 import rasterio
 from rasterio.windows import Window
 from fetchez.hooks import FetchHook
+from fetchez.utils import float_or
 
 logger = logging.getLogger(__name__)
 
@@ -45,9 +46,9 @@ class RasterioReader:
 
         try:
             with rasterio.open(self.src_fn) as src:
-                ndv = float(src.nodata)
+                ndv = float_or(src.nodata, -9999)
                 height, width = src.shape
-                transform = src.transform
+                # transform = src.transform
 
                 for y in range(0, height, self.chunk_size):
                     rows = min(self.chunk_size, height - y)
@@ -66,14 +67,27 @@ class RasterioReader:
                         if np.all(np.isnan(z_data)): continue
 
                         win_transform = src.window_transform(window)
-                        xs, ys = rasterio.transform.xy(
+                        xs, _ = rasterio.transform.xy(
+                            win_transform,
+                            [0] * cols,
+                            range(cols),
+                            offset='center'
+                        )
+                        _, ys = rasterio.transform.xy(
                             win_transform,
                             range(rows),
-                            range(cols),
-                            offset='center' # PixelIsPoint / Center
+                            [0] * rows,
+                            offset='center'
                         )
-
                         X, Y = np.meshgrid(xs, ys)
+                        # xs, ys = rasterio.transform.xy(
+                        #     win_transform,
+                        #     range(rows),
+                        #     range(cols),
+                        #     offset='center' # PixelIsPoint / Center
+                        # )
+
+                        # X, Y = np.meshgrid(xs, ys)
 
                         flat_z = z_data.flatten()
                         flat_x = X.flatten()

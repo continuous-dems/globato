@@ -23,50 +23,13 @@ from .bag import BAGReader
 from .lidar import LASReader
 from .multibeam import MBSReader
 from .xyz import XYZReader
+from .gtpc import GTPCReader
+from .schema import ensure_schema
 from transformez.spatial import TransRegion
 
 from fetchez.hooks import FetchHook
 
 logger = logging.getLogger(__name__)
-
-def apply_metadata(chunk, module_weight=1.0, module_unc=0.0):
-    """Ensure chunk has 'w' and 'u' fields, merging module-level defaults."""
-
-    if chunk is None or len(chunk) == 0:
-        return chunk
-
-    if not isinstance(chunk, np.ndarray):
-        return chunk
-
-    names = chunk.dtype.names
-    if not names: return chunk
-
-    new_fields = {}
-
-    if 'w' not in names:
-        new_fields['w'] = np.full(len(chunk), module_weight, dtype=np.float32)
-
-    if 'u' not in names:
-        new_fields['u'] = np.full(len(chunk), module_unc, dtype=np.float32)
-
-    if new_fields:
-        chunk = rfn.append_fields(
-            chunk,
-            names=list(new_fields.keys()),
-            data=list(new_fields.values()),
-            usemask=False,
-            asrecarray=True
-        )
-
-    if 'w' in names:
-        chunk['w'] *= module_weight
-
-    if 'u' in names:
-        # sqrt(point_u^2 + module_u^2)
-        if module_unc > 0:
-            chunk['u'] = np.sqrt(np.square(chunk['u']) + np.square(module_unc))
-
-    return chunk
 
 
 class StreamFactory:
@@ -107,6 +70,9 @@ class StreamFactory:
         # Multibeam (MB-System)
         if ext in ['.fbt']:
             return MBSReader(src_fn, **kwargs).yield_chunks()
+
+        if ext == '.gtpc':
+            return GTPCReader(src_fn, **kwargs).yield_chunks()
 
         # If unknown extension, try to open with GDAL.
         try:
@@ -158,6 +124,9 @@ class StreamFactory:
         if ext in ['.fbt']:
             return MBSReader(src_fn, **kwargs)
 
+        if ext == '.gtpc':
+            return GTPCReader(src_fn, **kwargs)
+
         # If unknown extension, try to open with GDAL.
         try:
             from osgeo import gdal
@@ -183,6 +152,7 @@ class DataStream(FetchHook):
     name = "stream_data"
     stage = "file"
     category = "streams"
+    priority = 40
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -212,13 +182,7 @@ class DataStream(FetchHook):
                     entry['src_srs'] = reader.get_srs() or 'EPSG:4326'
 
                 #entry['stream'] = stream
-                entry['stream'] = self._inject_metadata(raw_stream, w, u)
+                entry['stream'] = ensure_schema(raw_stream, module_weight=w, module_unc=u)
                 entry['stream_type'] = 'xyz_recarray'
 
         return entries
-
-    def _inject_metadata(self, stream, w, u):
-        """Generator wrapper to apply metadata to every chunk."""
-
-        for chunk in stream:
-            yield apply_metadata(chunk, w, u)

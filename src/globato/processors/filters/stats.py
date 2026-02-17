@@ -13,42 +13,107 @@ import logging
 import numpy as np
 from fetchez.hooks import FetchHook
 from fetchez import utils
+from .base import GlobatoFilter
 
 logger = logging.getLogger(__name__)
 
 
-class OutlierZ(FetchHook):
-    """Statistical Outlier Removal (Z-Score/Percentile)."""
+class OutlierZ(GlobatoFilter):
+    """Statistical Outlier Removal (Z-Score/Percentile).
 
-    def __init__(self, threshold=3.0, set_class=7, **kwargs):
+    threshold=3
+    set_class=7
+    """
+
+    name = "outlierz"
+    desc = "filter outliers based on percentile"
+
+    def __init__(self, threshold=3.0, **kwargs):
         super().__init__(**kwargs)
         self.threshold = float_or(threshold, 3.0)
-        self.set_class = set_class
 
-    def run(self, entries):
-        for mod, entry in entries:
-            stream = entry.get("stream")
-            if not stream: continue
+    def filter_chunk(self, chunk):
+        z = self.chunk['z']
+        if len(z) < 3:
+            return None
 
-            entry["stream"] = self._process_stream(stream)
-        return entries
+        mean = np.mean(z)
+        std = np.std(z)
+        if std == 0:
+            return None
 
-    def _process_stream(self, stream):
-        for chunk in stream:
-            if "classification" not in chunk.dtype.names:
-                chunk = utils.add_field_to_recarray(chunk, "classification", np.uint8, 0)
+        z_score = np.abs((z - mean) / std)
+        return z_score > self.threshold
 
-            z = self.chunk['z']
-            if len(z) < 3: continue
 
-            mean = np.mean(z)
-            std = np.std(z)
+class CoplanarZ(GlobatoFilter):
+    """Filter points that deviate from a locally fitted plane.
+    Useful for removing noise from generally flat features (roads, water, plains).
+    """
 
-            if std == 0: continue
+    def __init__(self, radius=10, threshold=0.5, min_neighbors=3, **kwargs):
+        super().__init__(**kwargs)
+        self.radius = utils.float_or(radius, 10)
+        self.threshold = utils.float_or(threshold, 0.5)
+        self.min_neighbors = utils.int_or(min_neighbors, 3)
 
-            z_score = np.abs((z - mean) / std)
-            mask = z_score > self.threshold
-            if np.any(mask):
-                chunk["classification"][mask] = self.set_class
+    def filter_chunk(self, chunk):
+        try:
+            from scipy.spatial import cKDTree
+        except ImportError:
+            logger.error("scipy.spatial.cKDTree required for coplanar filter.")
+            return None
 
-            yield chunk
+        # Build KDTree for efficient neighbor search
+        coords = np.column_stack((chunk['x'], chunk['y']))
+        tree = cKDTree(coords)
+
+        # Query neighbors within radius
+        logger.info(f"Querying neighbors (radius={self.radius})...")
+        indices_list = tree.query_ball_point(coords, self.radius)
+
+        outliers = np.zeros(len(chunk), dtype=bool)
+        z_vals = chunk['z']
+
+        ## Iterate points and fit planes
+        with tqdm(total=len(chunk), desc='Plane Fitting', leave=False) as pbar:
+            for i, neighbors in enumerate(indices_list):
+                pbar.update()
+
+                ## Check neighbor count (including self)
+                if len(neighbors) < self.min_neighbors + 1:
+                    # Treat isolated points as outliers (noise)
+                    outliers[i] = True
+                    continue
+
+                ## Get neighbor coordinates
+                nb_coords = coords[neighbors]
+                nb_z = z_vals[neighbors]
+
+                center_x, center_y = coords[i]
+
+                ## Setup Least Squares: Z = a*X + b*Y + c
+                ## A matrix columns: [x_rel, y_rel, 1]
+                A = np.column_stack((
+                    nb_coords[:, 0] - center_x,
+                    nb_coords[:, 1] - center_y,
+                    np.ones(len(neighbors))
+                ))
+
+                try:
+                    ## Fit plane
+                    ## c (coeffs[2]) is the fitted Z at (0,0) relative coordinates (the query point)
+                    coeffs, residuals, rank, s = np.linalg.lstsq(A, nb_z, rcond=None)
+
+                    fitted_z = coeffs[2] # Intercept at relative (0,0)
+
+                    ## Calculate deviation of the point from the fitted plane
+                    deviation = abs(z_vals[i] - fitted_z)
+
+                    if deviation > self.threshold:
+                        outliers[i] = True
+
+                except np.linalg.LinAlgError:
+                    ## Collinear points or singular matrix -> Outlier
+                    outliers[i] = True
+        return outliers

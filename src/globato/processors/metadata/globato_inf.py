@@ -21,7 +21,7 @@ class GlobatoInfo(FetchHook):
     """
 
     name = "stream_inf"
-    desc = "Generate content-aware .inf metadata (minmax, count, wkt)."
+    desc = "Generate .inf metadata (minmax, count, wkt)."
     stage = "file"
     category = "streams"
 
@@ -69,8 +69,6 @@ class GlobatoInfo(FetchHook):
             self._write_inf(entry, total_pts, minmax)
 
         except Exception as e:
-            # If the stream crashes, we can't write a valid complete .inf
-            # but we should still yield the exception up
             raise e
 
     def _write_inf(self, entry, numpts, minmax):

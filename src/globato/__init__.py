@@ -32,12 +32,15 @@ from .processors.filters.basic import RangeZ
 from .processors.filters.reference import RasterMask, DiffZ
 from .processors.filters.stats import OutlierZ
 from .processors.filters.thinning import BlockThin
+from .processors.filters.thinning import BlockMinMax
+from .processors.filters.rq import ReferenceQuality
 from .processors.filters.cleaning import DropClass
 
 # sinks
 from .processors.sinks.pipe import XYZPrinter
 from .processors.sinks.multi_stack import MultiStackHook
 from .processors.sinks.simple_stack import SimpleStack
+from .processors.sinks.gtpc_writer import WriteGTPC
 
 # --- Custom fetchez modules ---
 
@@ -81,13 +84,15 @@ def setup_fetchez(registry_cls):
     HookRegistry.register_hook(DiffZ)
     HookRegistry.register_hook(OutlierZ)
     HookRegistry.register_hook(BlockThin)
+    HookRegistry.register_hook(BlockMinMax)
+    HookRegistry.register_hook(ReferenceQuality)
     HookRegistry.register_hook(DropClass)
-
 
     # sinks
     HookRegistry.register_hook(XYZPrinter)
     HookRegistry.register_hook(MultiStackHook)
     HookRegistry.register_hook(SimpleStack)
+    HookRegistry.register_hook(WriteGTPC)
 
 
     # --- Register Presets ---

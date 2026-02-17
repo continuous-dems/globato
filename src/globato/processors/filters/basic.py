@@ -15,11 +15,12 @@ import logging
 import numpy as np
 from fetchez.hooks import FetchHook
 from fetchez import utils
+from .base import GlobatoFilter
 
 logger = logging.getLogger(__name__)
 
 
-class RangeZ(FetchHook):
+class RangeZ(GlobatoFilter):
     """Classify points outside a Z range as Noise (or specified class).
     Does NOT remove points; only reclassifies them.
 
@@ -27,34 +28,16 @@ class RangeZ(FetchHook):
     """
 
     name = "range_z"
-    stage = "file"
     desc = "Classify points by Z range"
-    category = "stream-filter"
 
-    def __init__(self, min_z=None, max_z=None, set_class=7, **kwargs):
+    def __init__(self, min_z=None, max_z=None, **kwargs):
         super().__init__(**kwargs)
         self.min_z = utils.float_or(min_z)
         self.max_z = utils.float_or(max_z)
-        self.set_class = int(set_class) # 7 = LAS Noise standard
 
-    def run(self, entries):
-        for mod, entry in entries:
-            stream = entry.get("stream")
-            if not stream: continue
+    def filter_chunk(self, chunk):
+        mask = np.zeros(len(chunk), dtype=bool)
+        if self.min_z is not None: mask |= (chunk["z"] < self.min_z)
+        if self.max_z is not None: mask |= (chunk["z"] > self.max_z)
 
-            entry["stream"] = self._process_stream(stream)
-        return entries
-
-    def _process_stream(self, stream):
-        for chunk in stream:
-            if "classification" not in chunk.dtype.names:
-                chunk = utils.add_field_to_recarray(chunk, "classification", np.uint8, 0)
-
-            mask = np.zeros(len(chunk), dtype=bool)
-            if self.min_z is not None: mask |= (chunk["z"] < self.min_z)
-            if self.max_z is not None: mask |= (chunk["z"] > self.max_z)
-
-            if np.any(mask):
-                chunk["classification"][mask] = self.set_class
-
-            yield chunk
+        return mask

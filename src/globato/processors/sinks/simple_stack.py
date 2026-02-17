@@ -209,7 +209,7 @@ class SimpleStack(FetchHook):
         if not os.path.exists(out_dir) and out_dir:
             os.makedirs(out_dir)
 
-        logger.info(f"Initializing Simple Gridder: {self.output} @ {x_inc},{y_inc}")
+        logger.info(f"Initializing Simple Stack: {self.output} @ {x_inc},{y_inc}")
 
         self._accumulator = PointAccumulator(
             filename=self.output,
@@ -232,26 +232,27 @@ class SimpleStack(FetchHook):
         for mod, entry in entries:
             stream = entry.get('stream')
             if stream:
-                entry['stream'] = self._intercept(stream)
+                entry['stream'] = self._intercept(stream, entry)
 
         return entries
 
-    def _intercept(self, stream):
+    def _intercept(self, stream, entry):
         """Pass-through generator: updates grid, then yields data downstream."""
 
-        #count = 0
+        count = 0
         for chunk in stream:
-            #count += chunk.size
+            count += chunk.size
             if self._accumulator:
                 self._accumulator.add_points(chunk)
             yield chunk
-        #logger.info(f'processed {count} points from ')
+
+        logger.info(f"passed {count} points from {entry['dst_fn']}")
 
 
     def teardown(self):
         """Called by Core after the stream is fully exhausted."""
 
         if self._accumulator:
-            logger.info(f'Finalizing grid: {self.output}')
+            logger.info(f"Finalizing grid: {self.output}")
             self._accumulator.finalize()
             self._accumulator = None
