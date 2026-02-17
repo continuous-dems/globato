@@ -71,6 +71,7 @@ class ReferenceQuality(GlobatoFilter):
         if not getattr(mod, 'region', None): return False
         region = getattr(mod, 'region')
         if not self.ref_fn:
+
             files = self._fetch_reference_files(mod.region)
             if not files:
                 logger.warning("[RQ] No reference data found. Skipping.")
@@ -88,11 +89,12 @@ class ReferenceQuality(GlobatoFilter):
     def _fetch_reference_files(self, region):
         """Downloads reference data and returns list of paths."""
 
-        if os.path.exists(self.ref_source):
+        if os.path.exists(self.ref_source) and os.path.isfile(self.ref_source):
             return [self.ref_source]
 
         logger.info(f"[RQ] Fetching reference data: {self.ref_source}...")
         mod_cls = FetchezRegistry.load_module(self.ref_source)
+
         if not mod_cls:
             return None
 
