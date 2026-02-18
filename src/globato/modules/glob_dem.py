@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 
 """
-globato.processors.formats.best_dem
+globato.processors.formats.glob_dem
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 A "Super-Module" that fetches, processes, and merges the best available DEMs
@@ -45,7 +45,7 @@ class GlobDEM(core.FetchModule):
 
     def __init__(self, res="3s", sources=None, crs="EPSG:4326",
                  blend="mean", fill=True, **kwargs):
-        super().__init__(**kwargs)
+        super().__init__(name="glob_dem", **kwargs)
         self.res_str = res
         self.target_res = utils.str2inc(res)
         self.target_crs = crs
@@ -55,7 +55,7 @@ class GlobDEM(core.FetchModule):
         if sources:
             self.source_list = sources.split(',')
         else:
-            self.source_list = ['copernicus', 'gebco_cog']
+            self.source_list = ['copernicus_clean', 'etopo']
 
     def run(self):
         """Orchestrates the fetch -> merge pipeline.
@@ -67,13 +67,11 @@ class GlobDEM(core.FetchModule):
             return
 
         if not self.region:
-            logger.error("Region required for BestDEM.")
+            logger.error("Region required for GlobDEM.")
             return
 
-        # Fetch Data from Sub-Modules
         downloaded_files = []
 
-        # Buffer region slightly to avoid edge artifacts during resampling
         w, e, s, n = self.region
         pad = self.target_res * 10
         fetch_region = [w - pad, e + pad, s - pad, n + pad]
@@ -86,8 +84,6 @@ class GlobDEM(core.FetchModule):
                 logger.warning(f"Unknown module: {mod_name}")
                 continue
 
-            # Initialize and Run Module
-            # We use a sub-directory to keep things clean
             sub_outdir = os.path.join(self._outdir, "sources", mod_name)
             mod_instance = mod_cls(
                 src_region=fetch_region,
@@ -110,37 +106,27 @@ class GlobDEM(core.FetchModule):
             logger.error("No source data found.")
             return
 
-        # 2. Configure Output Grid
-        # Ensure we snap to resolution
-        res_val = self._parse_res(self.res_str)
+        res_val = utils.str2inc(self.res_str)
 
-        # Calculate Dimensions
         width = int(np.ceil((e - w) / res_val))
         height = int(np.ceil((n - s) / res_val))
 
-        out_fn = os.path.join(self._outdir, f"best_dem_{w}_{s}_{self.res_str}.tif")
+        out_fn = os.path.join(self._outdir, f"glob_dem_{w}_{s}_{self.res_str}.tif")
 
-        # 3. Grid Engine Merge
         logger.info(f"Merging {len(downloaded_files)} files into {width}x{height} grid...")
 
         try:
-            # A. Load & Interpolate (Mosaic)
-            # GridEngine handles reprojection and resampling if needed
             grid_data = GridEngine.load_and_interpolate(
                 downloaded_files,
-                target_region=[w, e, s, n], # Pass raw list, GridEngine handles it
+                target_region=[w, e, s, n],
                 nx=width,
                 ny=height
             )
 
-            # B. Gap Filling (Optional)
             if self.fill_gaps and np.isnan(grid_data).any():
                 logger.info("Filling gaps...")
-                # Use a reasonable decay based on resolution (e.g. fill 50 pixels ~ 1km-5km)
                 grid_data = GridEngine.fill_nans(grid_data, decay_pixels=50)
 
-            # C. Write Output
-            # Ensure directory exists
             if not os.path.exists(self._outdir):
                 os.makedirs(self._outdir)
 
@@ -148,9 +134,6 @@ class GlobDEM(core.FetchModule):
 
             logger.info(f"Generated: {out_fn}")
 
-            # 4. Register Result
-            # We add the generated file as the single result of this module.
-            # This allows downstream hooks (like stream_data) to use it if desired.
             self.add_entry_to_results(
                 url=f"file://{out_fn}",
                 dst_fn=out_fn,
