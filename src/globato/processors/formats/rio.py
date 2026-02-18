@@ -35,8 +35,9 @@ class RasterioReader:
         """Get SRS as WKT."""
 
         try:
-            with rasterio.open(self.src_fn) as src:
-                return src.crs.to_wkt() if src.crs else 'EPSG:4326'
+            with rasterio.Env(CPL_MIN_LOG_LEVEL=rasterio.logging.ERROR):
+                with rasterio.open(self.src_fn) as src:
+                    return src.crs.to_wkt() if src.crs else 'EPSG:4326'
         except Exception:
             return 'EPSG:4326'
 
@@ -45,66 +46,67 @@ class RasterioReader:
         """Yield chunks using Rasterio Windows."""
 
         try:
-            with rasterio.open(self.src_fn) as src:
-                ndv = float_or(src.nodata, -9999)
-                height, width = src.shape
-                # transform = src.transform
+            with rasterio.Env(CPL_MIN_LOG_LEVEL=rasterio.logging.ERROR):
+                with rasterio.open(self.src_fn) as src:
+                    ndv = float_or(src.nodata, -9999)
+                    height, width = src.shape
+                    # transform = src.transform
 
-                for y in range(0, height, self.chunk_size):
-                    rows = min(self.chunk_size, height - y)
+                    for y in range(0, height, self.chunk_size):
+                        rows = min(self.chunk_size, height - y)
 
-                    for x in range(0, width, self.chunk_size):
-                        cols = min(self.chunk_size, width - x)
-                        window = Window(x, y, cols, rows)
+                        for x in range(0, width, self.chunk_size):
+                            cols = min(self.chunk_size, width - x)
+                            window = Window(x, y, cols, rows)
 
-                        z_data = src.read(self.band_no, window=window)
-                        if not np.issubdtype(z_data.dtype, np.floating):
-                            z_data = z_data.astype(np.float32)
+                            z_data = src.read(self.band_no, window=window)
+                            if not np.issubdtype(z_data.dtype, np.floating):
+                                z_data = z_data.astype(np.float32)
 
-                        if ndv is not None:
-                            z_data[z_data == ndv] = np.nan
+                            if ndv is not None:
+                                z_data[z_data == ndv] = np.nan
 
-                        if np.all(np.isnan(z_data)): continue
+                            if np.all(np.isnan(z_data)): continue
 
-                        win_transform = src.window_transform(window)
-                        xs, _ = rasterio.transform.xy(
-                            win_transform,
-                            [0] * cols,
-                            range(cols),
-                            offset='center'
-                        )
-                        _, ys = rasterio.transform.xy(
-                            win_transform,
-                            range(rows),
-                            [0] * rows,
-                            offset='center'
-                        )
-                        X, Y = np.meshgrid(xs, ys)
-                        # xs, ys = rasterio.transform.xy(
-                        #     win_transform,
-                        #     range(rows),
-                        #     range(cols),
-                        #     offset='center' # PixelIsPoint / Center
-                        # )
+                            win_transform = src.window_transform(window)
+                            xs, _ = rasterio.transform.xy(
+                                win_transform,
+                                [0] * cols,
+                                range(cols),
+                                offset='center'
+                            )
+                            _, ys = rasterio.transform.xy(
+                                win_transform,
+                                range(rows),
+                                [0] * rows,
+                                offset='center'
+                            )
+                            X, Y = np.meshgrid(xs, ys)
+                            # xs, ys = rasterio.transform.xy(
+                            #     win_transform,
+                            #     range(rows),
+                            #     range(cols),
+                            #     offset='center' # PixelIsPoint / Center
+                            # )
 
-                        # X, Y = np.meshgrid(xs, ys)
+                            # X, Y = np.meshgrid(xs, ys)
 
-                        flat_z = z_data.flatten()
-                        flat_x = X.flatten()
-                        flat_y = Y.flatten()
+                            flat_z = z_data.flatten()
+                            flat_x = X.flatten()
+                            flat_y = Y.flatten()
 
-                        valid = ~np.isnan(flat_z)
-                        if not np.any(valid): continue
+                            valid = ~np.isnan(flat_z)
+                            if not np.any(valid): continue
 
-                        flat_w = np.ones_like(flat_z, dtype=np.float32)
-                        flat_u = np.zeros_like(flat_z, dtype=np.float32)
+                            flat_w = np.ones_like(flat_z, dtype=np.float32)
+                            flat_u = np.zeros_like(flat_z, dtype=np.float32)
 
-                        out_chunk = np.rec.fromarrays(
-                            [flat_x[valid], flat_y[valid], flat_z[valid], flat_w[valid], flat_u[valid]],
-                            names=['x', 'y', 'z', 'w', 'u']
-                        )
+                            out_chunk = np.rec.fromarrays(
+                                [flat_x[valid], flat_y[valid], flat_z[valid], flat_w[valid], flat_u[valid]],
+                                names=['x', 'y', 'z', 'w', 'u']
+                            )
 
-                        yield out_chunk
+                            yield out_chunk
 
         except Exception as e:
             logger.error(f'Rasterio read failed: {e}')

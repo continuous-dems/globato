@@ -59,7 +59,7 @@ class GlobDEM(core.FetchModule):
         if sources:
             self.source_list = sources.split(',')
         else:
-            self.source_list = ['copernicus_clean', 'etopo']
+            self.source_list = ['copernicus_glob', 'etopo']
 
         w, e, s, n = self.region
         self.out_fn = os.path.join(self._outdir, f"glob_dem_{w}_{s}_{self.res_str}.tif")

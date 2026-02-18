@@ -47,7 +47,7 @@ from .processors.sinks.gtpc_writer import WriteGTPC
 # from .modules.multibeam import MultibeamXYZ
 from .modules.gebco import GEBCO_COG
 from .modules.glob_dem import GlobDEM
-from .modules.sources import CleanCopernicus, CleanFabDEM
+from .modules.sources import GlobCopernicus, GlobFabDEM, GlobMultibeam, GlobBAG
 
 def setup_fetchez(registry_cls):
     """Register All globato capabilities with Fetchez."""
@@ -72,8 +72,8 @@ def setup_fetchez(registry_cls):
         }
     )
     registry_cls.register_module(
-        'copernicus_clean',
-        CleanCopernicus,
+        'copernicus_glob',
+        GlobCopernicus,
         metadata={
             "inherits": "copernicus",
             "desc": "Copernicus Global/European Digital Elevation Models (COP-30/10)",
@@ -81,11 +81,27 @@ def setup_fetchez(registry_cls):
         }
     )
     registry_cls.register_module(
-        'fabdem_clean',
-        CleanFabDEM,
+        'fabdem_glob',
+        GlobFabDEM,
         metadata={
             "inherits": "fabdem",
             "tags": ["fabdem", "dem", "dtm", "copernicus", "global", "30m", "clean", "globato"],
+        }
+    )
+    registry_cls.register_module(
+        'multibeam_glob',
+        GlobMultibeam,
+        metadata={
+            "inherits": "multibeam",
+            "tags": ["bathymetry", "multibeam", "ocean", "sonar", "noaa", "ncei", "globato"],
+        }
+    )
+    registry_cls.register_module(
+        'bag_glob',
+        GlobBAG,
+        metadata={
+            "inherits": "nos_hydro",
+            "tags": ["bathymetry", "hydrography", "nos", "noaa", "bag", "soundings", "globato"],
         }
     )
 

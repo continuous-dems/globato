@@ -96,37 +96,72 @@ class BAGReader(RasterioReader):
 
 
     def yield_chunks(self):
-        """Try opening as VR, fallback to Standard."""
-
         env_opts = {
             'GDAL_IGNORE_BAG_XML_METADATA': 'YES',
-            'OGR_BAG_MIN_VERSION': '1.0'
+            'OGR_BAG_MIN_VERSION': '1.0',
         }
 
-        # Attempt VR (Variable Resolution)
-        vr_opts = {'MODE': 'RESAMPLED_GRID', 'RES_STRATEGY': 'MIN'}
+        is_vr = False
 
-        try:
-            with rasterio.Env(**env_opts):
-                with rasterio.open(self.src_fn, **vr_opts) as src:
-                    # If this succeeds, yield and return
-                    yield from self._process_bag_dataset(src)
-                    return
-
-        except RasterioIOError as e:
-            err_str = str(e)
-            if 'No supergrids' in err_str or 'RESAMPLED_GRID mode not available' in err_str:
-                logger.debug(f'File is standard BAG (not VR): {self.src_fn}')
-            else:
-                logger.error(f'Error reading BAG {self.src_fn}: {e}')
-                raise e
-
-        # Just open it with rasterio
         try:
             with rasterio.Env(**env_opts):
                 with rasterio.open(self.src_fn) as src:
-                    yield from self._process_bag_dataset(src)
+
+                    tags = src.tags(ns='IMAGE_STRUCTURE')
+                    if tags.get('HAS_SUPERGRIDS') == 'TRUE':
+                        is_vr = True
+
+                    if not is_vr:
+                        yield from self._process_bag_dataset(src)
+                        return
 
         except Exception as e:
-            logger.error(f'Failed to read Standard BAG {self.src_fn}: {e}')
+            logger.error(f"Failed to probe BAG {self.src_fn}: {e}")
             return
+
+        if is_vr:
+            logger.debug(f"Detected VR-BAG, re-opening in resampled mode: {self.src_fn}")
+            vr_opts = {'MODE': 'RESAMPLED_GRID', 'RES_STRATEGY': 'MIN'}
+
+            try:
+                with rasterio.Env(**env_opts):
+                    with rasterio.open(self.src_fn, **vr_opts) as src:
+                        yield from self._process_bag_dataset(src)
+            except Exception as e:
+                logger.error(f"Failed to read VR-BAG {self.src_fn}: {e}")
+
+    # def yield_chunks(self):
+    #     """Try opening as VR, fallback to Standard."""
+
+    #     env_opts = {
+    #         'GDAL_IGNORE_BAG_XML_METADATA': 'YES',
+    #         'OGR_BAG_MIN_VERSION': '1.0'
+    #     }
+
+    #     # Attempt VR (Variable Resolution)
+    #     vr_opts = {'MODE': 'RESAMPLED_GRID', 'RES_STRATEGY': 'MIN'}
+
+    #     try:
+    #         with rasterio.Env(**env_opts):
+    #             with rasterio.open(self.src_fn, **vr_opts) as src:
+    #                 # If this succeeds, yield and return
+    #                 yield from self._process_bag_dataset(src)
+    #                 return
+
+    #     except RasterioIOError as e:
+    #         err_str = str(e)
+    #         if 'No supergrids' in err_str or 'RESAMPLED_GRID mode not available' in err_str:
+    #             logger.debug(f'File is standard BAG (not VR): {self.src_fn}')
+    #         else:
+    #             logger.error(f'Error reading BAG {self.src_fn}: {e}')
+    #             raise e
+
+    #     # Just open it with rasterio
+    #     try:
+    #         with rasterio.Env(**env_opts):
+    #             with rasterio.open(self.src_fn) as src:
+    #                 yield from self._process_bag_dataset(src)
+
+    #     except Exception as e:
+    #         logger.error(f'Failed to read Standard BAG {self.src_fn}: {e}')
+    #         return
