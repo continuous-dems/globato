@@ -63,6 +63,8 @@ class CleanFabDEM(BaseFabDEM):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
 
+        self.weight = 1
+
         # Unzip (FABDEM comes as .zip)
         self.add_hook(Unzip())
 
@@ -93,6 +95,7 @@ class CleanCopernicus(BaseCopernicus):
     - Filters out water (Copernicus is often valid over ocean as 0 or noisy).
     """
 
+    self.weight = 1
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
 
