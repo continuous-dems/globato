@@ -23,6 +23,10 @@ import numpy as np
 from fetchez import core, cli, utils, spatial
 from fetchez.registry import FetchezRegistry
 
+from globato.processors.formats.stream_factory import DataStream
+from globato.processors.filters.cleaning import DropClass
+from globato.processors.sinks.simple_stack import SimpleStack
+
 try:
     from transformez.grid_engine import GridEngine, GridWriter
     HAS_GRID_ENGINE = True
@@ -57,6 +61,19 @@ class GlobDEM(core.FetchModule):
         else:
             self.source_list = ['copernicus_clean', 'etopo']
 
+        w, e, s, n = self.region
+        self.out_fn = os.path.join(self._outdir, f"glob_dem_{w}_{s}_{self.res_str}.tif")
+
+        self.add_hook(DataStream())
+        #self.add_hook(DropClass(classes="7"))
+        self.add_hook(
+            SimpleStack(
+                output=self.out_fn,
+                res=res,
+                mode="mean",
+            )
+        )
+
     def run(self):
         """Orchestrates the fetch -> merge pipeline.
         Results in a single entry pointing to the generated GeoTIFF.
@@ -78,6 +95,7 @@ class GlobDEM(core.FetchModule):
 
         logger.info(f"Fetching sources: {', '.join(self.source_list)}")
 
+        initialized_mods = []
         for mod_name in self.source_list:
             mod_cls = FetchezRegistry.load_module(mod_name)
             if not mod_cls:
@@ -90,55 +108,58 @@ class GlobDEM(core.FetchModule):
                 outdir=sub_outdir,
             )
 
-            try:
-                mod_instance.run()
-                core.run_fetchez([mod_instance])
+            #try:
+            mod_instance.run()
+            initialized_mods.append(mod_instance)
 
-                for entry in mod_instance.results:
-                    status = entry.get('status')
-                    if status is not None and status == 0:
-                        downloaded_files.append(entry['dst_fn'])
+        core.run_fetchez(initialized_mods)
+        #     core.run_fetchez([mod_instance])
 
-            except Exception as e:
-                logger.error(f"Failed to fetch {mod_name}: {e}")
+        #     for entry in mod_instance.results:
+        #         status = entry.get('status')
+        #         if status is not None and status == 0:
+        #             downloaded_files.append(entry['dst_fn'])
 
-        if not downloaded_files:
-            logger.error("No source data found.")
-            return
+        # except Exception as e:
+        #     logger.error(f"Failed to fetch {mod_name}: {e}")
 
-        res_val = utils.str2inc(self.res_str)
+        # if not downloaded_files:
+        #     logger.error("No source data found.")
+        #     return
 
-        width = int(np.ceil((e - w) / res_val))
-        height = int(np.ceil((n - s) / res_val))
+        # width = int(np.ceil((e - w) / self.target_res))
+        # height = int(np.ceil((n - s) / self.target_res))
 
-        out_fn = os.path.join(self._outdir, f"glob_dem_{w}_{s}_{self.res_str}.tif")
+        # out_fn = os.path.join(self._outdir, f"glob_dem_{w}_{s}_{self.res_str}.tif")
 
-        logger.info(f"Merging {len(downloaded_files)} files into {width}x{height} grid...")
+        # logger.info(f"Merging {len(downloaded_files)} files into {width}x{height} grid...")
 
-        try:
-            grid_data = GridEngine.load_and_interpolate(
-                downloaded_files,
-                target_region=[w, e, s, n],
-                nx=width,
-                ny=height
-            )
+        # try:
+        #     grid_data = GridEngine.load_and_interpolate(
+        #         downloaded_files,
+        #         target_region=[w, e, s, n],
+        #         nx=width,
+        #         ny=height
+        #     )
 
-            if self.fill_gaps and np.isnan(grid_data).any():
-                logger.info("Filling gaps...")
-                grid_data = GridEngine.fill_nans(grid_data, decay_pixels=50)
+        #     if self.fill_gaps and np.isnan(grid_data).any():
+        #         logger.info("Filling gaps...")
+        #         grid_data = GridEngine.fill_nans(grid_data, decay_pixels=50)
 
-            if not os.path.exists(self._outdir):
-                os.makedirs(self._outdir)
+        #     if not os.path.exists(self._outdir):
+        #         os.makedirs(self._outdir)
 
-            GridWriter.write(out_fn, grid_data, [w, e, s, n])
+        #     GridWriter.write(out_fn, grid_data, [w, e, s, n])
 
-            logger.info(f"Generated: {out_fn}")
+        #     logger.info(f"Generated: {out_fn}")
 
-            self.add_entry_to_results(
-                url=f"file://{out_fn}",
-                dst_fn=out_fn,
-                data_type="raster"
-            )
+        for mod in initialized_mods:
+            for entry in mod.results:
+                self.add_entry_to_results(
+                    url=f"file://{entry['dst_fn']}",
+                    dst_fn=entry['dst_fn'],
+                    data_type="raster"
+                )
 
-        except Exception as e:
-            logger.error(f"Gridding failed: {e}", exc_info=True)
+                #except Exception as e:
+                #    logger.error(f"Gridding failed: {e}", exc_info=True)

@@ -37,7 +37,11 @@ class RangeZ(GlobatoFilter):
 
     def filter_chunk(self, chunk):
         mask = np.zeros(len(chunk), dtype=bool)
-        if self.min_z is not None: mask |= (chunk["z"] < self.min_z)
-        if self.max_z is not None: mask |= (chunk["z"] > self.max_z)
+        if self.min_z is not None:
+            mask |= (chunk["z"] < self.min_z)
 
+        if self.max_z is not None:
+            mask |= (chunk["z"] > self.max_z)
+
+        logger.info(f'filtered {np.count_nonzero(mask)} points')
         return mask

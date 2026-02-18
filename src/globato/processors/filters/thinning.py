@@ -58,7 +58,6 @@ class BlockThin(GlobatoFilter):
             end = start_indices[i+1] if i+1 < len(start_indices) else len(sorted_ids)
             block_indices = sort_idx[start:end]
 
-            # Selection
             if self.mode == 'min':
                 keep_indices.append(block_indices[np.argmin(chunk['z'][block_indices])])
             elif self.mode == 'max':
@@ -67,9 +66,6 @@ class BlockThin(GlobatoFilter):
                 keep_indices.append(block_indices[0])
 
         if self.soft:
-            if "classification" not in chunk.dtype.names:
-                chunk = utils.add_field_to_recarray(chunk, "classification", np.uint8, 0)
-
             mask = np.ones(len(chunk), dtype=bool)
             mask[keep_indices] = False
             return mask
@@ -110,8 +106,6 @@ class BlockMinMax(GlobatoFilter):
         sorted_y = y_idx[sort_order]
 
         # Find Unique Blocks
-        # Identify where the block index changes (flag=True at start of new block)
-        # Prepend True for the first element
         change_mask = np.concatenate(
             ([True], (sorted_x[1:] != sorted_x[:-1]) | (sorted_y[1:] != sorted_y[:-1]))
         )
@@ -123,9 +117,6 @@ class BlockMinMax(GlobatoFilter):
         keep_indices = sort_order[keep_sorted_indices]
 
         if self.soft:
-            if "classification" not in chunk.dtype.names:
-                chunk = utils.add_field_to_recarray(chunk, "classification", np.uint8, 0)
-
             mask = np.ones(len(chunk), dtype=bool)
             mask[keep_indices] = False
             return mask
