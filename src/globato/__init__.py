@@ -46,6 +46,8 @@ from .processors.sinks.gtpc_writer import WriteGTPC
 
 # from .modules.multibeam import MultibeamXYZ
 from .modules.gebco import GEBCO_COG
+from .modules.glob_dem import GlobDEM
+from .modules.sources import CleanCopernicus, CleanFabDEM
 
 def setup_fetchez(registry_cls):
     """Register All globato capabilities with Fetchez."""
@@ -56,8 +58,34 @@ def setup_fetchez(registry_cls):
         'gebco_cog',
         GEBCO_COG,
         metadata={
+            "inherits": "gebco",
             'desc': 'Fetch GEBCO as a COG subset',
             'tags': ['gebco', 'bathymetry', 'global', 'tid', 'cog']
+        }
+    )
+    registry_cls.register_module(
+        'glob_dem',
+        GlobDEM,
+        metadata={
+            'desc': 'Fetch and glob the best available DEMs',
+            'tags': ['gebco', 'bathymetry', 'global', 'etopo', 'globato']
+        }
+    )
+    registry_cls.register_module(
+        'copernicus_clean',
+        CleanCopernicus,
+        metadata={
+            "inherits": "copernicus",
+            "desc": "Copernicus Global/European Digital Elevation Models (COP-30/10)",
+            "tags": ["satellite", "dsm", "radar", "global", "europe", "clean", "globato"],
+        }
+    )
+    registry_cls.register_module(
+        'fabdem_clean',
+        CleanFabDEM,
+        metadata={
+            "inherits": "fabdem",
+            "tags": ["fabdem", "dem", "dtm", "copernicus", "global", "30m", "clean", "globato"],
         }
     )
 

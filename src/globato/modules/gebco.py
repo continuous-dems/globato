@@ -20,7 +20,6 @@ GEBCO_COG_URLS = {
     'tid': 'https://data.source.coop/alexgleith/gebco-2024/GEBCO_2024_TID.tif',
     'sub_ice': 'https://data.source.coop/alexgleith/gebco-2024/GEBCO_2024_sub_ice_topo.tif'
 }
-
 class GEBCO_COG(CoreGEBCO):
     """Globato Wrapper for GEBCO that uses Cloud Optimized GeoTIFFs
     to fetch ONLY the requested region.
