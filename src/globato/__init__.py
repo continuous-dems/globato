@@ -11,6 +11,7 @@ globato
 
 # import the fetchez hook registry
 from fetchez.hooks.registry import HookRegistry
+from fetchez.registry import FetchezRegistry
 
 # --- Import Hooks from processors. ---
 
@@ -141,6 +142,8 @@ def setup_fetchez(registry_cls):
 
     # --- Register Presets ---
     #register_multibeam_presets()
+
+setup_fetchez(FetchezRegistry)
 
 # # --- PRESET: MAKE DEM ---
 #     register_global_preset(

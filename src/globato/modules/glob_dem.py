@@ -113,45 +113,6 @@ class GlobDEM(core.FetchModule):
             initialized_mods.append(mod_instance)
 
         core.run_fetchez(initialized_mods)
-        #     core.run_fetchez([mod_instance])
-
-        #     for entry in mod_instance.results:
-        #         status = entry.get('status')
-        #         if status is not None and status == 0:
-        #             downloaded_files.append(entry['dst_fn'])
-
-        # except Exception as e:
-        #     logger.error(f"Failed to fetch {mod_name}: {e}")
-
-        # if not downloaded_files:
-        #     logger.error("No source data found.")
-        #     return
-
-        # width = int(np.ceil((e - w) / self.target_res))
-        # height = int(np.ceil((n - s) / self.target_res))
-
-        # out_fn = os.path.join(self._outdir, f"glob_dem_{w}_{s}_{self.res_str}.tif")
-
-        # logger.info(f"Merging {len(downloaded_files)} files into {width}x{height} grid...")
-
-        # try:
-        #     grid_data = GridEngine.load_and_interpolate(
-        #         downloaded_files,
-        #         target_region=[w, e, s, n],
-        #         nx=width,
-        #         ny=height
-        #     )
-
-        #     if self.fill_gaps and np.isnan(grid_data).any():
-        #         logger.info("Filling gaps...")
-        #         grid_data = GridEngine.fill_nans(grid_data, decay_pixels=50)
-
-        #     if not os.path.exists(self._outdir):
-        #         os.makedirs(self._outdir)
-
-        #     GridWriter.write(out_fn, grid_data, [w, e, s, n])
-
-        #     logger.info(f"Generated: {out_fn}")
 
         for mod in initialized_mods:
             for entry in mod.results:
