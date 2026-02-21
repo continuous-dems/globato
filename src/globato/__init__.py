@@ -33,24 +33,19 @@ def _auto_register_hooks():
     if not os.path.exists(processors_dir):
         return
 
-    # Walk the directory tree recursively
     for root, dirs, files in os.walk(processors_dir):
-        # Prevent scanning hidden directories (like __pycache__)
         dirs[:] = [d for d in dirs if not d.startswith('_')]
 
         for f in files:
             if f.endswith(".py") and not f.startswith("_"):
-                # Calculate the python module path
                 rel_dir = os.path.relpath(root, current_dir)
                 mod_path = rel_dir.replace(os.sep, '.')
                 mod_name = f[:-3]
 
-                # e.g., 'globato.processors.filters.basic'
                 full_mod_name = f"globato.{mod_path}.{mod_name}"
 
                 try:
                     mod = importlib.import_module(full_mod_name)
-                    # Inspect the file for FetchHook subclasses
                     for name, obj in inspect.getmembers(mod):
                         if (inspect.isclass(obj) and
                             issubclass(obj, FetchHook) and
@@ -59,13 +54,12 @@ def _auto_register_hooks():
                 except Exception as e:
                     logger.warning(f"Failed to auto-load globato hook {full_mod_name}: {e}")
 
+
 def setup_fetchez(registry_cls):
     """Register All globato capabilities with Fetchez."""
 
-    # 1. Auto-discover and register all hooks in globato/processors/
     _auto_register_hooks()
 
-    # 2. Explicitly register Modules (to preserve metadata visibility)
     registry_cls.register_module(
         'gebco_cog',
         GEBCO_COG,
