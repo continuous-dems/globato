@@ -9,52 +9,63 @@ globato
 :license: MIT, see LICENSE for more details.
 """
 
-# import the fetchez hook registry
+import os
+import inspect
+import importlib
+import logging
+
 from fetchez.hooks.registry import HookRegistry
 from fetchez.registry import FetchezRegistry
-
-# --- Import Hooks from processors. ---
-
-# stream factory / formats
-from .processors.formats.stream_factory import DataStream
-from .processors.formats.fred import FredGenerator
-from .processors.formats.cog import COGSubset
-
-# metadata
-from .processors.metadata.provenance import ProvenanceHook, SourceMasks
-from .processors.metadata.globato_inf import GlobatoInfo
-
-# transforms
-from .processors.transforms.reproject import StreamReproject
-from .processors.transforms.point_pixels import Point2PixelStream
-
-# filters
-from .processors.filters.basic import RangeZ, SpatialCrop
-from .processors.filters.reference import RasterMask, DiffZ
-from .processors.filters.stats import OutlierZ
-from .processors.filters.thinning import BlockThin
-from .processors.filters.thinning import BlockMinMax
-from .processors.filters.rq import ReferenceQuality
-from .processors.filters.cleaning import DropClass
-
-# sinks
-from .processors.sinks.pipe import XYZPrinter
-from .processors.sinks.multi_stack import MultiStackHook
-from .processors.sinks.simple_stack import SimpleStack
-from .processors.sinks.gtpc_writer import WriteGTPC
+from fetchez.hooks import FetchHook
 
 # --- Custom fetchez modules ---
-
-# from .modules.multibeam import MultibeamXYZ
 from .modules.gebco import GEBCO_COG
 from .modules.glob_dem import GlobDEM
 from .modules.sources import GlobCopernicus, GlobFabDEM, GlobMultibeam, GlobBAG
 
+logger = logging.getLogger(__name__)
+
+def _auto_register_hooks():
+    """Recursively scan the 'processors' directory and auto-register all FetchHooks."""
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    processors_dir = os.path.join(current_dir, "processors")
+
+    if not os.path.exists(processors_dir):
+        return
+
+    # Walk the directory tree recursively
+    for root, dirs, files in os.walk(processors_dir):
+        # Prevent scanning hidden directories (like __pycache__)
+        dirs[:] = [d for d in dirs if not d.startswith('_')]
+
+        for f in files:
+            if f.endswith(".py") and not f.startswith("_"):
+                # Calculate the python module path
+                rel_dir = os.path.relpath(root, current_dir)
+                mod_path = rel_dir.replace(os.sep, '.')
+                mod_name = f[:-3]
+
+                # e.g., 'globato.processors.filters.basic'
+                full_mod_name = f"globato.{mod_path}.{mod_name}"
+
+                try:
+                    mod = importlib.import_module(full_mod_name)
+                    # Inspect the file for FetchHook subclasses
+                    for name, obj in inspect.getmembers(mod):
+                        if (inspect.isclass(obj) and
+                            issubclass(obj, FetchHook) and
+                            obj is not FetchHook):
+                            HookRegistry.register_hook(obj)
+                except Exception as e:
+                    logger.warning(f"Failed to auto-load globato hook {full_mod_name}: {e}")
+
 def setup_fetchez(registry_cls):
     """Register All globato capabilities with Fetchez."""
 
-    # --- Register Modules  ---
-    #registry_cls.register_module('multibeam_xyz', MultibeamXYZ, metadata={'desc': 'Fetch & Convert MB', 'tags': ['multibeam', 'mb', 'xyz', 'bathymetry']})
+    # 1. Auto-discover and register all hooks in globato/processors/
+    _auto_register_hooks()
+
+    # 2. Explicitly register Modules (to preserve metadata visibility)
     registry_cls.register_module(
         'gebco_cog',
         GEBCO_COG,
@@ -112,76 +123,4 @@ def setup_fetchez(registry_cls):
         }
     )
 
-    # --- Register Hooks  ---
-    HookRegistry.register_hook(FredGenerator)
-
-    # --- Streams (recarrays) ---
-
-    # open stream
-    HookRegistry.register_hook(DataStream)
-
-    # metadata
-    HookRegistry.register_hook(ProvenanceHook)
-    HookRegistry.register_hook(SourceMasks)
-    HookRegistry.register_hook(GlobatoInfo)
-
-    # transforms
-    HookRegistry.register_hook(StreamReproject)
-    HookRegistry.register_hook(Point2PixelStream)
-
-    # filters
-    #HookRegistry.register_hook(StreamFilter)
-    HookRegistry.register_hook(RangeZ)
-    HookRegistry.register_hook(SpatialCrop)
-    HookRegistry.register_hook(RasterMask)
-    HookRegistry.register_hook(DiffZ)
-    HookRegistry.register_hook(OutlierZ)
-    HookRegistry.register_hook(BlockThin)
-    HookRegistry.register_hook(BlockMinMax)
-    HookRegistry.register_hook(ReferenceQuality)
-    HookRegistry.register_hook(DropClass)
-
-    # sinks
-    HookRegistry.register_hook(XYZPrinter)
-    HookRegistry.register_hook(MultiStackHook)
-    HookRegistry.register_hook(SimpleStack)
-    HookRegistry.register_hook(WriteGTPC)
-
-
-    # --- Register Presets ---
-    #register_multibeam_presets()
-
 setup_fetchez(FetchezRegistry)
-
-# # --- PRESET: MAKE DEM ---
-#     register_global_preset(
-#         name="make-dem",
-#         help_text="Download, clean, vertically transform, and grid data into a DEM.",
-#         hooks=[
-#             {
-#                 "name": "stream_reproject",
-#                 "args": {
-#                     "dst_srs": "EPSG:6319+5703", # Standardize to NAVD88?
-#                     "vert_grid": "auto"
-#                 }
-#             },
-#             {
-#                 "name": "filter",
-#                 "args": {"method": "outlierz", "threshold": "3.0"}
-#             },
-#             {
-#                 "name": "stack",
-#                 "args": {"res": "1s", "mode": "mean", "output": "output_dem.tif"}
-#             }
-#         ]
-#     )
-
-#     # --- PRESET: RAW DATA CLEANUP ---
-#     register_global_preset(
-#         name="clean-points",
-#         help_text="Download and clean point cloud (no gridding).",
-#         hooks=[
-#             {"name": "stream_reproject", "args": {"dst_srs": "EPSG:4326"}},
-#             {"name": "filter", "args": {"method": "block_thin", "res": "0.0001"}}
-#         ]
-#     )

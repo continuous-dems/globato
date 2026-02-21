@@ -12,10 +12,12 @@ These ensure data is unzipped, filtered, and ready for merging (GlobDEM).
 import os
 import logging
 import rasterio
+
 from fetchez.registry import FetchezRegistry
-from fetchez.hooks.file_ops import Unzip
 from fetchez.hooks import FetchHook
-from fetchez.hooks.basic import FilenameFilter
+from fetchez.hooks.builtins.file_ops.unzip import Unzip
+from fetchez.hooks.builtins.pipeline.fn_filter import FilenameFilter
+
 from globato.processors.formats.stream_factory import DataStream
 from globato.processors.filters.rq import ReferenceQuality
 from globato.processors.filters.basic import RangeZ

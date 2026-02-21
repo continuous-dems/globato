@@ -13,7 +13,7 @@ requires-python = ">=3.8"
 keywords = ["geospatial", "fetchez", "multibeam", "lidar", "etl"]
 
 dependencies = [
-    "fetchez>=0.3.3",
+    "fetchez>=0.4.2",
     "transformez",
     "numpy<2.0.0",
     "laspy[lazrs,laszip]",
