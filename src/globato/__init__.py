@@ -21,7 +21,7 @@ from .processors.formats.fred import FredGenerator
 from .processors.formats.cog import COGSubset
 
 # metadata
-from .processors.metadata.provenance import ProvenanceHook
+from .processors.metadata.provenance import ProvenanceHook, SourceMasks
 from .processors.metadata.globato_inf import GlobatoInfo
 
 # transforms
@@ -29,7 +29,7 @@ from .processors.transforms.reproject import StreamReproject
 from .processors.transforms.point_pixels import Point2PixelStream
 
 # filters
-from .processors.filters.basic import RangeZ
+from .processors.filters.basic import RangeZ, SpatialCrop
 from .processors.filters.reference import RasterMask, DiffZ
 from .processors.filters.stats import OutlierZ
 from .processors.filters.thinning import BlockThin
@@ -61,7 +61,8 @@ def setup_fetchez(registry_cls):
         metadata={
             "inherits": "gebco",
             'desc': 'Fetch GEBCO as a COG subset',
-            'tags': ['gebco', 'bathymetry', 'global', 'tid', 'cog']
+            'tags': ['gebco', 'bathymetry', 'global', 'tid', 'cog'],
+            'category': 'Globato',
         }
     )
     registry_cls.register_module(
@@ -69,7 +70,8 @@ def setup_fetchez(registry_cls):
         GlobDEM,
         metadata={
             'desc': 'Fetch and glob the best available DEMs',
-            'tags': ['gebco', 'bathymetry', 'global', 'etopo', 'globato']
+            'tags': ['gebco', 'bathymetry', 'global', 'etopo', 'globato'],
+            'category': 'Tools',
         }
     )
     registry_cls.register_module(
@@ -79,6 +81,7 @@ def setup_fetchez(registry_cls):
             "inherits": "copernicus",
             "desc": "Copernicus Global/European Digital Elevation Models (COP-30/10)",
             "tags": ["satellite", "dsm", "radar", "global", "europe", "clean", "globato"],
+            'category': 'Globato',
         }
     )
     registry_cls.register_module(
@@ -87,6 +90,7 @@ def setup_fetchez(registry_cls):
         metadata={
             "inherits": "fabdem",
             "tags": ["fabdem", "dem", "dtm", "copernicus", "global", "30m", "clean", "globato"],
+            'category': 'Globato',
         }
     )
     registry_cls.register_module(
@@ -95,6 +99,7 @@ def setup_fetchez(registry_cls):
         metadata={
             "inherits": "multibeam",
             "tags": ["bathymetry", "multibeam", "ocean", "sonar", "noaa", "ncei", "globato"],
+            'category': 'Globato',
         }
     )
     registry_cls.register_module(
@@ -103,6 +108,7 @@ def setup_fetchez(registry_cls):
         metadata={
             "inherits": "nos_hydro",
             "tags": ["bathymetry", "hydrography", "nos", "noaa", "bag", "soundings", "globato"],
+            'category': 'Globato',
         }
     )
 
@@ -116,6 +122,7 @@ def setup_fetchez(registry_cls):
 
     # metadata
     HookRegistry.register_hook(ProvenanceHook)
+    HookRegistry.register_hook(SourceMasks)
     HookRegistry.register_hook(GlobatoInfo)
 
     # transforms
@@ -125,6 +132,7 @@ def setup_fetchez(registry_cls):
     # filters
     #HookRegistry.register_hook(StreamFilter)
     HookRegistry.register_hook(RangeZ)
+    HookRegistry.register_hook(SpatialCrop)
     HookRegistry.register_hook(RasterMask)
     HookRegistry.register_hook(DiffZ)
     HookRegistry.register_hook(OutlierZ)
