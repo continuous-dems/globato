@@ -151,8 +151,8 @@ class DataStream(FetchHook):
 
     name = "stream_data"
     stage = "file"
-    category = "streams"
-    priority = 40
+    desc = "Setup an data stream from input data."
+    category = "format-stream"
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)

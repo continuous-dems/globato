@@ -32,8 +32,8 @@ class ProvenanceHook(FetchHook):
     """
 
     name = "provenance"
-    category = "stream sink"
     stage = "file"
+    category = "metadata"
 
     def __init__(self, res="1s", output="provenance.tif", **kwargs):
         super().__init__(**kwargs)
@@ -174,8 +174,8 @@ class SourceMasks(FetchHook):
     """
 
     name = "source_masks"
-    category = "stream sink"
     stage = "file"
+    category = "metadata"
 
     def __init__(self, res="1s", output_dir="source_masks", vrt_name="source_masks.vrt", **kwargs):
         super().__init__(**kwargs)

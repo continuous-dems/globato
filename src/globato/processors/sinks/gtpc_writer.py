@@ -31,7 +31,7 @@ class WriteGTPC(FetchHook):
 
     name = "write_gtpc"
     stage = "file"
-    category = "stream sink"
+    category = "stream-sink"
 
     def __init__(self, res=None, mode="mean", compression="gzip", **kwargs):
         super().__init__(**kwargs)
@@ -76,7 +76,7 @@ class WriteGTPC(FetchHook):
                     binner = None
 
             entry['stream'] = self._write_stream(stream, out_fn, binner)
-
+            entry.setdefault('artifacts', {})[self.name] = out_fn
         return entries
 
     def _write_stream(self, stream, out_fn, binner=None):

@@ -158,9 +158,10 @@ class XYZStream(FetchHook):
       --hook process_xyz:xpos=1,ypos=0,skip=1,z_scale=0.3048
     """
 
-    name = "process_xyz"
+    name = "xyz_stream"
     stage = "file"
     desc = "Standardize ASCII XYZ data"
+    category = "format-stream"
 
     def __init__(self, xpos=0, ypos=1, zpos=2, wpos=None, upos=None,
                  skip=0, delim=None, x_scale=1, y_scale=1, z_scale=1,
@@ -195,62 +196,62 @@ class XYZStream(FetchHook):
         return entries
 
 
-class XYZProcessor(FetchHook):
-    """Standardize ASCII XYZ data.
+# class XYZProcessor(FetchHook):
+#     """Standardize ASCII XYZ data.
 
-    Can reorder columns, handle delimiters, skip headers, and rescale units.
-    Outputs a clean, space-delimited .xyz file.
+#     Can reorder columns, handle delimiters, skip headers, and rescale units.
+#     Outputs a clean, space-delimited .xyz file.
 
-    Usage:
-      --hook process_xyz:xpos=1,ypos=0,skip=1,z_scale=0.3048
-    """
+#     Usage:
+#       --hook process_xyz:xpos=1,ypos=0,skip=1,z_scale=0.3048
+#     """
 
-    name = "process_xyz"
-    stage = "file"
-    desc = "Standardize ASCII XYZ data"
+#     name = "process_xyz"
+#     stage = "file"
+#     desc = "Standardize ASCII XYZ data"
 
-    def __init__(self, xpos=0, ypos=1, zpos=2, skip=0, delim=None,
-                 x_scale=1, y_scale=1, z_scale=1,
-                 x_offset=0, y_offset=0, keep_raw=False, **kwargs):
-        super().__init__(**kwargs)
+#     def __init__(self, xpos=0, ypos=1, zpos=2, skip=0, delim=None,
+#                  x_scale=1, y_scale=1, z_scale=1,
+#                  x_offset=0, y_offset=0, keep_raw=False, **kwargs):
+#         super().__init__(**kwargs)
 
-        self.params = {
-            'xpos': xpos, 'ypos': ypos, 'zpos': zpos,
-            'skip': skip, 'delim': delim,
-            'x_scale': x_scale, 'y_scale': y_scale, 'z_scale': z_scale,
-            'x_offset': x_offset, 'y_offset': y_offset
-        }
-        self.keep_raw = str(keep_raw).lower() == 'true'
+#         self.params = {
+#             'xpos': xpos, 'ypos': ypos, 'zpos': zpos,
+#             'skip': skip, 'delim': delim,
+#             'x_scale': x_scale, 'y_scale': y_scale, 'z_scale': z_scale,
+#             'x_offset': x_offset, 'y_offset': y_offset
+#         }
+#         self.keep_raw = str(keep_raw).lower() == 'true'
 
-    def run(self, entries):
-        new_entries = []
+#     def run(self, entries):
+#         new_entries = []
 
-        for mod, entry in entries:
-            src = entry.get('dst_fn')
+#         for mod, entry in entries:
+#             src = entry.get('dst_fn')
 
-            if not src or not os.path.exists(src):
-                new_entries.append((mod, entry))
-                continue
+#             if not src or not os.path.exists(src):
+#                 new_entries.append((mod, entry))
+#                 continue
 
-            dst = f"{src}_clean.xyz"
+#             dst = f"{src}_clean.xyz"
 
-            reader = XYZReader(src, **self.params)
-            result = reader.process(dst)
+#             reader = XYZReader(src, **self.params)
+#             result = reader.process(dst)
 
-            if result and os.path.exists(result) and os.path.getsize(result) > 0:
-                entry['dst_fn'] = result
-                entry['raw_fn'] = src
-                entry['data_type'] = 'xyz'
+#             if result and os.path.exists(result) and os.path.getsize(result) > 0:
+#                 entry['dst_fn'] = result
+#                 entry['raw_fn'] = src
+#                 entry['data_type'] = 'xyz'
 
-                if not self.keep_raw:
-                    try:
-                        os.remove(src)
-                    except OSError:
-                        pass
-            else:
-                if result and os.path.exists(result):
-                    os.remove(result)
+#                 if not self.keep_raw:
+#                     try:
+#                         os.remove(src)
+#                     except OSError:
+#                         pass
+#             else:
+#                 if result and os.path.exists(result):
+#                     os.remove(result)
 
-            new_entries.append((mod, entry))
+#             new_entries.append((mod, entry))
 
-        return new_entries
+#         return new_entries

@@ -19,6 +19,7 @@ from fetchez.hooks import FetchHook
 #logging.basicConfig(stream=sys.stderr)
 logger = logging.getLogger(__name__)
 
+
 class XYZPrinter(FetchHook):
     """Sink Hook: Prints the XYZ stream to stdout.
     Useful for piping to other tools like GMT, MB-System, or text files.
@@ -33,7 +34,7 @@ class XYZPrinter(FetchHook):
     name = "stream_pipe_xyz"
     stage = "file"
     desc = "stream xyz data to stdout"
-    category = "streams"
+    category = "stream-sink"
 
     def __init__(self, fmt='%.6f', delimiter=' ', **kwargs):
         super().__init__(**kwargs)

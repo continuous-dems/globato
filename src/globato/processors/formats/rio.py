@@ -110,3 +110,25 @@ class RasterioReader:
 
         except Exception as e:
             logger.error(f'Rasterio read failed: {e}')
+
+
+class RasterioStream(FetchHook):
+    name = "rasterio_stream"
+    stage = "file"
+    category = "format-stream"
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.params = kwargs
+
+    def run(self, entries):
+        for mod, entry in entries:
+            src = entry.get('dst_fn')
+            if not src or not os.path.exists(src): continue
+            try:
+                reader = RasterioReader(src, **self.params)
+                entry['stream'] = reader.yield_chunks()
+                entry['stream_type'] = 'xyz_recarray'
+            except Exception as e:
+                logger.warning(f"RasterioStream failed for {src}: {e}")
+        return entries

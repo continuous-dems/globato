@@ -33,6 +33,7 @@ from ..transforms.point_pixels import PointPixels
 
 logger = logging.getLogger(__name__)
 
+
 # MULTI_STACK ACCUMULATOR
 class MultiStackAccumulator:
     """Stateful engine for building a multi-band statistical grid.
@@ -239,8 +240,8 @@ class MultiStackHook(FetchHook):
     """
 
     name = 'multi_stack'
-    category = 'stream sink'
     stage = 'file'
+    category = 'stream-sink'
 
     def __init__(self, res='1s', output='multi_stack_output.tif', mode='mean', crs=None, **kwargs):
         super().__init__(**kwargs)
@@ -249,7 +250,6 @@ class MultiStackHook(FetchHook):
         self.mode = mode
         self.crs = crs
         self._accumulator = None
-
 
     def _init_accumulator(self, region):
         """Initialize the accumulator once we know the region."""
@@ -289,8 +289,8 @@ class MultiStackHook(FetchHook):
             if stream:
                 entry['stream'] = self._intercept(stream)
 
+            entry.setdefault('artifacts', {})[self.name] = out_fn
         return entries
-
 
     def _intercept(self, stream):
         """Generator wrapper to feed the accumulator."""
@@ -299,7 +299,6 @@ class MultiStackHook(FetchHook):
             if self._accumulator:
                 self._accumulator.update(chunk)
             yield chunk
-
 
     def teardown(self):
         """Finalize the grid after all streams are exhausted."""

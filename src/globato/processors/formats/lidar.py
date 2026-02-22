@@ -108,6 +108,7 @@ class LASStream(FetchHook):
     name = 'las_stream'
     stage = 'file'
     desc = 'stream las data through laspy'
+    category = "format-stream"
 
     def __init__(self, classes='2/7/29/40', **kwargs):
         super().__init__(**kwargs)

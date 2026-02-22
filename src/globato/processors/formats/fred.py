@@ -21,6 +21,7 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 
+
 class FredGenerator(FetchHook):
     """Post-Hook: Generates a FRED Index (GeoJSON) of all successful entries.
 
@@ -31,6 +32,7 @@ class FredGenerator(FetchHook):
     name = "fred_export"
     stage = "post"
     desc = "generate a fred geojson index of the output data"
+    category = "metadata"
 
     def __init__(self, name="output", output_dir=None, scan=True, **kwargs):
         """Args:
