@@ -22,6 +22,7 @@ logger = logging.getLogger(__name__)
 
 class XYZPrinter(FetchHook):
     """Sink Hook: Prints the XYZ stream to stdout.
+
     Useful for piping to other tools like GMT, MB-System, or text files.
     If the input stream is 'xyz_recarray', it prints the points,
     if the input stream is 'point_pixels_arrays' it prints the y/x/z pixel locations.
@@ -36,43 +37,42 @@ class XYZPrinter(FetchHook):
     desc = "stream xyz data to stdout"
     category = "stream-sink"
 
-    def __init__(self, fmt='%.6f', delimiter=' ', **kwargs):
+    def __init__(self, fmt="%.6f", delimiter=" ", **kwargs):
         super().__init__(**kwargs)
         self.fmt = fmt
         self.delimiter = delimiter
 
-
     def run(self, entries):
         for mod, entry in entries:
-            stream = entry.get('stream')
-            stream_type = entry.get('stream_type')
+            stream = entry.get("stream")
+            stream_type = entry.get("stream_type")
             if not stream:
                 continue
 
             try:
-                if stream_type == 'xyz_recarray':
+                if stream_type == "xyz_recarray":
                     for chunk in stream:
-                        columns = [chunk['x'], chunk['y'], chunk['z']]
+                        columns = [chunk["x"], chunk["y"], chunk["z"]]
 
-                        if 'w' in chunk.dtype.names:
-                            columns.append(chunk['w'])
-                        if 'u' in chunk.dtype.names:
-                            columns.append(chunk['u'])
+                        if "w" in chunk.dtype.names:
+                            columns.append(chunk["w"])
+                        if "u" in chunk.dtype.names:
+                            columns.append(chunk["u"])
 
                         data = np.column_stack(columns)
                         np.savetxt(sys.stdout, data, fmt=self.fmt, delimiter=self.delimiter)
 
-                elif stream_type == 'point_pixels_arrays':
+                elif stream_type == "point_pixels_arrays":
                     for arrs, srcwin, gt in stream:
 
-                        x_vals = arrs['pixel_x'].astype(int)
-                        y_vals = arrs['pixel_y'].astype(int)
-                        z_vals = arrs['z'][y_vals, x_vals]
+                        x_vals = arrs["pixel_x"].astype(int)
+                        y_vals = arrs["pixel_y"].astype(int)
+                        z_vals = arrs["z"][y_vals, x_vals]
 
                         columns = [y_vals, x_vals, z_vals]
 
                         data = np.column_stack(columns)
-                        self.fmt = ['%d', '%d', '%.6f']
+                        self.fmt = ["%d", "%d", "%.6f"]
                         np.savetxt(sys.stdout, data, fmt=self.fmt, delimiter=self.delimiter)
 
             except IOError:
@@ -86,15 +86,15 @@ class XYZPrinter(FetchHook):
                     sys.stdout.close()
                 except Exception:
                     pass
-                #return entries
+                # return entries
             except Exception as e:
-                #logger.error(f"Error piping XYZ: {e}\n")
+                # logger.error(f"Error piping XYZ: {e}\n")
                 try:
                     sys.stdout.close()
                 except Exception:
                     pass
 
-            del entry['stream']
-            del entry['stream_type']
+            del entry["stream"]
+            del entry["stream_type"]
 
         return entries
