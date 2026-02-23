@@ -37,7 +37,6 @@ class BAGReader(RasterioReader):
         self.mode = mode
         self.min_weight = float_or(min_weight, 0)
 
-
     def _calculate_bag_weight(self, transform):
         """Weight = (3 * (10 if res <=3 else 1)) / res"""
 
@@ -48,7 +47,6 @@ class BAGReader(RasterioReader):
         calc_weight = (3 * base_mult) / x_res
 
         return max(calc_weight, self.min_weight)
-
 
     def _process_bag_dataset(self, src):
         """Internal generator that reads chunks from an open rasterio dataset."""
@@ -64,7 +62,8 @@ class BAGReader(RasterioReader):
             else:
                 mask = ~np.isnan(z)
 
-            if not np.any(mask): continue
+            if not np.any(mask):
+                continue
 
             if has_unc:
                 u = src.read(2, window=window)
@@ -78,23 +77,22 @@ class BAGReader(RasterioReader):
             global_rows = rows + window.row_off
             global_cols = cols + window.col_off
 
-            #with rasterio.Env(CPL_MIN_LOG_LEVEL=rasterio.logging.ERROR):
-            xs, ys = rasterio.transform.xy(src.transform, global_rows, global_cols, offset='center')
+            # with rasterio.Env(CPL_MIN_LOG_LEVEL=rasterio.logging.ERROR):
+            xs, ys = rasterio.transform.xy(src.transform, global_rows, global_cols, offset="center")
 
             count = len(z_valid)
             chunk = np.zeros(count, dtype=[
-                ('x', 'f8'), ('y', 'f8'), ('z', 'f4'),
-                ('w', 'f4'), ('u', 'f4')
+                ("x", "f8"), ("y", "f8"), ("z", "f4"),
+                ("w", "f4"), ("u", "f4")
             ])
 
-            chunk['x'] = xs
-            chunk['y'] = ys
-            chunk['z'] = z_valid
-            chunk['u'] = u_valid
-            chunk['w'] = np.full(count, bag_weight, dtype='float32')
+            chunk["x"] = xs
+            chunk["y"] = ys
+            chunk["z"] = z_valid
+            chunk["u"] = u_valid
+            chunk["w"] = np.full(count, bag_weight, dtype="float32")
 
             yield chunk
-
 
     def yield_chunks(self):
         env_opts = {
@@ -109,8 +107,8 @@ class BAGReader(RasterioReader):
             with rasterio.Env(**env_opts):
                 with rasterio.open(self.src_fn) as src:
 
-                    tags = src.tags(ns='IMAGE_STRUCTURE')
-                    if tags.get('HAS_SUPERGRIDS') == 'TRUE':
+                    tags = src.tags(ns="IMAGE_STRUCTURE")
+                    if tags.get("HAS_SUPERGRIDS") == "TRUE":
                         is_vr = True
 
                     if not is_vr:
@@ -123,7 +121,7 @@ class BAGReader(RasterioReader):
 
         if is_vr:
             logger.debug(f"Detected VR-BAG, re-opening in resampled mode: {self.src_fn}")
-            vr_opts = {'MODE': 'RESAMPLED_GRID', 'RES_STRATEGY': 'MIN'}
+            vr_opts = {"MODE": "RESAMPLED_GRID", "RES_STRATEGY": "MIN"}
 
             try:
                 with rasterio.Env(**env_opts):
@@ -131,39 +129,3 @@ class BAGReader(RasterioReader):
                         yield from self._process_bag_dataset(src)
             except Exception as e:
                 logger.error(f"Failed to read VR-BAG {self.src_fn}: {e}")
-
-    # def yield_chunks(self):
-    #     """Try opening as VR, fallback to Standard."""
-
-    #     env_opts = {
-    #         'GDAL_IGNORE_BAG_XML_METADATA': 'YES',
-    #         'OGR_BAG_MIN_VERSION': '1.0'
-    #     }
-
-    #     # Attempt VR (Variable Resolution)
-    #     vr_opts = {'MODE': 'RESAMPLED_GRID', 'RES_STRATEGY': 'MIN'}
-
-    #     try:
-    #         with rasterio.Env(**env_opts):
-    #             with rasterio.open(self.src_fn, **vr_opts) as src:
-    #                 # If this succeeds, yield and return
-    #                 yield from self._process_bag_dataset(src)
-    #                 return
-
-    #     except RasterioIOError as e:
-    #         err_str = str(e)
-    #         if 'No supergrids' in err_str or 'RESAMPLED_GRID mode not available' in err_str:
-    #             logger.debug(f'File is standard BAG (not VR): {self.src_fn}')
-    #         else:
-    #             logger.error(f'Error reading BAG {self.src_fn}: {e}')
-    #             raise e
-
-    #     # Just open it with rasterio
-    #     try:
-    #         with rasterio.Env(**env_opts):
-    #             with rasterio.open(self.src_fn) as src:
-    #                 yield from self._process_bag_dataset(src)
-
-    #     except Exception as e:
-    #         logger.error(f'Failed to read Standard BAG {self.src_fn}: {e}')
-    #         return
