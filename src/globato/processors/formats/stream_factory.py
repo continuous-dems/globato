@@ -61,7 +61,7 @@ class StreamFactory:
     def get_stream(src_fn, **kwargs):
         """Returns a generator (yield_chunks) for the given file."""
 
-        logger.info(src_fn)
+        #logger.info(src_fn)
         if not os.path.exists(src_fn):
             return None
 
@@ -124,7 +124,7 @@ class StreamFactory:
             TargetReader = profile.pop("reader")
 
             merged_kwargs = {**profile, **kwargs}
-            logger.info(f"Applying '{data_type}' profile to {src_fn}")
+            #logger.info(f"Applying '{data_type}' profile to {src_fn}")
             return TargetReader(src_fn, **merged_kwargs)
 
         ext = os.path.splitext(src_fn)[1].lower()
