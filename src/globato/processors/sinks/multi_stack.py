@@ -404,8 +404,11 @@ class MultiStackHook(FetchHook):
             if self._accumulator:
                 self._accumulator.update(chunk)
             yield chunk
-        logger_str = f"Passed {count} data points from {dataset_id}"
-        logger.info(f"{utils.colorize(logger_str, utils.BOLD):<15}")
+        logger_str = (
+            f"Passed {utils.colorize(count, utils.BOLD)} data points from {utils.colorize(utils.str_truncate_middle(dataset_id), utils.BLUE)}"
+        )
+        #logger.info(f"{utils.colorize(logger_str, utils.BOLD):<15}")
+        logger.info(logger_str)
 
         # The stream is exhausted; permanently mark this dataset as completed
         if self._accumulator and dataset_id:

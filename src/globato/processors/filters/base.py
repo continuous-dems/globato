@@ -25,7 +25,13 @@ class GlobatoFilter(FetchHook):
     stage = "file"
     category = "stream-filter"
 
-    def __init__(self, set_class=7, exclude_classes=None, invert=False, **kwargs):
+    def __init__(
+            self,
+            set_class=7,
+            exclude_classes=None,
+            invert=False,
+            **kwargs,
+    ):
         super().__init__(**kwargs)
         self.set_class = int(set_class)
         self.invert = utils.str2bool(invert)
@@ -43,9 +49,9 @@ class GlobatoFilter(FetchHook):
             if not stream: continue
 
             # `setup` allows subclass to prepare resources based on region/module
-            if hasattr(self, 'setup'):
+            if hasattr(self, "setup"):
                 if self.setup(mod, entry) is False:
-                    continue # Skip if setup fails
+                    continue
 
             entry["stream"] = self._process_stream(stream)
         return entries
@@ -60,7 +66,7 @@ class GlobatoFilter(FetchHook):
 
                 if self.exclude_classes:
                     # True = Available to filter.
-                    eligible_mask = ~np.isin(chunk['classification'], self.exclude_classes)
+                    eligible_mask = ~np.isin(chunk["classification"], self.exclude_classes)
 
                     if not np.any(eligible_mask):
                         yield chunk
@@ -77,26 +83,20 @@ class GlobatoFilter(FetchHook):
                     continue
 
                 if isinstance(result, np.ndarray) and result.dtype == bool:
-                    # It's a Classification Mask (True = Change Class)
-                    # Apply Invert Logic (Global)
                     if self.invert:
                         result = ~result
 
-                    # Don't touch excluded classes even if filter said so
                     final_mask = result & eligible_mask
 
                     if np.any(final_mask):
-                        chunk['classification'][final_mask] = self.set_class
+                        chunk["classification"][final_mask] = self.set_class
 
                     yield chunk
 
                 else:
-                    # It's a New Chunk (Destructive Filter like Drop or Thin)
-                    # We assume the subclass handled everything
                     yield result
 
         finally:
-            # Teardown hook if needed
             if hasattr(self, 'teardown'):
                 self.teardown()
 
