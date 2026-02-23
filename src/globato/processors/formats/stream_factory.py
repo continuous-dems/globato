@@ -16,16 +16,18 @@ import logging
 import numpy as np
 import numpy.lib.recfunctions as rfn
 
-#from .gdal_proc import GDALReader
 from .rio import RasterioReader
 from .bag import BAGReader
-from .ogr_proc import OGRReader
 from .lidar import LASReader
 from .multibeam import MBSReader
 from .xyz import XYZReader
 from .gtpc import GTPCReader
 from .schema import ensure_schema
 from transformez.spatial import TransRegion
+
+# gdal is required to use these
+from .gdal_proc import GDALReader
+from .ogr_proc import OGRReader
 
 from fetchez.hooks import FetchHook
 
@@ -42,7 +44,7 @@ class StreamFactory:
             "skiprows": 1,
             "z_scale": -1,
             "usecols": [2, 1, 3],
-            "names": ['y', 'x', 'z'],
+            "names": ["y", "x", "z"],
         },
         "csb_csv": {
             "reader": XYZReader,
@@ -74,27 +76,27 @@ class StreamFactory:
         # Vector Data (OGR)
         # .shp, .000 (S-57), .gdb, .geojson
         # TODO: update this to fiona
-        if ext in ['.shp', '.000', '.json', '.geojson', '.kml'] or \
-           (ext == '.gdb' and os.path.isdir(src_fn)):
+        if ext in [".shp", ".000", ".json", ".geojson", ".kml"] or \
+           (ext == ".gdb" and os.path.isdir(src_fn)):
             return OGRReader(src_fn, **kwargs).yield_chunks()
 
         # ASCII / XYZ
-        if ext in ['.xyz', '.txt', '.csv', '.dat']:
+        if ext in [".xyz", ".txt", ".csv", ".dat"]:
             return XYZReader(src_fn, **kwargs).yield_chunks()
 
         # Raster Data (Rasterio)
-        if ext in ['.tif', '.tiff', '.nc', '.vrt', '.dt0', '.dt1', '.dt2']:
+        if ext in [".tif", ".tiff", ".nc", ".vrt", ".dt0", ".dt1", ".dt2"]:
             return RasterioReader(src_fn, **kwargs).yield_chunks()
 
         # BAG (Rasterio)
-        if ext in ['.bag']:
+        if ext in [".bag"]:
             return BAGReader(src_fn, **kwargs).yield_chunks()
 
         # Multibeam (MB-System)
-        if ext in ['.fbt']:
+        if ext in [".fbt"]:
             return MBSReader(src_fn, **kwargs).yield_chunks()
 
-        if ext == '.gtpc':
+        if ext == ".gtpc":
             return GTPCReader(src_fn, **kwargs).yield_chunks()
 
         # If unknown extension, try to open with GDAL.
@@ -102,13 +104,13 @@ class StreamFactory:
             from osgeo import gdal
             ds = gdal.Open(src_fn)
             if ds:
-                #return GDALReader(src_fn, **kwargs).yield_chunks()
-                #return RasterioReader(src_fn, **kwargs).yield_chunks()
+                # return GDALReader(src_fn, **kwargs).yield_chunks()
+                # return RasterioReader(src_fn, **kwargs).yield_chunks()
                 ds = None
         except:
             pass
 
-        logger.warning(f'Could not detect stream type for {src_fn}')
+        logger.warning(f"Could not detect stream type for {src_fn}")
         return None
 
 
@@ -130,33 +132,33 @@ class StreamFactory:
         ext = os.path.splitext(src_fn)[1].lower()
 
         # LiDAR (LAS/LAZ)
-        if ext in ['.las', '.laz']:
+        if ext in [".las", ".laz"]:
             return LASReader(src_fn, **kwargs)
 
         # Vector Data (OGR)
         # .shp, .000 (S-57), .gdb, .geojson
         # TODO: update this to fiona
-        if ext in ['.shp', '.000', '.json', '.geojson', '.kml'] or \
-           (ext == '.gdb' and os.path.isdir(src_fn)):
+        if ext in [".shp", ".000", ".json", ".geojson", ".kml"] or \
+           (ext == ".gdb" and os.path.isdir(src_fn)):
             return OGRReader(src_fn, **kwargs)
 
         # ASCII / XYZ
-        if ext in ['.xyz', '.txt', '.csv', '.dat']:
+        if ext in [".xyz", ".txt", ".csv", ".dat"]:
             # XYZReader needs to be updated to yield recarrays like the others
             # For now, we assume it does.
             return XYZReader(src_fn, **kwargs)
 
         # Raster Data (Rasterio)
-        if ext in ['.tif', '.tiff', '.nc', '.vrt', '.dt0', '.dt1', '.dt2']:
+        if ext in [".tif", ".tiff", ".nc", ".vrt", ".dt0", ".dt1", ".dt2"]:
             return RasterioReader(src_fn, **kwargs)
 
-        if ext in ['.bag']:
+        if ext in [".bag"]:
             return BAGReader(src_fn, **kwargs)
 
-        if ext in ['.fbt']:
+        if ext in [".fbt"]:
             return MBSReader(src_fn, **kwargs)
 
-        if ext == '.gtpc':
+        if ext == ".gtpc":
             return GTPCReader(src_fn, **kwargs)
 
         # If unknown extension, try to open with GDAL.
@@ -169,7 +171,7 @@ class StreamFactory:
         except:
             pass
 
-        logger.warning(f'Could not detect stream type for {src_fn}')
+        logger.warning(f"Could not detect stream type for {src_fn}")
         return None
 
 
@@ -192,30 +194,30 @@ class DataStream(FetchHook):
 
     def run(self, entries):
         for mod, entry in entries:
-            if entry.get('stream'):
+            if entry.get("stream"):
                 continue
 
-            src = entry.get('dst_fn')
+            src = entry.get("dst_fn")
             if not src:
                 continue
 
-            dtype = entry.get('data_type')
+            dtype = entry.get("data_type")
 
             reader = StreamFactory.get_reader(src, data_type=dtype, **self.reader_kwargs)
             if not reader:
                 continue
 
-            w = getattr(mod, 'weight', 1.0)
-            u = getattr(mod, 'uncertainty', 0.0)
+            w = getattr(mod, "weight", 1.0)
+            u = getattr(mod, "uncertainty", 0.0)
 
             raw_stream = reader.yield_chunks()
             mod.region = TransRegion.from_list(mod.region)
             if raw_stream:
-                if hasattr(reader, 'get_srs'):
-                    entry['src_srs'] = reader.get_srs() or 'EPSG:4326'
+                if hasattr(reader, "get_srs"):
+                    entry["src_srs"] = reader.get_srs() or "EPSG:4326"
 
                 #entry['stream'] = stream
-                entry['stream'] = ensure_schema(raw_stream, module_weight=w, module_unc=u)
-                entry['stream_type'] = 'xyz_recarray'
+                entry["stream"] = ensure_schema(raw_stream, module_weight=w, module_unc=u)
+                entry["stream_type"] = "xyz_recarray"
 
         return entries
