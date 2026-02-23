@@ -36,7 +36,7 @@ logger = logging.getLogger(__name__)
 
 # MULTI_STACK ACCUMULATOR
 class MultiStackAccumulator:
-    """Stateful engine for building a multi-band statistical grid.
+    """Multi-band statistical grid accumulator
 
     Bands:
       1: Z (Weighted Sum / Value)
@@ -53,7 +53,7 @@ class MultiStackAccumulator:
         'src_uncertainty': 5, 'x': 6, 'y': 7
     }
 
-    def __init__(self, region, x_inc, y_inc, output_fn, mode='mean', crs=None, verbose=False):
+    def __init__(self, region, x_inc, y_inc, output_fn, mode='mean', weight_threshold='1', crs=None, verbose=False):
         self.region = Region.from_list(region)
         self.x_inc = float(x_inc)
         self.y_inc = float(y_inc)
@@ -62,6 +62,8 @@ class MultiStackAccumulator:
         self.crs = crs
         self.verbose = verbose
         self.lock = threading.Lock()
+
+        self.wts = np.sort([float(x) for x in str(weight_threshold).split('/')])
 
         self.xcount, self.ycount, self.dst_gt = self.region.geo_transform(
             x_inc=self.x_inc, y_inc=self.y_inc, node='grid'
@@ -124,7 +126,8 @@ class MultiStackAccumulator:
             with rasterio.open(self.output_fn, 'r+') as dst:
                 current_data = dst.read(window=window)
 
-                def get_band(name): return current_data[self.BAND_MAP[name]-1]
+                def get_band(name):
+                    return current_data[self.BAND_MAP[name]-1]
 
                 valid_new = arrays['count'] > 0
 
@@ -142,6 +145,57 @@ class MultiStackAccumulator:
 
                     get_band('x')[valid_new] += arrays['x'][valid_new]
                     get_band('y')[valid_new] += arrays['y'][valid_new]
+
+                elif self.mode in ['supercede', 'mixed']:
+                    cur_cnt = get_band('count')
+                    cur_wt = get_band('weights')
+
+                    # Calculate average weights of the current incoming chunk and the existing cell
+                    with np.errstate(divide='ignore', invalid='ignore'):
+                        arr_w_avg = np.where(valid_new, arrays['weight'] / arrays['count'], 0)
+                        cur_w_avg = np.where(cur_cnt > 0, cur_wt / cur_cnt, 0)
+
+                    if self.mode == 'supercede':
+                        # Supercede: Any higher weight completely overwrites
+                        sup_mask = valid_new & (arr_w_avg > cur_w_avg)
+                        avg_mask = np.zeros_like(sup_mask, dtype=bool) # No averaging in pure supercede
+
+                    else:
+                        # Mixed: Assign weight tiers using np.digitize
+                        arr_tier = np.digitize(arr_w_avg, self.wts)
+                        cur_tier = np.digitize(cur_w_avg, self.wts)
+
+                        # Empty existing cells are tier -1 so they are always superceded
+                        cur_tier[cur_cnt == 0] = -1
+
+                        sup_mask = valid_new & (arr_tier > cur_tier)
+                        avg_mask = valid_new & (arr_tier == cur_tier)
+
+                    # --- SUPERCEDE ---
+                    if np.any(sup_mask):
+                        get_band('z')[sup_mask] = arrays['z'][sup_mask]
+                        get_band('weights')[sup_mask] = arrays['weight'][sup_mask]
+                        get_band('count')[sup_mask] = arrays['count'][sup_mask]
+                        get_band('uncertainty')[sup_mask] = np.square(arrays['uncertainty'][sup_mask])
+
+                        if 'src_uncertainty' in arrays and arrays['src_uncertainty'] is not None:
+                            get_band('src_uncertainty')[sup_mask] = arrays['src_uncertainty'][sup_mask]
+
+                        get_band('x')[sup_mask] = arrays['x'][sup_mask]
+                        get_band('y')[sup_mask] = arrays['y'][sup_mask]
+
+                    # --- AVERAGE ---
+                    if np.any(avg_mask):
+                        get_band('z')[avg_mask] += arrays['z'][avg_mask]
+                        get_band('weights')[avg_mask] += arrays['weight'][avg_mask]
+                        get_band('count')[avg_mask] += arrays['count'][avg_mask]
+                        get_band('uncertainty')[avg_mask] += np.square(arrays['uncertainty'][avg_mask])
+
+                        if 'src_uncertainty' in arrays and arrays['src_uncertainty'] is not None:
+                            get_band('src_uncertainty')[avg_mask] += arrays['src_uncertainty'][avg_mask]
+
+                        get_band('x')[avg_mask] += arrays['x'][avg_mask]
+                        get_band('y')[avg_mask] += arrays['y'][avg_mask]
 
                 elif self.mode == 'min':
                     cur_z = get_band('z')
@@ -161,7 +215,6 @@ class MultiStackAccumulator:
                     get_band('count')[update_mask] = 1
 
                 dst.write(current_data, window=window)
-
 
     def finalize(self, ndv=-9999):
         """Convert accumulated sums to final values and write metadata."""
@@ -185,7 +238,7 @@ class MultiStackAccumulator:
                 valid = cnt > 0
                 data[:, ~valid] = ndv
 
-                if self.mode in ['mean', 'weighted_mean']:
+                if self.mode in ['mean', 'weighted_mean', 'mixed', 'supercede']:
                     # Z = Sum_Z / Sum_W
                     with np.errstate(divide='ignore', invalid='ignore'):
                         # Z = Sum_Z / Sum_W
@@ -233,21 +286,23 @@ class MultiStackHook(FetchHook):
     Args:
       res (float/str): Resolution (e.g. '1s', '30', '0.0001'). Default '1s'.
       mode (str): Aggregation mode ('mean', 'min', 'max'). Default 'mean'.
+      weight_threshold (str): Tier boundaries for mixed mode (e.g., '1/5/10'). Default '1'.
       output (str): Output filename. Default 'output.tif'.
 
     Usage:
-      --hook multi_stack:res=1s,mode=mean,output=dem.tif
+      --hook multi_stack:res=1s,mode=mixed,weight_threshold=1/10/50,output=dem.tif
     """
 
     name = 'multi_stack'
     stage = 'file'
     category = 'stream-sink'
 
-    def __init__(self, res='1s', output='multi_stack_output.tif', mode='mean', crs=None, **kwargs):
+    def __init__(self, res='1s', output='multi_stack_output.tif', mode='mean', weight_threshold='1', crs=None, **kwargs):
         super().__init__(**kwargs)
         self.res = res
         self.output = output
         self.mode = mode
+        self.weight_threshold = weight_threshold
         self.crs = crs
         self._accumulator = None
 
@@ -272,6 +327,7 @@ class MultiStackHook(FetchHook):
             y_inc=y_inc,
             output_fn=self.output,
             mode=self.mode,
+            weight_threshold=self.weight_threshold,
             crs=self.crs,
             verbose=True
         )
@@ -287,18 +343,22 @@ class MultiStackHook(FetchHook):
         for mod, entry in entries:
             stream = entry.get('stream')
             if stream:
-                entry['stream'] = self._intercept(stream)
+                entry['stream'] = self._intercept(stream, entry)
 
-            entry.setdefault('artifacts', {})[self.name] = out_fn
+            entry.setdefault('artifacts', {})[self.name] = self.output
         return entries
 
-    def _intercept(self, stream):
+    def _intercept(self, stream, entry):
         """Generator wrapper to feed the accumulator."""
 
+        count = 0
         for chunk in stream:
+            count += len(chunk)
             if self._accumulator:
                 self._accumulator.update(chunk)
             yield chunk
+        logger_str = f"Passed {count} data points from {entry['dst_fn']}"
+        logger.info(f"{utils.colorize(logger_str, utils.BOLD):<15}")
 
     def teardown(self):
         """Finalize the grid after all streams are exhausted."""

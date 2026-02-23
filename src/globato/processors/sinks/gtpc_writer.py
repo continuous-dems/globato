@@ -7,6 +7,9 @@ globato.processors.sinks.gtpc_writer
 
 Writes streams to .gtpc (Globato Point Cloud) HDF5 format.
 Supports optional spatial binning to reduce file size.
+
+:copyright: (c) 2016 - 2026 Regents of the University of Colorado
+:license: MIT, see LICENSE for more details.
 """
 
 import os
@@ -80,7 +83,7 @@ class WriteGTPC(FetchHook):
         return entries
 
     def _write_stream(self, stream, out_fn, binner=None):
-        with h5py.File(out_fn, 'w') as f:
+        with h5py.File(out_fn, "w") as f:
             grp = f.create_group("points")
             datasets = {}
             total_pts = 0

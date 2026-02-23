@@ -35,17 +35,23 @@ class XYZReader:
     def __init__(self,
                  src_fn: str,
                  xpos=0, ypos=1, zpos=2, wpos=None, upos=None,
-                 skip=0, delim=None, x_scale=1, y_scale=1, z_scale=1,
-                 x_offset=0, y_offset=0, chunk_size=100_000):
-
+                 skiprows=0, delimiter=None, x_scale=1, y_scale=1, z_scale=1,
+                 x_offset=0, y_offset=0, chunk_size=100_000, **kwargs):
+        """
+        Accepts generic args like `skiprows` and `delimiter` to match StreamFactory profiles,
+        while maintaining legacy cudem compatability (`xpos`, `skip`, `delim`).
+        """
         self.src_fn = src_fn
-        self.xpos = int_or(xpos, 0)
-        self.ypos = int_or(ypos, 1)
-        self.zpos = int_or(zpos, 2)
+
+        self.xpos = int_or(kwargs.get('usecols', [xpos])[0] if 'usecols' in kwargs else xpos, 0)
+        self.ypos = int_or(kwargs.get('usecols', [0, ypos])[1] if 'usecols' in kwargs and len(kwargs['usecols']) > 1 else ypos, 1)
+        self.zpos = int_or(kwargs.get('usecols', [0, 1, zpos])[2] if 'usecols' in kwargs and len(kwargs['usecols']) > 2 else zpos, 2)
+
         self.wpos = int_or(wpos)
         self.upos = int_or(upos)
-        self.skip = int_or(skip, 0)
-        self.delim = delim
+
+        self.skip = int_or(kwargs.get('skip', skiprows), 0)
+        self.delim = kwargs.get('delim', delimiter)
 
         self.x_scale = float_or(x_scale, 1)
         self.y_scale = float_or(y_scale, 1)
@@ -60,7 +66,6 @@ class XYZReader:
         # Detect delimiter if not provided
         if self.delim is None:
             self.delim = self._guess_delim()
-
 
     def _guess_delim(self):
         """Peek at the file to guess the delimiter."""
@@ -83,59 +88,58 @@ class XYZReader:
         return None
 
     def yield_chunks(self):
-        """Stream read the source and write to dst_fn in standard XYZ format.
+        """Stream read the source and yield standardized XYZ recarrays."""
 
-        Returns the path if successful, None otherwise.
-        """
+        cols_to_extract = [self.xpos, self.ypos, self.zpos]
+        if self.wpos is not None: cols_to_extract.append(self.wpos)
+        if self.upos is not None: cols_to_extract.append(self.upos)
 
-        cols = [self.xpos, self.ypos, self.zpos]
-        names = ['x', 'y', 'z']
+        sorted_cols = sorted(list(set(cols_to_extract)))
 
-        if self.wpos is not None:
-            cols.append(self.wpos)
-            names.append('w')
-
-        if self.upos is not None:
-            cols.append(self.upos)
-            names.append('u')
+        col_map = {physical_idx: numpy_idx for numpy_idx, physical_idx in enumerate(sorted_cols)}
 
         try:
             with open(self.src_fn, 'r') as f_in:
-                current_skip = self.skip
+                # Apply skip only to the very first chunk
+                for _ in range(self.skip):
+                    f_in.readline()
+
                 while True:
                     try:
                         with warnings.catch_warnings():
                             warnings.simplefilter('ignore')
+                            # Load a chunk of data into memory
                             chunk_data = np.loadtxt(
                                 f_in,
                                 delimiter=self.delim,
                                 comments='#',
-                                usecols=cols,
-                                skiprows=current_skip,
+                                usecols=sorted_cols,
                                 ndmin=2,
                                 max_rows=self.chunk_size
                             )
-                            current_skip = 0
 
                             if chunk_data.size == 0:
                                 break
 
-                            if self.transform:
-                                chunk_data[:, 0] = (chunk_data[:, 0] + self.x_offset) * self.x_scale
-                                chunk_data[:, 1] = (chunk_data[:, 1] + self.y_offset) * self.y_scale
-                                chunk_data[:, 2] *= self.z_scale
+                            x = chunk_data[:, col_map[self.xpos]]
+                            y = chunk_data[:, col_map[self.ypos]]
+                            z = chunk_data[:, col_map[self.zpos]]
 
-                            x = chunk_data[:, 0]
-                            y = chunk_data[:, 1]
-                            z = chunk_data[:, 2]
+                            if self.transform:
+                                x = (x + self.x_offset) * self.x_scale
+                                y = (y + self.y_offset) * self.y_scale
+                                z = z * self.z_scale
 
                             w = np.ones_like(z)
                             u = np.zeros_like(z)
 
-                            if self.wpos is not None: w = chunk_data[:, 3]
-                            if self.upos is not None: u = chunk_data[:, 4]
+                            if self.wpos is not None: w = chunk_data[:, col_map[self.wpos]]
+                            if self.upos is not None: u = chunk_data[:, col_map[self.upos]]
 
-                            out_chunk = np.rec.fromarrays([x, y, z, w, u], names=['x','y','z','w','u'])
+                            out_chunk = np.core.records.fromarrays(
+                                [x, y, z, w, u],
+                                names=['x','y','z','w','u']
+                            )
                             yield out_chunk
 
                     except StopIteration:
@@ -155,7 +159,7 @@ class XYZStream(FetchHook):
     Can reorder columns, handle delimiters, skip headers, and rescale units.
 
     Usage:
-      --hook process_xyz:xpos=1,ypos=0,skip=1,z_scale=0.3048
+      --hook xyz_stream:xpos=1,ypos=0,skip=1,z_scale=0.3048
     """
 
     name = "xyz_stream"
@@ -163,18 +167,9 @@ class XYZStream(FetchHook):
     desc = "Standardize ASCII XYZ data"
     category = "format-stream"
 
-    def __init__(self, xpos=0, ypos=1, zpos=2, wpos=None, upos=None,
-                 skip=0, delim=None, x_scale=1, y_scale=1, z_scale=1,
-                 x_offset=0, y_offset=0, keep_raw=False, **kwargs):
+    def __init__(self, **kwargs):
         super().__init__(**kwargs)
-
-        self.params = {
-            'xpos': xpos, 'ypos': ypos, 'zpos': zpos,
-            'wpos': wpos, 'upos': upos, 'skip': skip, 'delim': delim,
-            'x_scale': x_scale, 'y_scale': y_scale, 'z_scale': z_scale,
-            'x_offset': x_offset, 'y_offset': y_offset
-        }
-        self.keep_raw = str(keep_raw).lower() == 'true'
+        self.params = kwargs
 
     def run(self, entries):
         new_entries = []
@@ -190,68 +185,9 @@ class XYZStream(FetchHook):
                 reader = XYZReader(src, **self.params)
                 entry['stream'] = reader.yield_chunks()
                 entry['stream_type'] = 'xyz_recarray'
+                new_entries.append((mod, entry))
             except Exception as e:
                 logger.warning(f"XYZStream failed for {src}: {e}")
+                new_entries.append((mod, entry))
 
-        return entries
-
-
-# class XYZProcessor(FetchHook):
-#     """Standardize ASCII XYZ data.
-
-#     Can reorder columns, handle delimiters, skip headers, and rescale units.
-#     Outputs a clean, space-delimited .xyz file.
-
-#     Usage:
-#       --hook process_xyz:xpos=1,ypos=0,skip=1,z_scale=0.3048
-#     """
-
-#     name = "process_xyz"
-#     stage = "file"
-#     desc = "Standardize ASCII XYZ data"
-
-#     def __init__(self, xpos=0, ypos=1, zpos=2, skip=0, delim=None,
-#                  x_scale=1, y_scale=1, z_scale=1,
-#                  x_offset=0, y_offset=0, keep_raw=False, **kwargs):
-#         super().__init__(**kwargs)
-
-#         self.params = {
-#             'xpos': xpos, 'ypos': ypos, 'zpos': zpos,
-#             'skip': skip, 'delim': delim,
-#             'x_scale': x_scale, 'y_scale': y_scale, 'z_scale': z_scale,
-#             'x_offset': x_offset, 'y_offset': y_offset
-#         }
-#         self.keep_raw = str(keep_raw).lower() == 'true'
-
-#     def run(self, entries):
-#         new_entries = []
-
-#         for mod, entry in entries:
-#             src = entry.get('dst_fn')
-
-#             if not src or not os.path.exists(src):
-#                 new_entries.append((mod, entry))
-#                 continue
-
-#             dst = f"{src}_clean.xyz"
-
-#             reader = XYZReader(src, **self.params)
-#             result = reader.process(dst)
-
-#             if result and os.path.exists(result) and os.path.getsize(result) > 0:
-#                 entry['dst_fn'] = result
-#                 entry['raw_fn'] = src
-#                 entry['data_type'] = 'xyz'
-
-#                 if not self.keep_raw:
-#                     try:
-#                         os.remove(src)
-#                     except OSError:
-#                         pass
-#             else:
-#                 if result and os.path.exists(result):
-#                     os.remove(result)
-
-#             new_entries.append((mod, entry))
-
-#         return new_entries
+        return new_entries

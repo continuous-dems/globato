@@ -19,7 +19,7 @@ import numpy.lib.recfunctions as rfn
 #from .gdal_proc import GDALReader
 from .rio import RasterioReader
 from .bag import BAGReader
-#from .ogr_proc import OGRReader
+from .ogr_proc import OGRReader
 from .lidar import LASReader
 from .multibeam import MBSReader
 from .xyz import XYZReader
@@ -30,10 +30,32 @@ from transformez.spatial import TransRegion
 from fetchez.hooks import FetchHook
 
 logger = logging.getLogger(__name__)
-
+logging.getLogger('rasterio').setLevel(logging.WARNING)
 
 class StreamFactory:
     """Auto-detects file type and returns the appropriate streaming iterator."""
+
+    FORMAT_PROFILES = {
+        "nos_xyz": {
+            "reader": XYZReader,
+            "delimiter": ",",
+            "skiprows": 1,
+            "z_scale": -1,
+            "usecols": [2, 1, 3],
+            "names": ['y', 'x', 'z'],
+        },
+        "csb_csv": {
+            "reader": XYZReader,
+            "delimiter": ",",
+            "skiprows": 1,
+            "usecols": [0, 1, 2],
+        },
+        "charts_000": {
+            "reader": OGRReader,
+            "layer": "SOUNDG",
+            "z_scale": -1,
+        },
+    }
 
     @staticmethod
     def get_stream(src_fn, **kwargs):
@@ -51,11 +73,12 @@ class StreamFactory:
 
         # Vector Data (OGR)
         # .shp, .000 (S-57), .gdb, .geojson
-        # if ext in ['.shp', '.000', '.json', '.geojson', '.kml'] or \
-        #    (ext == '.gdb' and os.path.isdir(src_fn)):
-        #     return OGRReader(src_fn, **kwargs).yield_chunks()
+        # TODO: update this to fiona
+        if ext in ['.shp', '.000', '.json', '.geojson', '.kml'] or \
+           (ext == '.gdb' and os.path.isdir(src_fn)):
+            return OGRReader(src_fn, **kwargs).yield_chunks()
 
-        # 3. ASCII / XYZ
+        # ASCII / XYZ
         if ext in ['.xyz', '.txt', '.csv', '.dat']:
             return XYZReader(src_fn, **kwargs).yield_chunks()
 
@@ -89,12 +112,20 @@ class StreamFactory:
         return None
 
 
-    @staticmethod
-    def get_reader(src_fn, **kwargs):
+    @classmethod
+    def get_reader(cls, src_fn, data_type=None, **kwargs):
         """Returns a generator (yield_chunks) for the given file."""
 
         if not os.path.exists(src_fn):
             return None
+
+        if data_type in cls.FORMAT_PROFILES:
+            profile = cls.FORMAT_PROFILES[data_type].copy()
+            TargetReader = profile.pop("reader")
+
+            merged_kwargs = {**profile, **kwargs}
+            logger.info(f"Applying '{data_type}' profile to {src_fn}")
+            return TargetReader(src_fn, **merged_kwargs)
 
         ext = os.path.splitext(src_fn)[1].lower()
 
@@ -102,11 +133,12 @@ class StreamFactory:
         if ext in ['.las', '.laz']:
             return LASReader(src_fn, **kwargs)
 
-        # # Vector Data (OGR)
-        # # .shp, .000 (S-57), .gdb, .geojson
-        # if ext in ['.shp', '.000', '.json', '.geojson', '.kml'] or \
-        #    (ext == '.gdb' and os.path.isdir(src_fn)):
-        #     return OGRReader(src_fn, **kwargs)
+        # Vector Data (OGR)
+        # .shp, .000 (S-57), .gdb, .geojson
+        # TODO: update this to fiona
+        if ext in ['.shp', '.000', '.json', '.geojson', '.kml'] or \
+           (ext == '.gdb' and os.path.isdir(src_fn)):
+            return OGRReader(src_fn, **kwargs)
 
         # ASCII / XYZ
         if ext in ['.xyz', '.txt', '.csv', '.dat']:
@@ -158,7 +190,6 @@ class DataStream(FetchHook):
         super().__init__(**kwargs)
         self.reader_kwargs = kwargs
 
-
     def run(self, entries):
         for mod, entry in entries:
             if entry.get('stream'):
@@ -168,7 +199,9 @@ class DataStream(FetchHook):
             if not src:
                 continue
 
-            reader = StreamFactory.get_reader(src, **self.reader_kwargs)
+            dtype = entry.get('data_type')
+
+            reader = StreamFactory.get_reader(src, data_type=dtype, **self.reader_kwargs)
             if not reader:
                 continue
 

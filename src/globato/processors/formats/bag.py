@@ -78,6 +78,7 @@ class BAGReader(RasterioReader):
             global_rows = rows + window.row_off
             global_cols = cols + window.col_off
 
+            #with rasterio.Env(CPL_MIN_LOG_LEVEL=rasterio.logging.ERROR):
             xs, ys = rasterio.transform.xy(src.transform, global_rows, global_cols, offset='center')
 
             count = len(z_valid)
@@ -97,8 +98,9 @@ class BAGReader(RasterioReader):
 
     def yield_chunks(self):
         env_opts = {
-            'GDAL_IGNORE_BAG_XML_METADATA': 'YES',
-            'OGR_BAG_MIN_VERSION': '1.0',
+            "GDAL_IGNORE_BAG_XML_METADATA": "YES",
+            "OGR_BAG_MIN_VERSION": "1.0",
+            "CPL_MIN_LOG_LEVEL": rasterio.logging.ERROR,
         }
 
         is_vr = False

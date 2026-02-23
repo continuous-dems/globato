@@ -16,17 +16,19 @@ import rasterio
 from fetchez.registry import FetchezRegistry
 from fetchez.hooks import FetchHook
 from fetchez.hooks.builtins.file_ops.unzip import Unzip
+from fetchez.hooks.builtins.metadata.datatype import SetDataType
 from fetchez.hooks.builtins.pipeline.fn_filter import FilenameFilter
 
 from globato.processors.formats.stream_factory import DataStream
 from globato.processors.filters.rq import ReferenceQuality
-from globato.processors.filters.basic import RangeZ
-from globato.processors.filters.cleaning import DropClass
+from globato.processors.filters.rangez import RangeZ
+from globato.processors.filters.dropclass import DropClass
 from globato.processors.sinks.simple_stack import SimpleStack
 
 logger = logging.getLogger(__name__)
 
 BaseFabDEM = FetchezRegistry.load_module('fabdem') or object
+
 
 class GlobFabDEM(BaseFabDEM):
     """Cleaned FABDEM Module.
@@ -177,3 +179,12 @@ class GlobBAG(BaseHydroNOS):
 
         self.add_hook(ValidateBAG())
         self.add_hook(FilenameFilter(exclude="_Ellipsoid_", stage="pre"))
+
+class GlobNOSXYZ(BaseHydroNOS):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.datatype = "xyz"
+        self.src_srs = "EPSG:4326+1089"
+
+        self.add_hook(Unzip())
+        self.add_hook(SetDataType(data_type='nox_xyz'))

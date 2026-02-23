@@ -24,7 +24,7 @@ from fetchez import core, cli, utils, spatial
 from fetchez.registry import FetchezRegistry
 
 from globato.processors.formats.stream_factory import DataStream
-from globato.processors.filters.cleaning import DropClass
+from globato.processors.filters.dropclass import DropClass
 from globato.processors.sinks.simple_stack import SimpleStack
 
 try:

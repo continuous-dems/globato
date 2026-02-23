@@ -2,10 +2,10 @@
 # -*- coding: utf-8 -*-
 
 """
-globato.processors.filters.cleaning
+globato.processors.filters.dropclass
 ~~~~~~~~~~~~~
 
-These filters are destructive
+Drops the classification from the point stream
 
 :copyright: (c) 2010-2026 Regents of the University of Colorado
 :license: MIT, see LICENSE for more details.
@@ -34,7 +34,6 @@ class DropClass(GlobatoFilter):
         self.target_classes = [int(x) for x in str(classes).split('/')]
 
     def filter_chunk(self, chunk):
-        # Identify points to drop
         mask = np.isin(chunk["classification"], self.target_classes)
 
         if self.invert:
@@ -48,5 +47,4 @@ class DropClass(GlobatoFilter):
         if np.count_nonzero(keep_mask) > 0:
             return chunk[keep_mask]
         else:
-            # All dropped
             return chunk[0:0]

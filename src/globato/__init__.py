@@ -19,9 +19,10 @@ from fetchez.registry import FetchezRegistry
 from fetchez.hooks import FetchHook
 
 # --- Custom fetchez modules ---
+from .modules.local_fs import LocalFS
 from .modules.gebco import GEBCO_COG
 from .modules.glob_dem import GlobDEM
-from .modules.sources import GlobCopernicus, GlobFabDEM, GlobMultibeam, GlobBAG
+from .modules.sources import GlobCopernicus, GlobFabDEM, GlobMultibeam, GlobBAG, GlobNOSXYZ
 
 logger = logging.getLogger(__name__)
 
@@ -60,6 +61,15 @@ def setup_fetchez(registry_cls):
 
     _auto_register_hooks()
 
+    registry_cls.register_module(
+        'local_fs',
+        LocalFS,
+        metadata={
+            'desc': 'Crawl, spatially filter, and process local directories of data.',
+            'tags': ['local', 'datalist', 'folder', 'inf', 'cudem', 'globato'],
+            'category': 'Globato',
+        }
+    )
     registry_cls.register_module(
         'gebco_cog',
         GEBCO_COG,
@@ -113,6 +123,15 @@ def setup_fetchez(registry_cls):
         metadata={
             "inherits": "nos_hydro",
             "tags": ["bathymetry", "hydrography", "nos", "noaa", "bag", "soundings", "globato"],
+            'category': 'Globato',
+        }
+    )
+    registry_cls.register_module(
+        'nos_xyz_glob',
+        GlobNOSXYZ,
+        metadata={
+            "inherits": "nos_hydro",
+            "tags": ["bathymetry", "nos", "noaa", "xyz", "legacy", "globato"],
             'category': 'Globato',
         }
     )
