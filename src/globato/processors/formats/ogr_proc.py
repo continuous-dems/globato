@@ -72,7 +72,8 @@ class OGRReader:
         if layer is None:
             for lname in self._known_layer_names:
                 layer = ds.GetLayerByName(lname)
-                if layer: break
+                if layer:
+                    break
 
         ## Default to first layer
         if layer is None:
@@ -99,7 +100,8 @@ class OGRReader:
     def yield_chunks(self):
         """Yield points from the OGR datasource."""
 
-        if self.src_fn is None: return
+        if self.src_fn is None:
+            return
 
         try:
             ds_ogr = ogr.Open(self.src_fn)
@@ -108,7 +110,8 @@ class OGRReader:
                 return
 
             layer = self._get_layer(ds_ogr)
-            if layer is None: return
+            if layer is None:
+                return
 
             # Auto-detect fields
             self._resolve_fields(layer.GetLayerDefn())
@@ -156,7 +159,8 @@ class OGRReader:
             max_chunk = 100000
 
             def flush_chunk():
-                if chunk_size == 0: return None
+                if chunk_size == 0:
+                    return None
 
                 dataset = np.column_stack((chunk_x, chunk_y, chunk_z, chunk_w, chunk_u))
                 rec_arr = np.rec.fromrecords(dataset, names='x, y, z, w, u')
@@ -170,7 +174,8 @@ class OGRReader:
             ## --- Feature Iteration ---
             for feature in layer:
                 geom = feature.GetGeometryRef()
-                if geom is None: continue
+                if geom is None:
+                    continue
 
                 ## Get Weight/Uncertainty (Per Feature)
                 w_val = 1.0
@@ -207,7 +212,8 @@ class OGRReader:
                     if z is None and self.elevation_value is not None:
                         z = self.elevation_value
 
-                    if z is None: continue
+                    if z is None:
+                        continue
 
                     chunk_x.append(x)
                     chunk_y.append(y)
