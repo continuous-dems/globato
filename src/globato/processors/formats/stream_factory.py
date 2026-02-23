@@ -30,7 +30,7 @@ from transformez.spatial import TransRegion
 from fetchez.hooks import FetchHook
 
 logger = logging.getLogger(__name__)
-logging.getLogger('rasterio').setLevel(logging.WARNING)
+logging.getLogger('rasterio').setLevel(logging.ERROR)
 
 class StreamFactory:
     """Auto-detects file type and returns the appropriate streaming iterator."""

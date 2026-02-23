@@ -20,6 +20,7 @@ from fetchez.hooks import FetchHook
 from fetchez.utils import float_or
 
 logger = logging.getLogger(__name__)
+logging.getLogger('rasterio').setLevel(logging.ERROR)
 
 
 class RasterioReader:
@@ -30,17 +31,15 @@ class RasterioReader:
         self.band_no = band_no
         self.chunk_size = chunk_size
 
-
     def get_srs(self):
         """Get SRS as WKT."""
 
         try:
             with rasterio.Env(CPL_MIN_LOG_LEVEL=rasterio.logging.ERROR):
                 with rasterio.open(self.src_fn) as src:
-                    return src.crs.to_wkt() if src.crs else 'EPSG:4326'
+                    return src.crs.to_wkt() if src.crs else "EPSG:4326"
         except Exception:
-            return 'EPSG:4326'
-
+            return "EPSG:4326"
 
     def yield_chunks(self):
         """Yield chunks using Rasterio Windows."""
@@ -73,13 +72,13 @@ class RasterioReader:
                                 win_transform,
                                 [0] * cols,
                                 range(cols),
-                                offset='center'
+                                offset="center"
                             )
                             _, ys = rasterio.transform.xy(
                                 win_transform,
                                 range(rows),
                                 [0] * rows,
-                                offset='center'
+                                offset="center"
                             )
                             X, Y = np.meshgrid(xs, ys)
                             # xs, ys = rasterio.transform.xy(
@@ -103,13 +102,13 @@ class RasterioReader:
 
                             out_chunk = np.rec.fromarrays(
                                 [flat_x[valid], flat_y[valid], flat_z[valid], flat_w[valid], flat_u[valid]],
-                                names=['x', 'y', 'z', 'w', 'u']
+                                names=["x", "y", "z", "w", "u"]
                             )
 
                             yield out_chunk
 
         except Exception as e:
-            logger.error(f'Rasterio read failed: {e}')
+            logger.error(f"Rasterio read failed: {e}")
 
 
 class RasterioStream(FetchHook):
@@ -123,12 +122,12 @@ class RasterioStream(FetchHook):
 
     def run(self, entries):
         for mod, entry in entries:
-            src = entry.get('dst_fn')
+            src = entry.get("dst_fn")
             if not src or not os.path.exists(src): continue
             try:
                 reader = RasterioReader(src, **self.params)
-                entry['stream'] = reader.yield_chunks()
-                entry['stream_type'] = 'xyz_recarray'
+                entry["stream"] = reader.yield_chunks()
+                entry["stream_type"] = 'xyz_recarray'
             except Exception as e:
                 logger.warning(f"RasterioStream failed for {src}: {e}")
         return entries
