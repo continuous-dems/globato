@@ -26,12 +26,16 @@ class GTPCReader:
 
     def yield_chunks(self):
         try:
-            with h5py.File(self.fn, 'r') as f:
-                if 'points' not in f: return
-                grp = f['points']
+            with h5py.File(self.fn, "r") as f:
+                if "points" not in f:
+                    return
 
-                if 'x' not in grp: return
-                total_pts = grp['x'].shape[0]
+                grp = f["points"]
+
+                if "x" not in grp:
+                    return
+
+                total_pts = grp["x"].shape[0]
                 fields = list(grp.keys())
 
                 for i in range(0, total_pts, self.chunk_size):
