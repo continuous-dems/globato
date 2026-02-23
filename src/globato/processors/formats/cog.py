@@ -63,7 +63,6 @@ class COGSubset(FetchHook):
 
         return new_entries
 
-
     def _fetch_subset(self, url, dst_fn, region):
         """Perform windowed read and write using Rasterio."""
 
@@ -77,13 +76,13 @@ class COGSubset(FetchHook):
 
             profile = src.profile.copy()
             profile.update({
-                'driver': 'GTiff',
-                'height': window.height,
-                'width': window.width,
-                'transform': new_transform,
-                'compress': 'deflate',
-                'tiled': True
+                "driver": 'GTiff',
+                "height": window.height,
+                "width": window.width,
+                "transform": new_transform,
+                "compress": "deflate",
+                "tiled": True
             })
 
-            with rasterio.open(dst_fn, 'w', **profile) as dst:
+            with rasterio.open(dst_fn, "w", **profile) as dst:
                 dst.write(data)
