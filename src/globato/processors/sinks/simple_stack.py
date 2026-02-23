@@ -29,7 +29,15 @@ class PointAccumulator:
     Accumulates Weighted Mean (Sum_Z / Sum_W) into a temporary 2-band GeoTIFF.
     """
 
-    def __init__(self, filename, region, x_inc, y_inc, crs="EPSG:4326", verbose=False):
+    def __init__(
+            self,
+            filename,
+            region,
+            x_inc,
+            y_inc,
+            crs="EPSG:4326",
+            verbose=False,
+    ):
         self.filename = filename
         self.region = region
         self.x_inc = float(x_inc)
@@ -57,21 +65,21 @@ class PointAccumulator:
             except: pass
 
         profile = {
-            'driver': 'GTiff',
-            'dtype': 'float32',
-            'count': 2,
-            'width': self.nx,
-            'height': self.ny,
-            'crs': self.crs,
-            'transform': self.transform,
-            'tiled': True,
-            'compress': 'lzw',
-            'nodata': 0
+            "driver": "GTiff",
+            "dtype": 'float32',
+            "count": 2,
+            "width": self.nx,
+            "height": self.ny,
+            "crs": self.crs,
+            "transform": self.transform,
+            "tiled": True,
+            "compress": "lzw",
+            "nodata": 0
         }
 
-        with rasterio.open(self.acc_fn, 'w', **profile) as dst:
-            dst.set_band_description(1, 'Weighted_Sum_Z')
-            dst.set_band_description(2, 'Sum_Weights')
+        with rasterio.open(self.acc_fn, "w", **profile) as dst:
+            dst.set_band_description(1, "Weighted_Sum_Z")
+            dst.set_band_description(2, "Sum_Weights")
 
 
     def add_points(self, points):
@@ -80,18 +88,18 @@ class PointAccumulator:
         if points is None or len(points) == 0: return
 
         # Vectorized Indexing
-        cols = np.floor((points['x'] - self.region.xmin) / self.x_inc).astype(int)
-        rows = np.floor((self.region.ymax - points['y']) / self.y_inc).astype(int)
+        cols = np.floor((points["x"] - self.region.xmin) / self.x_inc).astype(int)
+        rows = np.floor((self.region.ymax - points["y"]) / self.y_inc).astype(int)
 
         mask = (cols >= 0) & (cols < self.nx) & (rows >= 0) & (rows < self.ny)
         if not np.any(mask): return
 
         valid_cols = cols[mask]
         valid_rows = rows[mask]
-        valid_z = points['z'][mask]
+        valid_z = points["z"][mask]
 
-        if 'w' in points.dtype.names:
-            valid_w = points['w'][mask]
+        if "w" in points.dtype.names:
+            valid_w = points["w"][mask]
         else:
             valid_w = np.ones_like(valid_z)
 
@@ -114,7 +122,7 @@ class PointAccumulator:
         window = Window(c_min, r_min, win_w, win_h)
 
         with self.lock:
-            with rasterio.open(self.acc_fn, 'r+') as dst:
+            with rasterio.open(self.acc_fn, "r+") as dst:
                 current_sum = dst.read(1, window=window)
                 current_w = dst.read(2, window=window)
 
@@ -122,8 +130,6 @@ class PointAccumulator:
                 rel_c = u_cols - c_min
 
                 # Update Window
-                # Note: This simple indexing works if unique_flat has no collisions within the window
-                # (which np.unique guarantees)
                 current_sum[rel_r, rel_c] += pixel_sum_z
                 current_w[rel_r, rel_c] += pixel_sum_w
 
@@ -134,21 +140,22 @@ class PointAccumulator:
     def finalize(self, ndv=-9999):
         """Divide Sums by Weights to produce final Z grid."""
 
-        if self.verbose: logger.info(f'Finalizing grid: {self.filename}')
+        if self.verbose:
+            logger.info(f"Finalizing grid: {self.filename}")
 
         if not os.path.exists(self.acc_fn):
             return None
 
         with rasterio.open(self.acc_fn) as src:
             profile = src.profile.copy()
-            profile.update(count=1, nodata=ndv, dtype='float32')
+            profile.update(count=1, nodata=ndv, dtype="float32")
 
-            with rasterio.open(self.filename, 'w', **profile) as dst:
+            with rasterio.open(self.filename, "w", **profile) as dst:
                 for _, window in src.block_windows(1):
                     sums = src.read(1, window=window)
                     weights = src.read(2, window=window)
 
-                    out_z = np.full(sums.shape, ndv, dtype='float32')
+                    out_z = np.full(sums.shape, ndv, dtype="float32")
 
                     valid = weights > 0
                     out_z[valid] = sums[valid] / weights[valid]
@@ -163,8 +170,7 @@ class PointAccumulator:
 
 
 class SimpleStack(FetchHook):
-    """
-    Simple Weighted Mean Stacker.
+    """Simple Weighted Mean Stacker.
 
     Args:
         res (str): Resolution (e.g. '1s', '10m').
@@ -173,28 +179,28 @@ class SimpleStack(FetchHook):
         plug (bool): If True, consumes the stream, writes the file, and replaces
                      the entry with the raster result.
     """
+
     name = "simple_stack"
     stage = "file"
     category = "stream-sink"
 
-    def __init__(self, res="1s", output="output.tif", mode='mean', plug=False, **kwargs):
+    def __init__(self, res="1s", output="output.tif", mode="mean", plug=False, **kwargs):
         super().__init__(**kwargs)
         self.res = res
         self.output = output
         self.plug = utils.str2bool(plug)
         self._accumulator = None
 
-        # Check if output is a template (implies per-file stacking)
         self._global_mode = '{' not in self.output and '}' not in self.output
 
     def _create_accumulator(self, filename, region):
         """Factory method to create an accumulator."""
 
-        if isinstance(self.res, str) and self.res.endswith('s'):
+        if isinstance(self.res, str) and self.res.endswith("s"):
             inc = float(self.res[:-1]) / 3600.0
             x_inc, y_inc = inc, inc
         elif '/' in str(self.res):
-            x_inc, y_inc = map(float, self.res.split('/'))
+            x_inc, y_inc = map(float, self.res.split("/"))
         else:
             inc = float(self.res)
             x_inc, y_inc = inc, inc
@@ -218,9 +224,8 @@ class SimpleStack(FetchHook):
         new_entries = []
         processed_count = 0
 
-        # Pre-scan for region if global mode
         if self._global_mode and not self._accumulator:
-            region = next((mod.region for mod, _ in entries if getattr(mod, 'region', None)), None)
+            region = next((mod.region for mod, _ in entries if getattr(mod, "region", None)), None)
             if region:
                 self._init_accumulator(region)
             else:
@@ -228,7 +233,7 @@ class SimpleStack(FetchHook):
                 return entries
 
         for mod, entry in entries:
-            stream = entry.get('stream')
+            stream = entry.get("stream")
             if not stream:
                 new_entries.append((mod, entry))
                 continue
@@ -237,12 +242,12 @@ class SimpleStack(FetchHook):
 
             if not self._global_mode:
                 # --- Per-File Mode ---
-                # Resolve filename template
+                # Filename template
                 src_base = os.path.splitext(os.path.basename(entry['dst_fn']))[0]
                 out_fn = self.output.format(base=src_base, name=mod.name)
 
                 if not os.path.isabs(out_fn):
-                    out_fn = os.path.join(os.path.dirname(entry['dst_fn']), out_fn)
+                    out_fn = os.path.join(os.path.dirname(entry["dst_fn"]), out_fn)
 
                 # Use module region for per-file stacking
                 acc = self._create_accumulator(out_fn, mod.region)
@@ -252,16 +257,16 @@ class SimpleStack(FetchHook):
                     self._consume_stream(stream, acc)
                     acc.finalize()
 
-                    entry['stream'] = None
-                    entry['dst_fn'] = out_fn
-                    entry['data_type'] = 'raster'
+                    entry["stream"] = None
+                    entry["dst_fn"] = out_fn
+                    entry["data_type"] = "raster"
                     new_entries.append((mod, entry))
                 else:
-                    entry['stream'] = self._intercept_per_file(stream, acc)
-                    entry['dst_fn'] = out_fn
+                    entry["stream"] = self._intercept_per_file(stream, acc)
+                    entry["dst_fn"] = out_fn
                     new_entries.append((mod, entry))
 
-                entry.setdefault('artifacts', {})[self.name] = out_fn
+                entry.setdefault("artifacts", {})[self.name] = out_fn
 
             else:
                 # --- Global Mode ---
@@ -272,7 +277,7 @@ class SimpleStack(FetchHook):
                 if self.plug:
                     self._consume_stream(stream, self._accumulator)
                 else:
-                    entry['stream'] = self._intercept(stream, entry)
+                    entry["stream"] = self._intercept(stream, entry)
                     new_entries.append((mod, entry))
 
         if self._global_mode and self.plug and processed_count > 0:
@@ -282,13 +287,13 @@ class SimpleStack(FetchHook):
 
                 mod, _ = entries[0]
                 stack_entry = {
-                    'url': f'file://{self.output}',
-                    'dst_fn': self.output,
-                    'data_type': 'raster',
-                    'status': 0
+                    "url": f"file://{self.output}",
+                    "dst_fn": self.output,
+                    "data_type": "raster",
+                    "status": 0,
                 }
                 new_entries.append((mod, stack_entry))
-                entry.setdefault('artifacts', {})[self.name] = self.output
+                entry.setdefault("artifacts", {})[self.name] = self.output
 
                 self._accumulator = None
 

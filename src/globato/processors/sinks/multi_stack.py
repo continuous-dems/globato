@@ -45,7 +45,17 @@ class MultiStackAccumulator:
         "src_uncertainty": 5, "x": 6, "y": 7
     }
 
-    def __init__(self, region, x_inc, y_inc, output_fn, mode="mean", weight_threshold="1", crs=None, verbose=False):
+    def __init__(
+            self,
+            region,
+            x_inc,
+            y_inc,
+            output_fn,
+            mode="mean",
+            weight_threshold="1",
+            crs="EPSG:4326",
+            verbose=False,
+    ):
         self.region = Region.from_list(region)
         self.x_inc = float(x_inc)
         self.y_inc = float(y_inc)
@@ -295,6 +305,7 @@ class MultiStackAccumulator:
 # MULTI_STACK HOOK
 class MultiStackHook(FetchHook):
     """Multi_Stack Gridding Hook.
+
     accumulates streaming data into a multi-band statistical grid.
     Maintains a continuous .sums.tif to prevent duplication.
     """
