@@ -9,17 +9,17 @@ description = "A suite of specialized data processors (Multibeam, Lidar, Raster)
 readme = "README.md"
 authors = [{ name = "Matthew Love", email = "matthew.love@colorado.edu" }]
 license = { file = "LICENSE" }
-requires-python = ">=3.8"
+requires-python = ">=3.10"
 keywords = ["geospatial", "fetchez", "multibeam", "lidar", "etl"]
 
 dependencies = [
     "fetchez>=0.4.2",
     "transformez",
-    "numpy<2.0.0",
+    "numpy>1.24",
     "laspy[lazrs,laszip]",
-    "rasterio",
+    "rasterio>1.4.0",
     "pandas",
-    "pyproj",
+    "pyproj>3.6.1",
     "pyshp"
 ]
 
