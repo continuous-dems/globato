@@ -20,7 +20,7 @@ from fetchez.hooks import FetchHook
 from fetchez.utils import float_or
 
 logger = logging.getLogger(__name__)
-logging.getLogger('rasterio').setLevel(logging.ERROR)
+logging.getLogger("rasterio").setLevel(logging.ERROR)
 
 
 class RasterioReader:
