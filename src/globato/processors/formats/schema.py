@@ -1,3 +1,16 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+
+"""
+globato.processors.formats.schema
+~~~~~~~~~~~~~~~~~~~
+
+Makes sure incoming format streams make the correct rec-array
+
+:copyright: (c) 2010-2026 Regents of the University of Colorado
+:license: MIT, see LICENSE for more details.
+"""
+
 import numpy as np
 from fetchez import utils
 
@@ -27,18 +40,18 @@ def ensure_schema(stream, module_weight=1.0, module_unc=0.0):
         new_fields = {}
 
         # Metadata Defaults
-        if 'w' not in names:
-            new_fields['w'] = np.full(len(chunk), module_weight, dtype=np.float32)
+        if "w" not in names:
+            new_fields["w"] = np.full(len(chunk), module_weight, dtype=np.float32)
 
-        if 'u' not in names:
-            new_fields['u'] = np.full(len(chunk), module_unc, dtype=np.float32)
+        if "u" not in names:
+            new_fields["u"] = np.full(len(chunk), module_unc, dtype=np.float32)
 
         # Classification Defaults
-        if 'classification' not in names:
-            new_fields['classification'] = np.zeros(len(chunk), dtype=np.uint8)
+        if "classification" not in names:
+            new_fields["classification"] = np.zeros(len(chunk), dtype=np.uint8)
 
-        if 'confidence' not in names:
-            new_fields['confidence'] = np.ones(len(chunk), dtype=np.int16)
+        if "confidence" not in names:
+            new_fields["confidence"] = np.ones(len(chunk), dtype=np.int16)
 
         # Append missing fields
         if new_fields:
@@ -51,13 +64,13 @@ def ensure_schema(stream, module_weight=1.0, module_unc=0.0):
             )
 
         # Apply Weight
-        if 'w' in names:
-            chunk['w'] *= module_weight
+        if "w" in names:
+            chunk["w"] *= module_weight
 
         # Apply Uncertainty
         # sqrt(point_u^2 + module_u^2)
         if module_unc > 0:
-            if 'u' in names:
-                chunk['u'] = np.sqrt(np.square(chunk['u']) + np.square(module_unc))
+            if "u" in names:
+                chunk["u"] = np.sqrt(np.square(chunk["u"]) + np.square(module_unc))
 
         yield chunk
