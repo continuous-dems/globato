@@ -17,6 +17,7 @@ from fetchez import utils
 import numpy as np
 import numpy.lib.recfunctions as rfn
 
+
 def ensure_schema(stream, module_weight=1.0, module_unc=0.0):
     """Generator wrapper that guarantees the stream has standard columns.
 
