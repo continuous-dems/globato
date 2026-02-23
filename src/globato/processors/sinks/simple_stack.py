@@ -61,8 +61,10 @@ class PointAccumulator:
         """Create the temporary zero-filled accumulation raster."""
 
         if not os.path.exists(os.path.dirname(os.path.abspath(self.acc_fn))):
-            try: os.makedirs(os.path.dirname(os.path.abspath(self.acc_fn)))
-            except: pass
+            try:
+                os.makedirs(os.path.dirname(os.path.abspath(self.acc_fn)))
+            except:
+                pass
 
         profile = {
             "driver": "GTiff",
@@ -74,7 +76,7 @@ class PointAccumulator:
             "transform": self.transform,
             "tiled": True,
             "compress": "lzw",
-            "nodata": 0
+            "nodata": 0,
         }
 
         with rasterio.open(self.acc_fn, "w", **profile) as dst:
@@ -163,8 +165,10 @@ class PointAccumulator:
                     dst.write(out_z, 1, window=window)
 
         if os.path.exists(self.acc_fn):
-            try: os.remove(self.acc_fn)
-            except: pass
+            try:
+                os.remove(self.acc_fn)
+            except:
+                pass
 
         return self.filename
 
@@ -184,7 +188,14 @@ class SimpleStack(FetchHook):
     stage = "file"
     category = "stream-sink"
 
-    def __init__(self, res="1s", output="output.tif", mode="mean", plug=False, **kwargs):
+    def __init__(
+            self,
+            res="1s",
+            output="output.tif",
+            mode="mean",
+            plug=False,
+            **kwargs,
+    ):
         super().__init__(**kwargs)
         self.res = res
         self.output = output
@@ -216,7 +227,9 @@ class SimpleStack(FetchHook):
     def _init_accumulator(self, region):
         """Initialize the single global accumulator."""
 
-        if self._accumulator: return
+        if self._accumulator:
+            return
+
         logger.info(f"Initializing Global Stack: {self.output}")
         self._accumulator = self._create_accumulator(self.output, region)
 
