@@ -144,6 +144,8 @@ class RasterHook(FetchHook):
                         # Process chunks
                         res_a = self.process_chunk(data_a, ndv, entry, transform=chunk_transform, window=buff_win)
                         res_b = self.process_chunk(data_b, ndv, entry, transform=chunk_transform, window=buff_win)
+                        #res_a[:] = ndv
+                        #res_b[res_b > 0] = ndv
 
                         # Stitch
                         result = np.where(barrier_mask, res_a, res_b)

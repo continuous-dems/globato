@@ -22,6 +22,7 @@ from fetchez.hooks import FetchHook
 from .modules.local_fs import LocalFS
 from .modules.gebco import GEBCO_COG
 from .modules.glob_dem import GlobDEM
+from .modules.glob_coast import GlobCoast
 from .modules.sources import GlobCopernicus, GlobFabDEM, GlobMultibeam, GlobBAG, GlobNOSXYZ
 
 logger = logging.getLogger(__name__)
@@ -86,6 +87,15 @@ def setup_fetchez(registry_cls):
         metadata={
             'desc': 'Fetch and glob the best available DEMs',
             'tags': ['gebco', 'bathymetry', 'global', 'etopo', 'globato'],
+            'category': 'Tools',
+        }
+    )
+    registry_cls.register_module(
+        'glob_coast',
+        GlobCoast,
+        metadata={
+            'desc': 'Fetch and glob a coastline',
+            'tags': ['global', 'globato', 'coastline', 'landmask'],
             'category': 'Tools',
         }
     )
