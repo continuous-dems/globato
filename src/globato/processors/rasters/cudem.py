@@ -137,7 +137,7 @@ class CudemStepDown(RasterHook):
 
         shutil.move(temp_path, foreground_path)
 
-    def process_raster(self, src_path, dst_path, entry, entries):
+    def process_raster(self, src_path, dst_path, entry):
         """src_path is the high-resolution master stack."""
 
         previous_surface = None
@@ -168,7 +168,7 @@ class CudemStepDown(RasterHook):
                 barrier=step_barrier
             )
 
-            success = interp.process_raster(step_stack, step_interp, entry, entries)
+            success = interp.process_raster(step_stack, step_interp, entry)
 
             if success:
                 previous_surface = step_interp
