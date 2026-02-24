@@ -285,11 +285,10 @@ class MultiStackAccumulator:
 
         # Generate Statistics on the Finalized TIF
         with rasterio.open(self.output_fn, 'r+') as dst:
-            stats_dict = {}
-            for idx in range(1, dst.count + 1):
-                stats_dict[idx] = dst.statistics(idx, approx=False, clear_cache=True)
+            all_stats = dst.stats(approx=False)
+            for i, stats in enumerate(all_stats):
+                idx = i + 1 # Bands are 1-indexed
 
-            for idx, stats in stats_dict.items():
                 desc = [k for k, v in self.BAND_MAP.items() if v == idx][0]
                 dst.update_tags(bidx=idx,
                     STATISTICS_MINIMUM=str(stats.min),
