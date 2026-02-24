@@ -6,17 +6,20 @@ globato.processors.hooks.osm_landmask
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 Fetches OSM Coastline data and polygonizes it into a landmask.
-Includes logic to classify Land vs Water using OSM winding rules
-and GMRT elevation fallback.
+Hybrid: Uses OGR to read, Shapely to process, and Fiona to write.
 
-:copyright: (c) 2010-2026 Regents of the University of Colorado
+:copyright: (c) 2016 - 2026 Regents of the University of Colorado
 :license: MIT, see LICENSE for more details.
 """
 
 import os
 import logging
 import math
-import numpy as np
+import fiona
+import shapely.wkb
+from osgeo import ogr
+from shapely.geometry import box, LineString, Point, mapping
+from shapely.ops import linemerge, unary_union
 from fetchez.hooks import FetchHook
 from fetchez.core import Fetch, urlencode
 from fetchez import utils
@@ -26,12 +29,6 @@ try:
 except ImportError:
     gmrt_fetch_point = None
 
-try:
-    from osgeo import ogr
-    HAS_OGR = True
-except ImportError:
-    HAS_OGR = False
-
 logger = logging.getLogger(__name__)
 
 OSM_API = "https://lz4.overpass-api.de/api/interpreter"
@@ -39,22 +36,12 @@ OSM_API = "https://lz4.overpass-api.de/api/interpreter"
 
 class OSMLandmask(FetchHook):
     """Generates a Land/Water mask vector from OpenStreetMap.
-
-    Logic:
-    1. Fetches 'natural=coastline' ways from Overpass API.
-    2. Differences the Region Box with the Coastlines.
-    3. Uses Ray Casting (Land is on Left of OSM line) to classify resulting polygons.
-    4. Fallback: If no coastlines, queries GMRT at center point to determine Land/Water.
-
-    Usage:
-        --hook osm_landmask:filename=landmask.gpkg
     """
-
     name = "osm_landmask"
     stage = "pre"
     category = "generator"
 
-    def __init__(self, filename="landmask.gpkg", **kwargs):
+    def __init__(self, filename="landmask.geojson", **kwargs):
         super().__init__(**kwargs)
         self.filename = filename
 
@@ -62,10 +49,8 @@ class OSMLandmask(FetchHook):
         regions = [getattr(mod, "region", None) for mod, _ in entries]
         valid_regions = [r for r in regions if r]
 
-        if not valid_regions:
-            return entries
+        if not valid_regions: return entries
 
-        # Union of all requested regions
         w = min(r[0] for r in valid_regions)
         e = max(r[1] for r in valid_regions)
         s = min(r[2] for r in valid_regions)
@@ -80,7 +65,9 @@ class OSMLandmask(FetchHook):
 
         logger.info(f"[OSM] Fetching coastline for {target_region}...")
         osm_xml = self._fetch_osm(target_region)
-        if not osm_xml:
+
+        if not osm_xml or os.path.getsize(osm_xml) < 100:
+            self._handle_fallback(out_path, target_region)
             return entries
 
         logger.info("[OSM] Polygonizing and classifying coastline...")
@@ -89,6 +76,8 @@ class OSMLandmask(FetchHook):
             logger.info(f"[OSM] Generated landmask: {out_path}")
         except Exception as e:
             logger.error(f"[OSM] Polygonization failed: {e}")
+            if not os.path.exists(out_path):
+                self._handle_fallback(out_path, target_region)
 
         if os.path.exists(osm_xml):
             os.remove(osm_xml)
@@ -96,8 +85,6 @@ class OSMLandmask(FetchHook):
         return entries
 
     def _fetch_osm(self, region):
-        """Fetch raw OSM XML via Overpass."""
-
         w, e, s, n = region
         bbox = f"{s},{w},{n},{e}"
 
@@ -110,189 +97,144 @@ class OSMLandmask(FetchHook):
         (._;>;);
         out meta;
         """
-
-        params = urlencode({'data': query})
+        params = urlencode({"data": query})
         url = f"{OSM_API}?{params}"
         dest = f"temp_osm_{w}_{s}.xml"
-
         f = Fetch(url)
         if f.fetch_file(dest, verbose=False) == 0:
             return dest
+
         return None
 
-    def _determine_side(self, poly_geom, lines_geom):
-        """Determine if a polygon is Land or Water.
-        OSM Rule: Land is always on the LEFT side of the coastline way.
-        """
+    def _is_land_by_topology(self, poly, lines_geom, buffer_size):
+        """Determine if polygon is Land using the OSM Left-Hand Rule."""
 
-        if not lines_geom or lines_geom.IsEmpty():
-            return False
+        check_poly = poly.buffer(buffer_size * 2.0)
 
-        if not poly_geom.Intersects(lines_geom.Buffer(1e-7)):
-            return False
+        if not check_poly.intersects(lines_geom):
+            return None # Indeterminate
 
-        if lines_geom.GetGeometryType() == ogr.wkbMultiLineString:
-            geoms = [lines_geom.GetGeometryRef(i) for i in range(lines_geom.GetGeometryCount())]
+        if lines_geom.geom_type == "MultiLineString":
+            geoms = list(lines_geom.geoms)
         else:
             geoms = [lines_geom]
 
         votes = []
-
         for line in geoms:
-            if not line.Intersects(poly_geom):
+            if not check_poly.intersects(line):
                 continue
 
-            pts = line.GetPointCount()
-            step = max(1, int(pts / 5))
+            coords = list(line.coords)
+            step = max(1, int(len(coords) / 5))
 
-            for i in range(0, pts - 1, step):
-                p1 = line.GetPoint(i)
-                p2 = line.GetPoint(i+1)
-
-                # Vector P1 -> P2
-                dx = p2[0] - p1[0]
-                dy = p2[1] - p1[1]
-
-                # Midpoint
-                mx = p1[0] + dx * 0.5
-                my = p1[1] + dy * 0.5
+            for i in range(0, len(coords) - 1, step):
+                p1 = coords[i]
+                p2 = coords[i+1]
+                dx, dy = p2[0] - p1[0], p2[1] - p1[1]
 
                 # Normal Vector pointing LEFT (-dy, dx)
-                # This points to the "Land" side according to OSM rules
-                nx = -dy
-                ny = dx
-
-                # Scale normal to be very small
+                nx, ny = -dy, dx
                 mag = math.sqrt(nx*nx + ny*ny)
-                if mag == 0: continue
+                if mag == 0:
+                    continue
 
-                scale = 1e-5
-                test_x = mx + (nx / mag) * scale
-                test_y = my + (ny / mag) * scale
+                scale = buffer_size * 4.0
+                test_pt = Point(p1[0] + dx*0.5 + (nx/mag)*scale,
+                                p1[1] + dy*0.5 + (ny/mag)*scale)
 
-                # Check if this "Left" point is inside the polygon
-                test_pt = ogr.Geometry(ogr.wkbPoint)
-                test_pt.AddPoint(test_x, test_y)
-
-                if poly_geom.Contains(test_pt):
-                    votes.append(True) # Left is Inside -> Polygon is Land
+                if poly.contains(test_pt):
+                    votes.append(True)
                 else:
-                    votes.append(False) # Left is Outside -> Polygon is Water
+                    votes.append(False)
 
         if not votes:
-            return False
+            return None
 
         return (sum(votes) / len(votes)) > 0.5
 
-    def _verify_gmrt(self, region):
-        """Fallback: Check GMRT elevation at the center of the region."""
+    def _is_land_by_gmrt(self, poly):
+        """Fallback: Check GMRT elevation."""
 
-        if not gmrt_fetch_point:
-            logger.warning("[OSM] GMRT module missing. Assuming Water.")
-            return False
+        if not gmrt_fetch_point: return False
+        try:
+            pt = poly.centroid
+            val = float(gmrt_fetch_point(latitude=pt.y, longitude=pt.x))
+            return val >= 0
+        except: return False
+
+    def _handle_fallback(self, dst_file, region):
+        """If OSM fails, guess whole tile based on center point."""
 
         w, e, s, n = region
-        cx = (w + e) / 2
-        cy = (s + n) / 2
+        cx, cy = (w + e)/2, (s + n)/2
+        is_land = False
+        if gmrt_fetch_point:
+            try: is_land = float(gmrt_fetch_point(latitude=cy, longitude=cx)) >= 0
+            except: pass
 
-        try:
-            val_str = gmrt_fetch_point(latitude=cy, longitude=cx)
-            if val_str:
-                val = float(val_str)
-                is_land = val >= 0
-                logger.info(f"[OSM] GMRT Fallback at ({cx:.4f}, {cy:.4f}): Z={val} -> {'Land' if is_land else 'Water'}")
-                return is_land
-        except Exception as e:
-            logger.warning(f"[OSM] GMRT check failed: {e}")
+        poly = box(w, s, e, n) if is_land else None
+        self._write_geojson(dst_file, [poly] if poly else [])
 
-        return False
-
-    def _create_empty_gpkg(self, dst_file):
-        """Create a valid but empty GPKG (implies full water)."""
-
-        drv = ogr.GetDriverByName("GPKG")
-        ds = drv.CreateDataSource(dst_file)
-        lyr = ds.CreateLayer("landmask", geom_type=ogr.wkbPolygon)
-        ds = None
+    def _write_geojson(self, dst_file, polygons):
+        schema = {"geometry": "Polygon", "properties": {"class": "str"}}
+        with fiona.open(dst_file, "w", driver="GeoJSON", crs="EPSG:4326", schema=schema) as dst:
+            for poly in polygons:
+                dst.write({
+                    "geometry": mapping(poly),
+                    "properties": {"class": "land"}
+                })
 
     def _polygonize(self, osm_file, dst_file, region):
-        """Convert OSM lines to classified Land Polygons."""
+        """The Hybrid Engine: OGR Reader -> Shapely Processor -> Fiona Writer"""
 
         ds = ogr.Open(osm_file)
-        if not ds: raise IOError("Cannot open OSM XML")
-        layer = ds.GetLayer(1) # 'lines'
+        if not ds:
+            self._handle_fallback(dst_file, region)
+            return
 
-        # Collect all coastline lines
-        multi_line = ogr.Geometry(ogr.wkbMultiLineString)
-        has_lines = False
+        layer = ds.GetLayer(1) # Layer 1 is usually 'lines' in OSM driver
+        if not layer:
+            self._handle_fallback(dst_file, region)
+            return
+
+        lines = []
         for feat in layer:
-            geom = feat.GetGeometryRef()
-            if geom:
-                multi_line.AddGeometry(geom)
-                has_lines = True
+            geom_ref = feat.GetGeometryRef()
+            if geom_ref:
+                shapely_geom = shapely.wkb.loads(bytes(geom_ref.ExportToWkb()))
+                lines.append(shapely_geom)
 
-        # No Coastline Found (All Land or All Water)
-        if not has_lines:
-            is_land = self._verify_gmrt(region)
-            if is_land:
-                self._write_box(dst_file, region) # Full Land
-            else:
-                self._create_empty_gpkg(dst_file) # Full Water
+        if not lines:
+            self._handle_fallback(dst_file, region)
             return
 
-        w, e, s, n = region
-        ring = ogr.Geometry(ogr.wkbLinearRing)
-        ring.AddPoint(w, n); ring.AddPoint(e, n); ring.AddPoint(e, s); ring.AddPoint(w, s); ring.AddPoint(w, n)
-        box = ogr.Geometry(ogr.wkbPolygon)
-        box.AddGeometry(ring)
+        merged = linemerge(lines)
+        coastline_geom = unary_union(merged)
 
-        # Difference: Region - Coastlines
-        cutters = multi_line.Buffer(1e-9)
+        w, e, s, n = region
+        region_box = box(w, s, e, n)
+
+        cut_width = 1e-6
+        cutters = coastline_geom.buffer(cut_width)
+
         try:
-            polys = box.Difference(cutters)
+            split_geom = region_box.difference(cutters)
         except Exception:
-            logger.warning("[OSM] Topological error. Falling back to GMRT check.")
-            is_land = self._verify_gmrt(region)
-            if is_land: self._write_box(dst_file, region)
-            else: self._create_empty_gpkg(dst_file)
+            self._handle_fallback(dst_file, region)
             return
 
-        drv = ogr.GetDriverByName("GPKG")
-        dst_ds = drv.CreateDataSource(dst_file)
-        dst_lyr = dst_ds.CreateLayer("landmask", geom_type=ogr.wkbPolygon)
+        land_polys = []
+        polys = [split_geom] if split_geom.geom_type == "Polygon" else list(split_geom.geoms)
 
-        # Classify and Save Land Polygons
-        if polys.GetGeometryType() == ogr.wkbPolygon:
-            # Single polygon result
-            if self._determine_side(polys, multi_line):
-                feat = ogr.Feature(dst_lyr.GetLayerDefn())
-                feat.SetGeometry(polys)
-                dst_lyr.CreateFeature(feat)
-        else:
-            # MultiPolygon result
-            for i in range(polys.GetGeometryCount()):
-                poly = polys.GetGeometryRef(i)
-                # ONLY write polygons determined to be Land
-                if self._determine_side(poly, multi_line):
-                    feat = ogr.Feature(dst_lyr.GetLayerDefn())
-                    feat.SetGeometry(poly)
-                    dst_lyr.CreateFeature(feat)
+        for poly in polys:
+            if poly.is_empty: continue
 
-        dst_ds = None
+            is_land = self._is_land_by_topology(poly, coastline_geom, cut_width)
 
-    def _write_box(self, dst_file, region):
-        """Writes the full bbox as a single polygon (Full Land)."""
+            if is_land is None:
+                is_land = self._is_land_by_gmrt(poly)
 
-        w, e, s, n = region
-        ring = ogr.Geometry(ogr.wkbLinearRing)
-        ring.AddPoint(w, n); ring.AddPoint(e, n); ring.AddPoint(e, s); ring.AddPoint(w, s); ring.AddPoint(w, n)
-        poly = ogr.Geometry(ogr.wkbPolygon)
-        poly.AddGeometry(ring)
+            if is_land:
+                land_polys.append(poly)
 
-        drv = ogr.GetDriverByName("GPKG")
-        ds = drv.CreateDataSource(dst_file)
-        lyr = ds.CreateLayer("landmask", geom_type=ogr.wkbPolygon)
-        feat = ogr.Feature(lyr.GetLayerDefn())
-        feat.SetGeometry(poly)
-        lyr.CreateFeature(feat)
-        ds = None
+        self._write_geojson(dst_file, land_polys)

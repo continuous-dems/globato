@@ -61,14 +61,14 @@ class RasterHook(FetchHook):
         n = max(r[3] for r in valid_regions)
         target_region = [w, e, s, n]
 
-        return TransRegion(target_region)
+        return TransRegion(*target_region)
 
     def run(self, entries):
         if not getattr(self, 'region', None):
             self.region = self._get_region_from_entries(entries)
 
         if self.barrier and self.barrier.lower() == "coastline":
-            osm_path = "auto_coastline.gpkg"
+            osm_path = "auto_coastline.geojson"
             if not os.path.exists(osm_path):
                 logger.info("Auto-generating OSM Coastline barrier...")
                 from ..hooks.osm_landmask import OSMLandmask
@@ -142,8 +142,8 @@ class RasterHook(FetchHook):
                         data_b = np.where(~barrier_mask, data, ndv)
 
                         # Process chunks
-                        res_a = self.process_chunk(data_a, ndv, entry)
-                        res_b = self.process_chunk(data_b, ndv, entry)
+                        res_a = self.process_chunk(data_a, ndv, entry, transform=chunk_transform, window=buff_win)
+                        res_b = self.process_chunk(data_b, ndv, entry, transform=chunk_transform, window=buff_win)
 
                         # Stitch
                         result = np.where(barrier_mask, res_a, res_b)
@@ -166,7 +166,7 @@ class RasterHook(FetchHook):
 
         return True
 
-    def process_chunk(self, data, ndv, entry):
+    def process_chunk(self, data, ndv, entry, transform=None, window=None):
         """Must be implemented by subclasses. Returns processed numpy array."""
 
         raise NotImplementedError

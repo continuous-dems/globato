@@ -37,7 +37,7 @@ class CudemStepDown(RasterHook):
 
     def __init__(self, steps=2, weights="1.0/0.5", resolutions="1s/3s",
                  algo="interp_scipy", barrier=None, **kwargs):
-        super().__init__(**kwargs)
+        super().__init__(barrier=barrier, **kwargs)
         self.steps = int(steps)
         self.weights = [float(w) for w in weights.split("/")]
         self.resolutions = [str2inc(x) for x in resolutions.split("/")]
@@ -175,7 +175,7 @@ class CudemStepDown(RasterHook):
 
         if previous_surface and os.path.exists(previous_surface):
             shutil.move(previous_surface, dst_path)
-            remove_glob2("temp_stack_step*.tif", "temp_interp_step*.tif", "*.blend.tif")
+            #remove_glob2("temp_stack_step*.tif", "temp_interp_step*.tif", "*.blend.tif")
             return True
 
         return False
