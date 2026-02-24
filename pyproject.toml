@@ -33,6 +33,7 @@ globato = "globato"
 
 [project.scripts]
 fetchez-index = "globato.cli_index:main"
+grits = "globato.cli.grits:main"
 
 # --- Build Configuration ---
 [tool.setuptools.packages.find]
