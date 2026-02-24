@@ -18,6 +18,7 @@ import rasterio
 from rasterio.features import rasterize
 from rasterio.windows import Window
 import fiona
+from transformez.spatial import TransRegion
 from fetchez.hooks import FetchHook
 
 logger = logging.getLogger(__name__)
@@ -47,7 +48,6 @@ class RasterHook(FetchHook):
         self.region = None
 
     def _get_region_from_entries(self, entries):
-        from transformez.spatial import TransRegion
         regions = [getattr(mod, "region", None) for mod, _ in entries]
         valid_regions = [r for r in regions if r]
 
@@ -64,7 +64,8 @@ class RasterHook(FetchHook):
         return TransRegion(target_region)
 
     def run(self, entries):
-        self.region = self._get_region_from_entries(entries)
+        if not getattr(self, 'region', None):
+            self.region = self._get_region_from_entries(entries)
 
         if self.barrier and self.barrier.lower() == "coastline":
             osm_path = "auto_coastline.gpkg"
@@ -117,6 +118,8 @@ class RasterHook(FetchHook):
                     data = src.read(1, window=buff_win)
                     ndv = src.nodata
 
+                    chunk_transform = rasterio.windows.transform(buff_win, src.transform)
+
                     if is_stack:
                         try:
                             count_arr = src.read(2, window=buff_win)
@@ -146,7 +149,11 @@ class RasterHook(FetchHook):
                         result = np.where(barrier_mask, res_a, res_b)
                     else:
                         # Standard Processing
-                        result = self.process_chunk(data, ndv, entry)
+                        result = self.process_chunk(
+                            data, ndv, entry,
+                            transform=chunk_transform,
+                            window=buff_win,
+                        )
 
                     # Crop buffer
                     y_off = window.row_off - buff_win.row_off

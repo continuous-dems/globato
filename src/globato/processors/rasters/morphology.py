@@ -29,7 +29,7 @@ class RasterMorphology(RasterHook):
         self.op = op.lower()
         self.kernel = int(kernel)
 
-    def proccess_chunk(self, data, ndv, entry):
+    def proccess_chunk(self, data, ndv, entry, transform=None, window=None):
         structure = np.ones((self.kernel, self.kernel))
         valid_mask = (data != ndv) & ~np.isnan(data)
 

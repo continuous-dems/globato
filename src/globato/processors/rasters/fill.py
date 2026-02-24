@@ -28,7 +28,7 @@ class RasterFill(RasterHook):
         self.max_dist = float(max_dist)
         self.smoothing = int(smoothing)
 
-    def process_chunk(self, data, ndv, entry):
+    def process_chunk(self, data, ndv, entry, transform=None, window=None):
         mask = (data != ndv) & ~np.isnan(data)
 
         filled_data = fillnodata(

@@ -34,7 +34,7 @@ class ScipyInterp(RasterHook):
         # Default buffer needed for interpolation continuity
         if self.buffer == 0: self.buffer = 20
 
-    def process_chunk(self, data, ndv, entry):
+    def process_chunk(self, data, ndv, entry, transform=None, window=None):
         valid_mask = (data != ndv) & ~np.isnan(data)
 
         if np.all(valid_mask) or not np.any(valid_mask):
