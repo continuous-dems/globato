@@ -28,20 +28,14 @@ class RasterFill(RasterHook):
         self.max_dist = float(max_dist)
         self.smoothing = int(smoothing)
 
-    def process_raster(self, src_path, dst_path, entry):
-        with rasterio.open(src_path) as src:
-            profile = src.profile.copy()
-            data = src.read(1)
-            mask = src.dataset_mask() # 0 for NoData, 255 for Valid
+    def process_chunk(self, data, ndv, entry):
+        mask = (data != ndv) & ~np.isnan(data)
 
-            filled_data = fillnodata(
-                data,
-                mask=mask,
-                max_search_distance=self.max_dist,
-                smoothing_iterations=self.smoothing
-            )
+        filled_data = fillnodata(
+            data,
+            mask=mask,
+            max_search_distance=self.max_dist,
+            smoothing_iterations=self.smoothing
+        )
 
-            with rasterio.open(dst_path, "w", **profile) as dst:
-                dst.write(filled_data, 1)
-
-        return True
+        return filled_data

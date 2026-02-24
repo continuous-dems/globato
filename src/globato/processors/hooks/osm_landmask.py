@@ -62,7 +62,8 @@ class OSMLandmask(FetchHook):
         regions = [getattr(mod, "region", None) for mod, _ in entries]
         valid_regions = [r for r in regions if r]
 
-        if not valid_regions: return entries
+        if not valid_regions:
+            return entries
 
         # Union of all requested regions
         w = min(r[0] for r in valid_regions)

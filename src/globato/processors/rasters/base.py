@@ -32,6 +32,7 @@ class RasterHook(FetchHook):
     - **Auto-Stack Filtering**: If input is a Multi-Stack (3+ bands),
       automatically masks data based on Weight and Count.
     """
+
     stage = "post"
     category = "raster-op"
     default_suffix = "_processed"
@@ -43,8 +44,28 @@ class RasterHook(FetchHook):
         self.barrier = barrier
         self.buffer = int(buffer)
         self.min_weight = float(min_weight)
+        self.region = None
+
+    def _get_region_from_entries(self, entries):
+        from transformez.spatial import TransRegion
+        regions = [getattr(mod, "region", None) for mod, _ in entries]
+        valid_regions = [r for r in regions if r]
+
+        if not valid_regions:
+            return entries
+
+        # Union of all requested regions
+        w = min(r[0] for r in valid_regions)
+        e = max(r[1] for r in valid_regions)
+        s = min(r[2] for r in valid_regions)
+        n = max(r[3] for r in valid_regions)
+        target_region = [w, e, s, n]
+
+        return TransRegion(target_region)
 
     def run(self, entries):
+        self.region = self._get_region_from_entries(entries)
+
         if self.barrier and self.barrier.lower() == "coastline":
             osm_path = "auto_coastline.gpkg"
             if not os.path.exists(osm_path):
