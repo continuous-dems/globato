@@ -66,6 +66,7 @@ class GmtSurface(RasterHook):
             rows, cols = np.where(valid_mask)
             z_vals = data[rows, cols]
             x_vals, y_vals = xy(src.transform, rows, cols)
+            # maybe use x/y values directly from src (if a multi-stack).
 
             w, s, e, n = src.bounds
             x_inc = src.res[0]
@@ -94,7 +95,7 @@ class GmtSurface(RasterHook):
                 profile = src.profile.copy()
                 profile.update(dtype=rasterio.float32, nodata=nodata)
 
-                with rasterio.open(dst_path, 'w', **profile) as dst:
+                with rasterio.open(dst_path, "w", **profile) as dst:
                     dst.write(result_arr.astype(rasterio.float32), 1)
 
                 return True
