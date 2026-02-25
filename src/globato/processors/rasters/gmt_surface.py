@@ -16,7 +16,6 @@ from rasterio.transform import xy
 
 from ..rasters.base import RasterHook
 
-# Optional PyGMT dependency
 try:
     import pygmt
     HAS_PYGMT = True

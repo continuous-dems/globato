@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 
 """
-globato.processors.filters.references
+globato.processors.filters.reference
 ~~~~~~~~~~~~~
 
 :copyright: (c) 2010-2026 Regents of the University of Colorado
