@@ -23,6 +23,7 @@ from rasterio.windows import Window
 
 from .base import RasterHook
 from .scipy_griddata import ScipyInterp
+from .gmt_surface import GmtSurface
 
 logger = logging.getLogger(__name__)
 
@@ -162,11 +163,25 @@ class CudemStepDown(RasterHook):
             # Interpolate!
             step_barrier = self.barrier if i > 0 else None
 
-            interp = ScipyInterp(
-                method="cubic",
-                min_weight=weight,
-                barrier=step_barrier
-            )
+            if self.algo == "interp_gmt":
+                # Use GMT for smooth splines (Great for Step 0/Coarse)
+                interp = GmtSurface(
+                    tension=0.35,
+                    barrier=step_barrier
+                )
+            else:
+                # Default to Scipy (Great for Step 1+/Fine)
+                interp = ScipyInterp(
+                    method="cubic",
+                    min_weight=weight,
+                    barrier=step_barrier
+                )
+
+            # interp = ScipyInterp(
+            #     method="cubic",
+            #     min_weight=weight,
+            #     barrier=step_barrier
+            # )
 
             success = interp.process_raster(step_stack, step_interp, entry)
 
@@ -175,7 +190,7 @@ class CudemStepDown(RasterHook):
 
         if previous_surface and os.path.exists(previous_surface):
             shutil.move(previous_surface, dst_path)
-            #remove_glob2("temp_stack_step*.tif", "temp_interp_step*.tif", "*.blend.tif")
+            remove_glob2("temp_stack_step*.tif", "temp_interp_step*.tif", "*.blend.tif")
             return True
 
         return False

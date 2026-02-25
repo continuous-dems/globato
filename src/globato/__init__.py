@@ -26,6 +26,7 @@ from .modules.glob_coast import GlobCoast
 from .modules.sources import GlobCopernicus, GlobFabDEM, GlobMultibeam, GlobBAG, GlobNOSXYZ
 
 logger = logging.getLogger(__name__)
+__version__ = "0.1.4"
 
 def _auto_register_hooks():
     """Recursively scan the 'processors' directory and auto-register all FetchHooks."""
