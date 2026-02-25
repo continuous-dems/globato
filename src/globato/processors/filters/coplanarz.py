@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 
 """
-globato.processors.filters.stats
+globato.processors.filters.coplanarz
 ~~~~~~~~~~~~~
 
 :copyright: (c) 2010-2026 Regents of the University of Colorado
@@ -11,39 +11,10 @@ globato.processors.filters.stats
 
 import logging
 import numpy as np
-from fetchez.hooks import FetchHook
 from fetchez.utils import float_or, int_or
 from .base import GlobatoFilter
 
 logger = logging.getLogger(__name__)
-
-
-class OutlierZ(GlobatoFilter):
-    """Statistical Outlier Removal (Z-Score/Percentile).
-
-    threshold=3
-    set_class=7
-    """
-
-    name = "outlierz"
-    desc = "filter outliers based on percentile"
-
-    def __init__(self, threshold=3.0, **kwargs):
-        super().__init__(**kwargs)
-        self.threshold = float_or(threshold, 3.0)
-
-    def filter_chunk(self, chunk):
-        z = chunk['z']
-        if len(z) < 3:
-            return None
-
-        mean = np.mean(z)
-        std = np.std(z)
-        if std == 0:
-            return None
-
-        z_score = np.abs((z - mean) / std)
-        return z_score > self.threshold
 
 
 class CoplanarZ(GlobatoFilter):
@@ -75,12 +46,11 @@ class CoplanarZ(GlobatoFilter):
         outliers = np.zeros(len(chunk), dtype=bool)
         z_vals = chunk['z']
 
-        ## Iterate points and fit planes
         with tqdm(total=len(chunk), desc='Plane Fitting', leave=False) as pbar:
             for i, neighbors in enumerate(indices_list):
                 pbar.update()
 
-                ## Check neighbor count (including self)
+                # Check neighbor count (including self)
                 if len(neighbors) < self.min_neighbors + 1:
                     # Treat isolated points as outliers (noise)
                     outliers[i] = True
@@ -92,8 +62,8 @@ class CoplanarZ(GlobatoFilter):
 
                 center_x, center_y = coords[i]
 
-                ## Setup Least Squares: Z = a*X + b*Y + c
-                ## A matrix columns: [x_rel, y_rel, 1]
+                # Setup Least Squares: Z = a*X + b*Y + c
+                # A matrix columns: [x_rel, y_rel, 1]
                 A = np.column_stack((
                     nb_coords[:, 0] - center_x,
                     nb_coords[:, 1] - center_y,
@@ -101,19 +71,18 @@ class CoplanarZ(GlobatoFilter):
                 ))
 
                 try:
-                    ## Fit plane
-                    ## c (coeffs[2]) is the fitted Z at (0,0) relative coordinates (the query point)
+                    # Fit plane
+                    # c (coeffs[2]) is the fitted Z at (0,0) relative coordinates (the query point)
                     coeffs, residuals, rank, s = np.linalg.lstsq(A, nb_z, rcond=None)
 
-                    fitted_z = coeffs[2] # Intercept at relative (0,0)
+                    fitted_z = coeffs[2]
 
-                    ## Calculate deviation of the point from the fitted plane
+                    # Calculate deviation of the point from the fitted plane
                     deviation = abs(z_vals[i] - fitted_z)
 
                     if deviation > self.threshold:
                         outliers[i] = True
 
                 except np.linalg.LinAlgError:
-                    ## Collinear points or singular matrix -> Outlier
                     outliers[i] = True
         return outliers
