@@ -12,7 +12,7 @@ globato.processors.filters.stats
 import logging
 import numpy as np
 from fetchez.hooks import FetchHook
-from fetchez import utils
+from fetchez.utils import float_or, int_or
 from .base import GlobatoFilter
 
 logger = logging.getLogger(__name__)
@@ -53,9 +53,9 @@ class CoplanarZ(GlobatoFilter):
 
     def __init__(self, radius=10, threshold=0.5, min_neighbors=3, **kwargs):
         super().__init__(**kwargs)
-        self.radius = utils.float_or(radius, 10)
-        self.threshold = utils.float_or(threshold, 0.5)
-        self.min_neighbors = utils.int_or(min_neighbors, 3)
+        self.radius = float_or(radius, 10)
+        self.threshold = float_or(threshold, 0.5)
+        self.min_neighbors = int_or(min_neighbors, 3)
 
     def filter_chunk(self, chunk):
         try:
