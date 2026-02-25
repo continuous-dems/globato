@@ -33,7 +33,7 @@ class OutlierZ(GlobatoFilter):
         self.threshold = float_or(threshold, 3.0)
 
     def filter_chunk(self, chunk):
-        z = self.chunk['z']
+        z = chunk['z']
         if len(z) < 3:
             return None
 
