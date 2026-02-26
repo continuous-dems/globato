@@ -148,3 +148,4 @@ def setup_fetchez(registry_cls):
     )
 
 setup_fetchez(FetchezRegistry)
+from .api import read

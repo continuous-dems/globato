@@ -39,7 +39,16 @@ class RasterHook(FetchHook):
     category = "raster-op"
     default_suffix = "_processed"
 
-    def __init__(self, output=None, suffix=None, barrier=None, buffer=0, min_weight=0.0, strip_bands=False, **kwargs):
+    def __init__(
+            self,
+            output=None,
+            suffix=None,
+            barrier=None,
+            buffer=0,
+            min_weight=0.0,
+            strip_bands=False,
+            **kwargs,
+    ):
         super().__init__(**kwargs)
         self.output = output
         self.suffix = suffix or self.default_suffix
