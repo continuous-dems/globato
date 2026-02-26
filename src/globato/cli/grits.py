@@ -12,13 +12,7 @@ import logging
 import os
 
 # Import hooks
-from globato.processors.rasters.diff import RasterDiff
-from globato.processors.rasters.slope import RasterSlopeFilter
-from globato.processors.rasters.cut import RasterCut
-from globato.processors.rasters.fill import RasterFill
-from globato.processors.rasters.morphology import RasterMorphology
-from globato.processors.rasters.scipy_griddata import ScipyInterp
-from globato.processors.rasters.blend import RasterBlend
+
 # from globato.processors.rasters.zscore import RasterZScore
 
 # For Region parsing
@@ -94,6 +88,10 @@ def main():
     p_cut = subparsers.add_parser("cut", parents=[parent], help="Cut/Mask to Region")
     p_cut.add_argument("-R", "--region", required=True, help="Region W/E/S/N")
 
+    # --- FLATS ---
+    p_flats = subparsers.add_parser("flats", parents=[parent], help="Remove Flat-Zones")
+    p_flats.add_argument("--threshold", type=float, default=1, help="Minimum size of a flat-zone")
+
     # --- FILL ---
     p_fill = subparsers.add_parser("fill", parents=[parent], help="Fill NoData (IDW)")
     p_fill.add_argument("--dist", type=float, default=100, help="Max search distance")
@@ -117,47 +115,66 @@ def main():
     p_blend.add_argument("--random_scale", type=float, default=.05, help="Density of random points for buffer")
     args = parser.parse_args()
 
+    hook = None
+    region = None
+
     if args.command == "diff":
+        from globato.processors.rasters.diff import RasterDiff
+
         hook = RasterDiff(
             aux_path=args.aux,
             mode=args.mode,
             threshold=args.threshold
         )
-        run_hook(hook, args.src, args.dst)
 
     elif args.command == "slope":
+        from globato.processors.rasters.slope import RasterSlopeFilter
+
         hook = RasterSlopeFilter(
             min_val=args.min,
             max_val=args.max
         )
-        run_hook(hook, args.src, args.dst)
 
     elif args.command == "cut":
+        from globato.processors.rasters.cut import RasterCut
+
         # RasterCut needs 'region' injected
         hook = RasterCut()
-        run_hook(hook, args.src, args.dst, region=args.region)
+        region = args.region
+
+    elif args.command == "flats":
+        from globato.processors.rasters.flats import RasterFlats
+
+        hook = RasterFlats(
+            size_threshold=args.threshold,
+        )
 
     elif args.command == "fill":
+        from globato.processors.rasters.fill import RasterFill
+
         hook = RasterFill(
             max_dist=args.dist,
             smoothing=args.smooth
         )
-        run_hook(hook, args.src, args.dst)
 
     elif args.command == "morph":
+        from globato.processors.rasters.morphology import RasterMorphology
+
         hook = RasterMorphology(
             op=args.op,
             kernel=args.kernel
         )
-        run_hook(hook, args.src, args.dst)
 
     elif args.command == "interp":
+        from globato.processors.rasters.scipy_griddata import ScipyInterp
+
         hook = ScipyInterp(
             method=args.method
         )
-        run_hook(hook, args.src, args.dst)
 
     elif args.command == "blend":
+        from globato.processors.rasters.blend import RasterBlend
+
         hook = RasterBlend(
             aux_path=args.aux,
             blend_dist=args.blend_dist,
@@ -165,7 +182,8 @@ def main():
             slope_scale=args.slope_scale,
             random_scale=args.random_scale,
         )
-        run_hook(hook, args.src, args.dst)
+
+    run_hook(hook, args.src, args.dst, region=args.region)
 
 if __name__ == "__main__":
     main()

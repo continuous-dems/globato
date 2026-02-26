@@ -20,7 +20,7 @@ from .base import RasterHook
 
 logger = logging.getLogger(__name__)
 
-class MultiStackBlend(RasterHook):
+class RasterFlats(RasterHook):
     """Remove flat areas from the input DEM.
     Identified flat areas are set to NoData.
 
