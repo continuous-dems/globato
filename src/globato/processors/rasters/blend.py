@@ -92,14 +92,14 @@ class MultiStackBlend(RasterHook):
 
                     valid_mask = (z != ndv) & (~np.isnan(z))
                     if not np.any(valid_mask):
-                        return z
+                        continue
 
                     fg_mask = valid_mask & (w >= self.weight_threshold)
 
                     bg_mask = valid_mask & (~fg_mask)
 
                     if not np.any(fg_mask):
-                        return z # No foreground to blend from
+                        continue
 
                     struct = scipy.ndimage.generate_binary_structure(2, 2)
                     fg_closed = scipy.ndimage.binary_closing(fg_mask, structure=struct)
@@ -127,7 +127,7 @@ class MultiStackBlend(RasterHook):
                     anchor_vals = z[anchors_mask]
                     target_pts = np.array([rows[transition_zone], cols[transition_zone]]).T
                     if len(anchor_pts) < 4 or len(target_pts) == 0:
-                        return z
+                        continue
 
                     try:
                         interp_vals = scipy.interpolate.griddata(

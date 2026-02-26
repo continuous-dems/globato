@@ -69,5 +69,5 @@ class RasterFlats(RasterHook):
                 if n_removed > 0:
                     count_removed += n_removed
                     src_arr[mask] = ndv
-        logger.info(f"[Flats] Removed {count_removed} flat pixels.")
+                    logger.info(f"[Flats] Removed {count_removed} flat pixels.")
         return src_arr

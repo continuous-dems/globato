@@ -44,8 +44,6 @@ class RasterZScore(RasterHook):
         self.kernel_size = int(kernel_size)
 
     def process_chunk(self, data, ndv, entry, transform=None, window=None):
-        """data: (Bands, Rows, Cols)"""
-
         valid_mask = (data != ndv) & (~np.isnan(data))
         if not np.any(valid_mask):
             return data
@@ -65,7 +63,7 @@ class RasterZScore(RasterHook):
         local_var = local_sq_mean - local_mean**2
         local_std = np.sqrt(np.maximum(0, local_var)) # Ensure non-negative
 
-        ## Avoid div by zero
+        # Avoid div by zero
         local_std[local_std == 0] = 1e-6
 
         # Calculate Z
