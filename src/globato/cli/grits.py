@@ -113,6 +113,12 @@ def main():
     p_blend.add_argument("--core_dist", type=float, default=5, help="Max core blend distance")
     p_blend.add_argument("--slope_scale", type=float, default=.5, help="Normalize the slope-gate")
     p_blend.add_argument("--random_scale", type=float, default=.05, help="Density of random points for buffer")
+
+    # --- ZSCORE ---
+    p_zscore = subparsers.add_parser("zscore", parents=[parent], help="Filter based on zscore")
+    p_zscore.add_argument("--threshold", type=float, default=3.0, help="Mask zscore over this threshold")
+    p_zscore.add_argument("--size", type=int, default=5, help="The size of the neighborhood window.")
+
     args = parser.parse_args()
 
     hook = None
@@ -183,7 +189,12 @@ def main():
             random_scale=args.random_scale,
         )
 
-    run_hook(hook, args.src, args.dst, region=args.region)
+    elif args.command == "zscore":
+        from globato.processors.rasters.zscore import RasterZScore
+
+        hook = RasterZScore(threshold=args.threshold, kernel_size=args.size)
+
+    run_hook(hook, args.src, args.dst, region=region)
 
 if __name__ == "__main__":
     main()

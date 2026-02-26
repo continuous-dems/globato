@@ -39,13 +39,8 @@ class RasterFlats(RasterHook):
         self.size_threshold = int(size_threshold)
 
     def process_chunk(self, data, ndv, entry, transform=None, window=None):
-        """data: (Bands, Rows, Cols) - We expect Band 1=Z, Band 3=Weight"""
-
-        if data.shape[0] < 3:
-            return data[0]
-
-        src_arr = data[0]
-
+        """data: (Bands, Rows, Cols)"""
+        src_arr
         valid_mask = (src_arr != ndv) & (~np.isnan(src_arr))
         if not np.any(valid_mask):
             return src_arr
