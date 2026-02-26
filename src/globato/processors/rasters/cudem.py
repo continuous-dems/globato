@@ -33,8 +33,9 @@ class CudemStepDown(RasterHook):
     Decimates the master stack, interpolates, and uses it to fill finer resolutions.
     """
 
-    name = "cudem_stepdown"
+    name = "ms_cudem"
     default_suffix = "_cudem"
+    category = "multi-stack"
 
     def __init__(self, steps=2, weights="1.0/0.5", resolutions="1s/3s",
                  algo="interp_scipy", barrier=None, **kwargs):

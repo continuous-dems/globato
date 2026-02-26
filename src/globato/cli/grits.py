@@ -18,6 +18,7 @@ from globato.processors.rasters.cut import RasterCut
 from globato.processors.rasters.fill import RasterFill
 from globato.processors.rasters.morphology import RasterMorphology
 from globato.processors.rasters.scipy_griddata import ScipyInterp
+from globato.processors.rasters.blend import RasterBlend
 # from globato.processors.rasters.zscore import RasterZScore
 
 # For Region parsing
@@ -107,6 +108,13 @@ def main():
     p_interp = subparsers.add_parser("interp", parents=[parent], help="Interpolate Gaps")
     p_interp.add_argument("--method", choices=["linear", "cubic", "nearest"], default="linear")
 
+    # --- BLEND ---
+    p_blend = subparsers.add_parser("blend", parents=[parent], help="Blend rasters (Src -> Aux)")
+    p_blend.add_argument("--aux", required=True, help="Auxiliary/Reference Raster")
+    p_blend.add_argument("--blend_dist", type=float, default=20, help="Max blend distance")
+    p_blend.add_argument("--core_dist", type=float, default=5, help="Max core blend distance")
+    p_blend.add_argument("--slope_scale", type=float, default=.5, help="Normalize the slope-gate")
+    p_blend.add_argument("--random_scale", type=float, default=.05, help="Density of random points for buffer")
     args = parser.parse_args()
 
     if args.command == "diff":
@@ -146,6 +154,16 @@ def main():
     elif args.command == "interp":
         hook = ScipyInterp(
             method=args.method
+        )
+        run_hook(hook, args.src, args.dst)
+
+    elif args.command == "blend":
+        hook = RasterBlend(
+            aux_path=args.aux,
+            blend_dist=args.blend_dist,
+            core_dist=args.core.dist,
+            slope_scale=args.slope_scale,
+            random_scale=args.random_scale,
         )
         run_hook(hook, args.src, args.dst)
 
