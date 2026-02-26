@@ -195,3 +195,12 @@ class RasterHook(FetchHook):
                 return [feature["geometry"] for feature in vec]
         except Exception:
             return None
+
+    def get_outliers(self, in_array, percentile=75, k=1.5):
+        if np.all(np.isnan(in_array)):
+            return np.nan, np.nan
+
+        p_max = np.nanpercentile(in_array, percentile)
+        p_min = np.nanpercentile(in_array, 100 - percentile)
+        iqr = (p_max - p_min) * k
+        return p_max + iqr, p_min - iqr
