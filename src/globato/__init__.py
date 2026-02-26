@@ -25,8 +25,10 @@ from .modules.glob_dem import GlobDEM
 from .modules.glob_coast import GlobCoast
 from .modules.sources import GlobCopernicus, GlobFabDEM, GlobMultibeam, GlobBAG, GlobNOSXYZ
 
+from .api import read
+
 logger = logging.getLogger(__name__)
-__version__ = "0.1.4"
+__version__ = "0.1.6"
 
 def _auto_register_hooks():
     """Recursively scan the 'processors' directory and auto-register all FetchHooks."""
@@ -148,4 +150,3 @@ def setup_fetchez(registry_cls):
     )
 
 setup_fetchez(FetchezRegistry)
-from .api import read
