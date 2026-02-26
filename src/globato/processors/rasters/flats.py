@@ -34,10 +34,7 @@ class RasterFlats(RasterHook):
     default_suffix = "_deflat"
 
     def __init__(self, size_threshold=1.0, **kwargs):
-
-        # Ensure we have enough buffer to cover the blend distance + interpolation context
-        buffer_req = int(blend_dist) * 2
-        super().__init__(buffer=buffer_req, **kwargs)
+        super().__init__(**kwargs)
 
         self.size_threshold = int(size_threshold)
 
