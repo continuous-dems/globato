@@ -10,6 +10,7 @@ Fill nodata using gdal (idw)
 :license: MIT, see LICENSE for more details.
 """
 
+import numpy as np
 import rasterio
 from rasterio.fill import fillnodata
 from .base import RasterHook

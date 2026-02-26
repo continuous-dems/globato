@@ -40,7 +40,7 @@ class RasterFlats(RasterHook):
 
     def process_chunk(self, data, ndv, entry, transform=None, window=None):
         """data: (Bands, Rows, Cols)"""
-        src_arr
+        src_arr = data
         valid_mask = (src_arr != ndv) & (~np.isnan(src_arr))
         if not np.any(valid_mask):
             return src_arr

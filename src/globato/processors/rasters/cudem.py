@@ -39,7 +39,7 @@ class CudemStepDown(RasterHook):
 
     def __init__(self, steps=2, weights="1.0/0.5", resolutions="1s/3s",
                  algo="interp_scipy", barrier=None, **kwargs):
-        super().__init__(barrier=barrier, **kwargs)
+        super().__init__(barrier=barrier, strip_bands=True, **kwargs)
         self.steps = int(steps)
         self.weights = [float(w) for w in weights.split("/")]
         self.resolutions = [str2inc(x) for x in resolutions.split("/")]

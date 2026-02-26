@@ -46,14 +46,13 @@ class RasterZScore(RasterHook):
     def process_chunk(self, data, ndv, entry, transform=None, window=None):
         """data: (Bands, Rows, Cols)"""
 
-        src_arr = data
-        valid_mask = (src_arr != ndv) & (~np.isnan(src_arr))
+        valid_mask = (data != ndv) & (~np.isnan(data))
         if not np.any(valid_mask):
-            return src_arr
+            return data
 
-        src_arr[src_arr[~valid_mask]] = np.nan
-        filled_data = src_arr.copy()
-        filled_data[np.isnan(src_arr)] = np.nanmean(src_arr)
+        data[~valid_mask] = np.nan
+        filled_data = data.copy()
+        filled_data[np.isnan(filled_data)] = np.nanmean(filled_data)
 
         local_mean = scipy.ndimage.uniform_filter(
             filled_data, size=self.kernel_size, mode="reflect"
@@ -72,8 +71,8 @@ class RasterZScore(RasterHook):
         # Calculate Z
         z_score = np.abs((filled_data - local_mean) / local_std)
 
-        mask = (z_score > self.threshold) & (~np.isnan(src_arr))
-        src_arr[np.isnan(src_arr)] = ndv
-        src_arr[mask] = ndv
-
-        return src_arr
+        mask = (z_score > self.threshold) & (~np.isnan(data))
+        data[np.isnan(data)] = ndv
+        data[mask] = ndv
+        logger.info(mask)
+        return data

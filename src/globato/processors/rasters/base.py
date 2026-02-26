@@ -32,13 +32,14 @@ class RasterHook(FetchHook):
     - Barrier support (e.g. Coastline splitting).
     - **Auto-Stack Filtering**: If input is a Multi-Stack (3+ bands),
       automatically masks data based on Weight and Count.
+    - Set the stage to either 'post' or 'file'
     """
 
     stage = "post"
     category = "raster-op"
     default_suffix = "_processed"
 
-    def __init__(self, output=None, suffix=None, barrier=None, buffer=0, min_weight=0.0, **kwargs):
+    def __init__(self, output=None, suffix=None, barrier=None, buffer=0, min_weight=0.0, strip_bands=False, **kwargs):
         super().__init__(**kwargs)
         self.output = output
         self.suffix = suffix or self.default_suffix
@@ -46,6 +47,7 @@ class RasterHook(FetchHook):
         self.buffer = int(buffer)
         self.min_weight = float(min_weight)
         self.region = None
+        self.strip_bands=strip_bands
 
     def _get_region_from_entries(self, entries):
         regions = [getattr(mod, "region", None) for mod, _ in entries]
@@ -112,6 +114,9 @@ class RasterHook(FetchHook):
             profile = src.profile.copy()
             is_stack = (src.count >= 3)
 
+            if self.strip_bands:
+                profile["count"] = 1
+
             with rasterio.open(dst_path, 'w', **profile) as dst:
                 for window, buff_win in self.yield_buffered_windows(src, buffer_size=self.buffer):
 
@@ -124,8 +129,9 @@ class RasterHook(FetchHook):
                         try:
                             count_arr = src.read(2, window=buff_win)
                             weight_arr = src.read(3, window=buff_win)
-                            invalid_mask = (count_arr == 0) | (weight_arr < self.min_weight)
-                            data[invalid_mask] = ndv
+                            if np.any(count_arr):
+                                invalid_mask = (count_arr == 0) | (weight_arr < self.min_weight)
+                                data[invalid_mask] = ndv
                         except Exception:
                             pass
 

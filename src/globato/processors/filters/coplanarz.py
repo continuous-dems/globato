@@ -22,6 +22,9 @@ class CoplanarZ(GlobatoFilter):
     Useful for removing noise from generally flat features (roads, water, plains).
     """
 
+    name = "coplanarz"
+    desc = "filter outliers that deviate from a fitted plane"
+
     def __init__(self, radius=10, threshold=0.5, min_neighbors=3, **kwargs):
         super().__init__(**kwargs)
         self.radius = float_or(radius, 10)

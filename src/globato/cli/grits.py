@@ -72,6 +72,7 @@ def main():
     parent.add_argument("src", help="Input Raster")
     parent.add_argument("dst", help="Output Raster")
     parent.add_argument("-v", "--verbose", action="store_true", help="Verbose output")
+    parent.add_argument("--strip-bands", action="store_true", help="Strip extra bands in the output.")
 
     # --- DIFF ---
     p_diff = subparsers.add_parser("diff", parents=[parent], help="Calculate difference (Src - Aux)")
@@ -193,6 +194,9 @@ def main():
         from globato.processors.rasters.zscore import RasterZScore
 
         hook = RasterZScore(threshold=args.threshold, kernel_size=args.size)
+
+    if args.strip_bands:
+        hook.strip_bands = True
 
     run_hook(hook, args.src, args.dst, region=region)
 
