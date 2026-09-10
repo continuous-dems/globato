@@ -48,6 +48,7 @@ class RasterioReader(BaseGlobatoReader):
         u_band=None,
         x_band=None,
         y_band=None,
+        auto_weight=False,
         **kwargs,
     ):
         super().__init__(path, **kwargs)
@@ -65,6 +66,7 @@ class RasterioReader(BaseGlobatoReader):
         self.w_band = int_or(w_band)
         self.x_band = int_or(x_band)
         self.y_band = int_or(y_band)
+        self.auto_weight = auto_weight
         self.kwargs = kwargs
 
     def get_srs(self):
@@ -151,11 +153,30 @@ class RasterioReader(BaseGlobatoReader):
                     if self.u_band
                     else np.zeros_like(z)
                 )
-                w = (
-                    src.read(self.w_band, window=window)
-                    if self.w_band
-                    else np.ones_like(z)
-                )
+                if self.w_band:
+                    w = src.read(self.w_band, window=window)
+                else:
+                    # Use the instance's calculated weight if available, otherwise default to 1.0
+                    fallback_weight = getattr(self, "weight", 1.0)
+
+                    if self.auto_weight and self.u_band is not None:
+                        # Inverse Variance Weighting: W = Base / (U^2 + epsilon)
+                        # Epsilon (1e-4) prevents division by zero where uncertainty is 0.0
+                        # w = fallback_weight / (u**2 + 1e-4)
+
+                        # Soften the uncertainty penaly
+                        w = fallback_weight / (1.0 + u)
+
+                        # Optional: Clip extreme weights so pristine pixels don't overpower the entire mosaic
+                        w = np.clip(w, 0, fallback_weight * 100)
+                    else:
+                        w = np.full_like(z, fallback_weight)
+                # w = np.full_like(z, fallback_weight)
+                # w = (
+                #     src.read(self.w_band, window=window)
+                #     if self.w_band
+                #     else np.ones_like(z)
+                # )
 
                 x_arr = src.read(self.x_band, window=window) if self.x_band else None
                 y_arr = src.read(self.y_band, window=window) if self.y_band else None

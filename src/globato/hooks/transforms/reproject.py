@@ -57,6 +57,7 @@ class StreamReproject(FetchHook):
             region=region,
             vert_grid=self.vert_grid,
             cache_dir=self.cache_dir,
+            verbose=True,
         )
         horz_transformer, grid_fn = parser.get_components()
         grid_query = RasterQuery(grid_fn) if grid_fn else None

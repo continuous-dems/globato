@@ -85,7 +85,7 @@ modules:
           data_type: copernicus_sdb
       - name: set-srs
         args:
-          srs: "EPSG:4326+9003"
+          srs: "EPSG:4326+global:mss"
       - name: filter_field
         args:
           field: confidence
@@ -117,10 +117,12 @@ modules:
       - name: filename_filter
         args:
           match: ".fbt"
+      - name: set-srs
+        args:
+          srs: "EPSG:4326+vdatum:msl"
       - name: stream_data
       - name: stream_reproject
         args:
-          src_srs: "EPSG:4326+9003"
           dst_srs: "EPSG:4326+3855"
           cache_dir: "%shared_cache%"
       - name: rq
@@ -141,7 +143,7 @@ modules:
           data_type: sysu-xyz
       - name: set-srs
         args:
-          srs: "EPSG:4326+9003"
+          srs: "EPSG:4326+global:mss"
       - name: stream_reproject
         args:
           dst_srs: "EPSG:4326+3855"
@@ -164,7 +166,7 @@ modules:
           data_type: margrav-xyz
       - name: set-srs
         args:
-          srs: "EPSG:4326+9003"
+          srs: "EPSG:4326+global:mss"
       - name: range_z
         args:
           max_z: -0.1
@@ -197,7 +199,7 @@ modules:
           data_type: csb_xyz
       - name: set-srs
         args:
-          srs: "EPSG:4326+9003"
+          srs: "EPSG:4326+global:mss"
       - name: stream_reproject
         args:
           dst_srs: "EPSG:4326+3855"

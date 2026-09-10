@@ -39,8 +39,10 @@ class BAGReader(RasterioReader):
     meta_desc = "Read BAG data through rasterio into a point stream"
     meta_extensions = ["bag"]
 
-    def __init__(self, path, mode="RESAMPLED_GRID", min_weight=0, **kwargs):
-        super().__init__(path, **kwargs)
+    def __init__(
+        self, path, mode="RESAMPLED_GRID", min_weight=0, auto_weight=True, **kwargs
+    ):
+        super().__init__(path, auto_weight=auto_weight, **kwargs)
         self.modes = [
             "LOW_RES_GRID",
             "LIST_SUPERGRIDS",
@@ -52,16 +54,32 @@ class BAGReader(RasterioReader):
         self.min_weight = float_or(min_weight, 0)
 
     def _calculate_bag_weight(self, transform):
-        """Weight = (3 * (10 if res <=3 else 1)) / res"""
+        """Weight scales directly with physical resolution.
+        Targeting 32 / res yields:
+        ~30m -> 1.0 (1s)
+        ~64m -> 0.5 (3s)
+        ~128m -> 0.25 (9s)
+        """
+        x_res = abs(transform.a)
 
-        x_res = transform.a
         if x_res == 0:
             return 1.0
 
-        base_mult = 10 if x_res <= 3.0 else 1
-        calc_weight = (3 * base_mult) / x_res
+        calc_weight = 32.0 / x_res
 
         return max(calc_weight, self.min_weight)
+
+    # def _calculate_bag_weight(self, transform):
+    #     """Weight = (3 * (10 if res <=3 else 1)) / res"""
+
+    #     x_res = transform.a
+    #     if x_res == 0:
+    #         return 1.0
+
+    #     base_mult = 10 if x_res <= 3.0 else 1
+    #     calc_weight = (3 * base_mult) / x_res
+
+    #     return max(calc_weight, self.min_weight)
 
     def _yield_raw_chunks(self):
         env_opts = {
