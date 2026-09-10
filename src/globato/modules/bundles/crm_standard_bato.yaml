@@ -29,6 +29,10 @@ modules:
   - module: tnm
     args: {weight: 0.5, formats: "GeoTIFF", datasets: "1"}
     hooks:
+      - name: spatial_cull
+        args:
+          sort_by: "date"
+          min_coverage: 0.98
       - name: raster_flats
         args:
           stage: "file"
@@ -55,6 +59,10 @@ modules:
   - module: tnm
     args: {weight: 1.0, formats: "GeoTIFF", datasets: "3"}
     hooks:
+      - name: spatial_cull
+        args:
+          sort_by: "date"
+          min_coverage: 0.98
       - name: raster_flats
         args:
           stage: "file"

@@ -46,6 +46,10 @@ modules:
   - module: tnm
     args: {weight: 5.0, datasets: "4"}
     hooks:
+      - name: spatial_cull
+        args:
+          sort_by: "date"
+          min_coverage: 0.98
       - name: unzip
       - name: filename_filter
         args: {match: ".img"}
@@ -70,6 +74,10 @@ modules:
   - module: tnm
     args: {weight: 3.0, formats: "GeoTIFF", datasets: "2"}
     hooks:
+      - name: spatial_cull
+        args:
+          sort_by: "date"
+          min_coverage: 0.98
       - name: raster_flats
         args:
           stage: "file"
