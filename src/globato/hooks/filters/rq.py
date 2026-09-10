@@ -32,7 +32,8 @@ except ImportError:
     HAS_GDAL = False
 
 try:
-    from transformez.grid_engine import GridEngine, GridWriter
+    from transformez.grid.engine import GridEngine
+    from transformez.grid.io import GridWriter
 
     HAS_GRID_ENGINE = True
 except ImportError:
@@ -187,8 +188,9 @@ class ReferenceQuality(GlobatoFilter):
                     self.wgs_region.srs or "epsg:4326+global:mss",
                     region=self.wgs_region,
                 ).get_components()
-        except Exception:
-            logger.debug("Could not perform vertical transformation: {e}")
+        except Exception as e:
+            logger.exception(f"Could not perform vertical transformation: {e}")
+            return False
 
         return True
 
@@ -261,7 +263,7 @@ class ReferenceQuality(GlobatoFilter):
 
         if not HAS_GDAL:
             logger.error("[RQ] GDAL required for 'vrt' builder.")
-            return files[0] if files else None
+            return None
 
         vrt_path = os.path.joinx(
             os.path.dirname(files[0]),
@@ -314,6 +316,10 @@ class ReferenceQuality(GlobatoFilter):
             rx, ry, rz = self._transformer.transform(rx, ry, rz)
 
         cols, rows = self.inv_transform * (rx, ry)
+
+        # Align rasterio (corner-based) with SciPy (center-based)
+        cols -= 0.5
+        rows -= 0.5
 
         # rows, cols = rasterio.transform.rowcol(self.src.transform, rx, ry)
         rows = np.clip(rows, 0, self.src.height - 1)

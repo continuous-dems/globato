@@ -80,7 +80,7 @@ modules:
   - module: nos_hydro
     args:
       datatype: bag
-      weight: 3.0
+      weight: 1.0
     hooks:
     - name: filename_filter
       args:
@@ -105,12 +105,14 @@ modules:
       - name: set_datatype
         args:
           data_type: "nos-xyz"
+      - name: set-srs
+        args:
+          srs: "EPSG:4326+vdatum:mllw"
       - name: stream_data
         args:
           chunk_size: 100000
       - name: stream_reproject
         args:
-          src_srs: "EPSG:4326+5866"
           dst_srs: "EPSG:4326+3855"
           cache_dir: "%shared_cache%"
       - name: spatial_crop
@@ -131,12 +133,14 @@ modules:
       - name: set_datatype
         args:
           data_type: "charts-xyz"
+      - name: set-srs
+        args:
+          srs: "EPSG:4326+vdatum:mllw"
       - name: stream_data
         args:
           chunk_size: 100000
       - name: stream_reproject
         args:
-          src_srs: "EPSG:4326+5866"
           dst_srs: "EPSG:4326+3855"
           cache_dir: "%shared_cache%"
       - name: spatial_crop
