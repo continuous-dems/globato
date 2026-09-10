@@ -8,8 +8,6 @@ tags:
   - glob-stream
 modules:
   - module: dav
-    args:
-      cull: true
     hooks:
       - name: dynamic-weight
         args:
@@ -20,6 +18,10 @@ modules:
           scale: 3.33
           on_entry: true
           stage: manifest
+      - name: spatial_cull
+        args:
+          sort_by: "year"
+          min_coverage: 0.98
       - name: stream_reproject
         args:
           dst_srs: "EPSG:4269+5703"
