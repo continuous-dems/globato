@@ -12,6 +12,7 @@ GDAL data parsing
 """
 
 import logging
+from typing import Any
 import numpy as np
 
 try:
@@ -38,7 +39,7 @@ class GDALReader(BaseGlobatoReader):
     meta_dtype = ["gdal-raster", "gdal"]
     meta_desc = "Read raster data through gdal into a point stream"
     # meta_extensions = ["tif", "tiff", "vrt", "dt0", "dt1", "dt2"]
-    meta_extnesions = []
+    meta_extnesions: list[Any] = []
 
     def __init__(
         self,
