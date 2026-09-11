@@ -35,7 +35,7 @@ class BAGReader(RasterioReader):
 
     name = "bag-point-reader"
     meta_category = "point-stream"
-    meta_dtype = "bag-raster"
+    meta_dtype = ["bag-raster", "bag"]
     meta_desc = "Read BAG data through rasterio into a point stream"
     meta_extensions = ["bag"]
 
