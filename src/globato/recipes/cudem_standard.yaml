@@ -11,6 +11,13 @@ execution:
 
 schemas:
   - name: validate-recipe
+  - name: validate-paths
+  - name: validate-parameters
+
+modifiers:
+  - name: buffer-and-cut
+    args:
+      pct: 10
 
 modules:
   - bundle: cudem-bathy-topo

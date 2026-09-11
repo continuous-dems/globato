@@ -28,3 +28,7 @@ hooks:
       - name: raster_metadata
         args:
           tags: "Project=CUDEM,Author=NCEI"
+      - name: viz_geoshade
+        args:
+          z_min: -2000
+          z_max: 1000

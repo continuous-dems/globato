@@ -35,6 +35,7 @@ from fetchez.utils import (
     CYAN,
     BOLD,
     format_dataset_id,
+    str2bool,
 )
 
 from ..transforms.point_pixels import PointPixels
@@ -71,6 +72,7 @@ class MultiStackAccumulator:
         mode="mean",
         weight_threshold="1",
         crs="EPSG:4326",
+        reset_masks=True,
         verbose=False,
         overwrite=True,
     ):
@@ -85,6 +87,7 @@ class MultiStackAccumulator:
         self.verbose = verbose
         self.lock = threading.Lock()
         self.overwrite = overwrite
+        self.reset_masks = reset_masks
         self.mask_registry = {}
 
         # base, ext = os.path.splitext(self.output_fn)
@@ -304,7 +307,8 @@ class MultiStackAccumulator:
                     get_band("x")[sup_mask] = arrays["x"][sup_mask]
                     get_band("y")[sup_mask] = arrays["y"][sup_mask]
 
-                    self._reset_older_masks(dataset_id, window, sup_mask)
+                    if self.reset_masks:
+                        self._reset_older_masks(dataset_id, window, sup_mask)
 
                 if np.any(avg_mask):
                     get_band("z")[avg_mask] += arrays["z"][avg_mask]
@@ -440,6 +444,7 @@ class MultiStackHook(FetchHook):
         weight_threshold="1",
         crs=None,
         drop_classes=None,
+        reset_masks=True,
         overwrite=True,
         **kwargs,
     ):
@@ -453,6 +458,7 @@ class MultiStackHook(FetchHook):
         self.drop_classes = (
             [int(x) for x in str(drop_classes).split("/")] if drop_classes else []
         )
+        self.reset_masks = str2bool(reset_masks)
         self.overwrite = overwrite
 
     def _init_accumulator(self, region):
@@ -480,6 +486,7 @@ class MultiStackHook(FetchHook):
                 mode=self.mode,
                 weight_threshold=self.weight_threshold,
                 crs=self.crs,
+                reset_masks=self.reset_masks,
                 verbose=True,
                 overwrite=self.overwrite,
             )

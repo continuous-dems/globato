@@ -15,7 +15,7 @@ hooks:
     args:
       res: 3s
       output: "%name%_%batch_name%_sources.vrt"
-      vector_output: "%name%_%batch_name%_sm.gpkg"
+      # vector_output: "%name%_%batch_name%_sm.gpkg"
 
   - name: multi_stack
     args:
@@ -96,3 +96,15 @@ hooks:
 
   - name: cleanup_tmp
     args: {"target_dir": "tmp"}
+
+  - name: copy_artifact
+    args:
+      target_dir: "%outdir%/delivery"
+      match:
+        - "%name%_%batch_name%.tif"
+
+  - name: copy_artifact
+    args:
+      target_dir: "%outdir%/delivery/hs"
+      match:
+        - "%name%_%batch_name%_hs.tif"

@@ -30,15 +30,3 @@ hooks:
         args:
           z_min: -3000
           z_max: 1000
-
-  - name: copy_artifact
-    args:
-      target_dir: "%outdir%/delivery"
-      match:
-        - "%name%_%batch_name%.tif"
-
-  - name: copy_artifact
-    args:
-      target_dir: "%outdir%/delivery/hs"
-      match:
-        - "%name%_%batch_name%_hs.tif"
