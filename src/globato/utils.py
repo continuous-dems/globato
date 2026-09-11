@@ -528,14 +528,18 @@ def resolve_barrier(
                 region.xmin, region.ymin, region.xmax, region.ymax, width, height
             )
 
-            mask_arr = rasterize(
-                geoms,
-                out_shape=(height, width),
-                transform=transform,
-                fill=0,
-                default_value=1,
-                dtype="uint8",
-            )
+            if not geoms:
+                # If there are no geometries (e.g., all water), yield an array of zeros
+                mask_arr = np.zeros((height, width), dtype="uint8")
+            else:
+                mask_arr = rasterize(
+                    geoms,
+                    out_shape=(height, width),
+                    transform=transform,
+                    fill=0,
+                    default_value=1,
+                    dtype="uint8",
+                )
             profile = {
                 "driver": "GTiff",
                 "height": height,

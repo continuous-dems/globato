@@ -55,7 +55,9 @@ class PointRasterMask(GlobatoFilter):
             return False
 
         if self.skip_entry and str2bool(entry.get(self.skip_entry)):
-            logger.warning(f"[{self.name}] {self.skip_entry} detected. Skipping.")
+            logger.warning(
+                f"[{self.name}] {self.skip_entry} detected in {entry.get('dst_fn', '')}. Skipping."
+            )
             return False
 
         region = getattr(mod, "region", None)
