@@ -312,12 +312,21 @@ class OSMLandmaskModule(FetchModule):
                 pass
 
         poly = box(w, s, e, n)
-        features = [(poly, "land" if is_land else "ocean")]
+        features = []
+
+        if is_land:
+            features.append((poly, "land"))
+        elif self.output_mode == "topology":
+            features.append((poly, "ocean"))
+
         self._write_geojson_pyogrio(dst_file, features)
 
     def _write_geojson_pyogrio(self, dst_file, features):
         if not features:
-            return
+            # Write a valid but empty GeoJSON so downstream tools don't crash
+            with open(dst_file, "w") as f:
+                f.write('{"type": "FeatureCollection", "features": []}')
+                return
 
         polygons = [f[0] for f in features]
         classes = [f[1] for f in features]
