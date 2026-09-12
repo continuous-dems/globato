@@ -17,7 +17,7 @@ modules:
       - name: raster_warp
         args:
           res: 1s
-      - name: point-raster-mask
+      - name: point_raster_mask
         args:
           res: 1s
       - name: stream_reproject
@@ -116,6 +116,16 @@ modules:
       - name: set-srs
         args:
           srs: "EPSG:4326+vdatum:mllw"
+      - name: dynamic-weight
+        args:
+          source_field: "date"
+          method: "chronological"
+          seed: 2010
+          offset: .01
+          scale: 5
+          cap: .5
+          on_entry: true
+          stage: manifest
       - name: stream_data
         args:
           chunk_size: 100000

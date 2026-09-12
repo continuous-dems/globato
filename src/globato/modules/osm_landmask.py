@@ -104,7 +104,7 @@ class OSMLandmaskModule(FetchModule):
             self.include_lakes = True
             self.include_breakwaters = True
             self.include_estuaries = True
-            self.include_reefs = True
+            self.include_reefs = False
             self.include_wetlands = True
 
     def _generate_cache_key(self):
