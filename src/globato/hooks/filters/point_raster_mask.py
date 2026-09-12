@@ -76,6 +76,7 @@ class PointRasterMask(GlobatoFilter):
             include_lakes=True,
             include_breakwaters=True,
             include_wetlands=True,
+            include_reefs=False,
             output_type="raster",
             target_crs=target_crs,
         )

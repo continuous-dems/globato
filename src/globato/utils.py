@@ -187,16 +187,17 @@ def globatize_modules(modules, shared_cache=None, crs=None, res=None):
                         "args": {"dst_srs": crs, "cache_dir": cache_dir},
                     },
                 )
-        else:
-            # -- Make sure the source has a stream initiator ---
-            has_stream = any(
-                h.get("name") in ["stream-init", "stream_data"] for h in hooks
-            )
-            if not has_stream:
-                hooks.insert(0, {"name": "stream-init"})
-                logger.debug(
-                    f"Auto-injected 'stream-init' into module '{mod.get('module')}'"
-                )
+        # this happens in fetchez.core by default, no need to do it here...
+        # else:
+        #     # -- Make sure the source has a stream initiator ---
+        #     has_stream = any(
+        #         h.get("name") in ["stream-init", "stream_data"] for h in hooks
+        #     )
+        #     if not has_stream:
+        #         hooks.insert(0, {"name": "stream-init"})
+        #         logger.debug(
+        #             f"Auto-injected 'stream-init' into module '{mod.get('module')}'"
+        #         )
         if res:
             for h in hooks:
                 h_args = h.get("args", {})

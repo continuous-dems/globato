@@ -271,27 +271,48 @@ class BinaryCudemStepDown(RasterGlobalHook):
                 else None
             )
 
-            if cap_shapes:
-                cap_grid = rasterize(
-                    cap_shapes,
-                    out_shape=shape,
-                    transform=transform,
-                    fill=np.nan,
-                    dtype="float32",
-                )
-            elif not has_class:
-                default_cap = self.cap_rules.get("ocean") or self.cap_rules.get("water")
-                if default_cap is not None:
-                    cap_grid = np.full(shape, default_cap, dtype="float32")
+            default_cap = self.cap_rules.get("ocean") or self.cap_rules.get("water")
 
-                    if land_mask is not None:
-                        cap_grid[land_mask] = np.nan
-                else:
-                    cap_grid = None
+            if default_cap is not None or cap_shapes:
+                base_fill = default_cap if default_cap is not None else np.nan
+                cap_grid = np.full(shape, base_fill, dtype="float32")
+
+                if default_cap is not None and land_mask is not None:
+                    cap_grid[land_mask] = np.nan
+
+                if cap_shapes:
+                    rasterize(
+                        cap_shapes,
+                        out_shape=shape,
+                        transform=transform,
+                        out=cap_grid,  # Updates the array in-place!
+                        dtype="float32",
+                    )
             else:
                 cap_grid = None
 
             return cap_grid, land_mask
+            # if cap_shapes:
+            #     cap_grid = rasterize(
+            #         cap_shapes,
+            #         out_shape=shape,
+            #         transform=transform,
+            #         fill=np.nan,
+            #         dtype="float32",
+            #     )
+            # elif not has_class:
+            #     default_cap = self.cap_rules.get("ocean") or self.cap_rules.get("water")
+            #     if default_cap is not None:
+            #         cap_grid = np.full(shape, default_cap, dtype="float32")
+
+            #         if land_mask is not None:
+            #             cap_grid[land_mask] = np.nan
+            #     else:
+            #         cap_grid = None
+            # else:
+            #     cap_grid = None
+
+            # return cap_grid, land_mask
 
         except Exception as e:
             logger.error(f"[{self.name}] Failed to generate topological grids: {e}")

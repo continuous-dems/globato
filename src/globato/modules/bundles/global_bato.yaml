@@ -28,12 +28,14 @@ modules:
     hooks:
       - name: unzip
       - name: filename_filter
-        args: {match: ".tif"}
+        args:
+          match: ".tif"
       - name: set-srs
         args:
           srs: "EPSG:4326+3855"
       - name: raster_warp
-        args: {res: 3s}
+        args:
+          res: 3s
       - name: point_raster_mask
         args:
           barrier: "coastline"
@@ -75,40 +77,40 @@ modules:
       - name: range_z
         args: {min_z: 0.01}
 
-  # Copernicus marine SDB data
-  - module: copernicus_marine
-    args:
-      weight: .5
-    hooks:
-      - name: set-datatype
-        args:
-          data_type: copernicus_sdb
-      - name: set-srs
-        args:
-          srs: "EPSG:4326+global:mss"
-      - name: filter_field
-        args:
-          field: confidence
-          min_val: 4
-      - name: dynamic-weight
-        args:
-          source_field: confidence
-          method: linear
-          scale: 0.25
-          # method: inverse
-          # offset: 1.2
-      - name: dynamic-weight
-        args:
-          source_field: z
-          method: linear
-      - name: stream_reproject
-        args:
-          dst_srs: "EPSG:4326+3855"
-          cache_dir: "%shared_cache%"
-      - name: range_z
-        args:
-          min_z: -10.0
-          max_z: -0.01
+  # # Copernicus marine SDB data
+  # - module: copernicus_marine
+  #   args:
+  #     weight: .5
+  #   hooks:
+  #     - name: set-datatype
+  #       args:
+  #         data_type: copernicus_sdb
+  #     - name: set-srs
+  #       args:
+  #         srs: "EPSG:4326+global:mss"
+  #     - name: filter_field
+  #       args:
+  #         field: confidence
+  #         min_val: 4
+  #     - name: dynamic-weight
+  #       args:
+  #         source_field: confidence
+  #         method: linear
+  #         scale: 0.25
+  #         # method: inverse
+  #         # offset: 1.2
+  #     - name: dynamic-weight
+  #       args:
+  #         source_field: z
+  #         method: linear
+  #     - name: stream_reproject
+  #       args:
+  #         dst_srs: "EPSG:4326+3855"
+  #         cache_dir: "%shared_cache%"
+  #     - name: range_z
+  #       args:
+  #         min_z: -10.0
+  #         max_z: -0.01
 
   # NCEI Multibeam
   - module: mbdb
