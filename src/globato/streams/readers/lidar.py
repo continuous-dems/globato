@@ -52,7 +52,7 @@ class LASReader(BaseGlobatoReader):
     def __init__(
         self,
         path: str,
-        classes="2/29/40/41/42",
+        classes="2/29/40",
         chunk_size=1000000,
         in_memory=False,
         **kwargs,
