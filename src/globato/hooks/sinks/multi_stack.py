@@ -72,7 +72,7 @@ class MultiStackAccumulator:
         mode="mean",
         weight_threshold="1",
         crs="EPSG:4326",
-        reset_masks=True,
+        reset_masks=False,  # default to false until we can guarentee deterministic output.
         verbose=False,
         overwrite=True,
     ):
