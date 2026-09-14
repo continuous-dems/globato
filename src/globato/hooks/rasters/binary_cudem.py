@@ -34,6 +34,7 @@ from fetchez.utils import (
     inc2str,
     int_or,
     str_or,
+    float_or,
     parse_hook_string,
     parse_arg_to_list,
 )
@@ -65,7 +66,7 @@ class BinaryCudemStepDown(RasterGlobalHook):
         decimation_mode="weighted_mean",
         bathy_max_z="-0.01",
         inland_decay_dist=5.0,  # km
-        keep_steps=False,
+        keep_steps=True,
         **kwargs,
     ):
         super().__init__(strip_bands=True, **kwargs)
@@ -86,6 +87,7 @@ class BinaryCudemStepDown(RasterGlobalHook):
         self.decimation_mode = str_or(decimation_mode, "weighted_mean")
         self.keep_steps = keep_steps
 
+        self.bathy_max_z = float_or(bathy_max_z)
         # Parse the spatial cap rules
         self.cap_rules = self._parse_cap_rules(bathy_max_z)
         self.inland_decay_dist = float(inland_decay_dist)
@@ -107,8 +109,8 @@ class BinaryCudemStepDown(RasterGlobalHook):
                 for pair in cap_input.split(","):
                     if ":" in pair:
                         k, v = pair.split(":")
-                        if v.strip().lower() != "none":
-                            rules[k.strip().lower()] = float(v)
+                        # if v.strip().lower() != "none":
+                        rules[k.strip().lower()] = float_or(v)
                 return rules
         return {}
 
@@ -258,6 +260,8 @@ class BinaryCudemStepDown(RasterGlobalHook):
                 cap_val = self.cap_rules.get(cls_name)
                 if cap_val is not None:
                     cap_shapes.append((geom, cap_val))
+                else:
+                    cap_shapes.append((geom, np.nan))
 
             land_mask = (
                 rasterize(
@@ -391,7 +395,13 @@ class BinaryCudemStepDown(RasterGlobalHook):
 
                 current_algo_hook = parse_hook_string(current_algo)
                 interp_hook = self._get_interp_hook(current_algo_hook)
-                success = interp_hook.process_raster(step_stack, temp_out, entry={})
+                # success = interp_hook.process_raster(step_stack, temp_out, entry={})
+                if interp_hook.processing_mode == "chunk":
+                    success = interp_hook._process_file_fallback(
+                        step_stack, temp_out, entry={}
+                    )
+                else:
+                    success = interp_hook.process_raster(step_stack, temp_out, entry={})
 
                 if success and os.path.exists(temp_out):
                     with rasterio.open(temp_out) as filled_src:
