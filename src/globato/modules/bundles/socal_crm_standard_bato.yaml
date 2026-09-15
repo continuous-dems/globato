@@ -1,0 +1,65 @@
+---
+name: socal-crm-bathy-topo
+description: >
+  Data sources for the southern california coastal relief model.
+  Built for 1 arc-seconds @ epsg:4326+3855
+tags:
+  - globato
+  - bathymetry
+  - topography
+  - crm
+  - glob-stream
+  - glob-bundle
+  - socal
+  - california
+modules:
+  - bundle: crm-bathy-topo
+    hooks:
+      - name: raster_warp
+        args:
+          res: 1s
+      - name: point-raster-mask
+        args:
+          res: 1s
+      - name: stream_reproject
+        args:
+          dst_srs: "EPSG:4326+3855"
+          cache_dir: "%shared_cache%"
+
+  - module: dav
+    args:
+      survey_id: '2616'
+      datatype: dem
+      weight: 10.0
+    hooks:
+      - name: stream_reproject
+        args:
+          dst_srs: "EPSG:4326+3855"
+          cache_dir: "%shared_cache%"
+
+  - module: usgs_ds781
+    hooks:
+      - name: filename_filter
+        args:
+          match: "Bathymetry"
+          stage: manifset
+      - name: filename_filter
+        args:
+          exclude: "BathymetryHS"
+          stage: manifset
+      - name: unzip
+      - name: filename_filter
+        args:
+          match: ".tif"
+      - name: filename_filter
+        args:
+          exclude: ".tif."
+      - name: filename_filter
+        args:
+          exclude: "MACOSX"
+      - name: set-srs
+        srs: "EPSG:32611+5703"
+      - name: stream_reproject
+        args:
+          dst_srs: "EPSG:4326+3855"
+          cache_dir: "%shared_cache%"

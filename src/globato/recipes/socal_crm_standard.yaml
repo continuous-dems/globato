@@ -1,0 +1,29 @@
+project:
+  name: "socal-crm-standard"
+  description: >
+    Production-grade 1-arc-second Southern California Coastal Relief Model.
+    Blends high-res local topo (CoNED, 3DEP) with dense bathymetry
+    (MBDB, NOS, eHydro) and fills deep water with GEBCO.
+  tags:
+    - globato
+    - crm
+    - california
+
+execution:
+  threads: 4
+
+schemas:
+  - name: validate-recipe
+  - name: validate-paths
+  - name: validate-parameters
+
+modifiers:
+  - name: buffer-and-cut
+    args:
+      pct: 20
+
+modules:
+  - bundle: socal-crm-bathy-topo
+
+global_hooks:
+  - preset: mr-globato-crm
