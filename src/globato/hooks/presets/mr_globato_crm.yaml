@@ -12,6 +12,14 @@ hooks:
             - 0.5
             - 0.25
           blend_dists: 30/10/5/2
+      - name: side_stack_check
+        args:
+          res: 1s
+          crs: "EPSG:4326+3855"
+      - name: side_stack
+        args:
+          res: 1s
+          crs: "EPSG:4326+3855"
       - name: multi_stack
         args:
           res: 1s

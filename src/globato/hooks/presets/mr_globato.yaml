@@ -17,6 +17,20 @@ hooks:
       output: "%name%_%batch_name%_sources.vrt"
       # vector_output: "%name%_%batch_name%_sm.gpkg"
 
+  - name: side_stack_check
+    args:
+      res: 3s
+      mode: sums
+      crs: epsg:4326+3855
+      cache_dir: "%shared_cache%"
+
+  - name: side_stack
+    args:
+      res: 3s
+      mode: sums
+      crs: epsg:4326+3855
+      cache_dir: "%shared_cache%"
+
   - name: multi_stack
     args:
       res: 3s
