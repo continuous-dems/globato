@@ -22,14 +22,12 @@ hooks:
       res: 3s
       mode: sums
       crs: epsg:4326+3855
-      cache_dir: "%shared_cache%"
 
   - name: side_stack
     args:
       res: 3s
       mode: sums
       crs: epsg:4326+3855
-      cache_dir: "%shared_cache%"
 
   - name: multi_stack
     args:
