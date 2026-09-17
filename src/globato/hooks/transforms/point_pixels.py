@@ -346,12 +346,13 @@ class PixelsToPoints(FetchHook):
             z_raw = data[0].flatten()
             if bands >= 7:
                 count = data[1].flatten()
+                weight = data[2].flatten()
 
                 valid = (count > 0) & (~np.isnan(z_raw))
 
-                z = z_raw[valid] / count[valid]
-                x = data[5].flatten()[valid] / count[valid]
-                y = data[6].flatten()[valid] / count[valid]
+                z = z_raw[valid] / weight[valid]
+                x = data[5].flatten()[valid] / weight[valid]
+                y = data[6].flatten()[valid] / weight[valid]
 
                 arrays = [x, y, z]
                 names = ["x", "y", "z"]

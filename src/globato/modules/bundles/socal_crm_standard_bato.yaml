@@ -63,3 +63,17 @@ modules:
         args:
           dst_srs: "EPSG:4326+3855"
           cache_dir: "%shared_cache%"
+
+
+  - module: usgs_ds487
+    hooks:
+      - name: unzip
+      - name: filename_filter
+        args:
+          match: ".txt"
+      - name: set-srs
+        srs: "EPSG:32611+5703"
+      - name: stream_reproject
+        args:
+          dst_srs: "EPSG:4326+3855"
+          cache_dir: "%shared_cache%"

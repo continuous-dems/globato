@@ -339,6 +339,7 @@ class BinaryCudemStepDown(RasterGlobalHook):
             z = data[0].astype("float64")
             w = data[2].astype("float64")
 
+            _observed_mask = (z != ndv) & np.isfinite(z) & (w > 0)
             cap_grid, barrier_mask = self._create_topological_grids(
                 z.shape, src.transform, barrier_path
             )
@@ -472,6 +473,7 @@ class BinaryCudemStepDown(RasterGlobalHook):
 
             # --- Topological Capping (Post-Interpolation) ---
             if cap_grid is not None:
+                # (~observed_mask)
                 to_cap = (z != ndv) & (~np.isnan(z)) & (~np.isnan(cap_grid))
                 z[to_cap] = np.minimum(z[to_cap], cap_grid[to_cap])
 
@@ -497,7 +499,7 @@ class BinaryCudemStepDown(RasterGlobalHook):
                     "dist2coast",
                     region=fetch_region,
                     variant="base",
-                    outdir=os.path.join(self.local_tmp, "auto_barriers"),
+                    outdir=os.path.join(self.cache_dir, "auto_barriers"),
                     use_cache=True,
                     verbose=False,
                 )

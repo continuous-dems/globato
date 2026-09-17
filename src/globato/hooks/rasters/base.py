@@ -75,6 +75,14 @@ class RasterHook(FetchHook):
 
         self.local_tmp = os.path.abspath("tmp")
 
+    @property
+    def cache_dir(self):
+        """Directory for reusable fetched dependencies."""
+
+        mod = getattr(self, "current_mod", None)
+        mod_outdir = getattr(mod, "outdir", getattr(mod, "_outdir", None))
+        return mod_outdir if mod_outdir else self.local_tmp
+
     # --- Utilities ---
     def modify_profile(self, profile):
         """Override this to change dtype, count, or nodata for the output raster."""
@@ -162,9 +170,7 @@ class RasterHook(FetchHook):
         mod = getattr(self, "current_mod", None)
         region = getattr(mod, "region", None) if mod else None
 
-        mod_outdir = getattr(mod, "outdir", getattr(mod, "_outdir", None))
-        cache_dir = mod_outdir if mod_outdir else os.getcwd()
-
+        cache_dir = self.cache_dir
         from globato.utils import resolve_barrier
 
         barrier_path = resolve_barrier(

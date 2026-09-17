@@ -73,6 +73,7 @@ class MultiStackAccumulator:
         weight_threshold="1",
         crs="EPSG:4326",
         reset_masks=False,  # default to false until we can guarentee deterministic output.
+        compress_sums=True,
         verbose=False,
         overwrite=True,
     ):
@@ -89,6 +90,7 @@ class MultiStackAccumulator:
         self.overwrite = overwrite
         self.reset_masks = reset_masks
         self.mask_registry = {}
+        self.compress_sums = str2bool(compress_sums)
 
         # base, ext = os.path.splitext(self.output_fn)
         base_name = os.path.basename(self.output_fn)
@@ -160,11 +162,12 @@ class MultiStackAccumulator:
             "tiled": True,
             "blockxsize": 256,
             "blockysize": 256,
-            "compress": "lzw",
-            "predictor": 2,
-            "interleave": "band",
             "bigtiff": "YES",
+            "interleave": "band",
         }
+        if self.compress_sums:
+            profile["compress"] = "lzw"
+            profile["predictor"] = 2
 
         with rasterio.open(self.sums_fn, "w", **profile) as dst:
             for key, idx in self.BAND_MAP.items():
@@ -446,6 +449,7 @@ class MultiStackHook(FetchHook):
         drop_classes=None,
         reset_masks=True,
         overwrite=True,
+        compress_sums=True,
         **kwargs,
     ):
         super().__init__(**kwargs)
@@ -459,6 +463,7 @@ class MultiStackHook(FetchHook):
             [int(x) for x in str(drop_classes).split("/")] if drop_classes else []
         )
         self.reset_masks = str2bool(reset_masks)
+        self.compress_sums = str2bool(compress_sums)
         self.overwrite = overwrite
 
     def _init_accumulator(self, region):
@@ -487,6 +492,7 @@ class MultiStackHook(FetchHook):
                 weight_threshold=self.weight_threshold,
                 crs=self.crs,
                 reset_masks=self.reset_masks,
+                compress_sums=self.compress_sums,
                 verbose=True,
                 overwrite=self.overwrite,
             )
