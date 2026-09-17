@@ -74,11 +74,12 @@ class SideStackCheck(FetchHook):
                     os.path.basename(entry.get("dst_fn", "stream"))
                 )[0]
 
-            if not self.cache_dir:
-                self.cache_dir = getattr(mod, "_outdir", getattr(mod, "outdir", None))
+            cache_dir = self.cache_dir or getattr(
+                mod, "_outdir", getattr(mod, "outdir", None)
+            )
 
             hash_str = get_sidestack_hash(region, self.res, self.crs, self.mode)
-            cache_path = get_sidestack_path(entry, self.cache_dir, hash_str)
+            cache_path = get_sidestack_path(entry, cache_dir, hash_str)
 
             if os.path.exists(cache_path):
                 logger.debug(
@@ -173,11 +174,12 @@ class SideStackGenerate(FetchHook):
             if not region or not self.is_point_stream(entry):
                 continue
 
-            if not self.cache_dir:
-                self.cache_dir = getattr(mod, "_outdir", getattr(mod, "outdir", None))
+            cache_dir = self.cache_dir or getattr(
+                mod, "_outdir", getattr(mod, "outdir", None)
+            )
 
             hash_str = get_sidestack_hash(region, self.res, self.crs, self.mode)
-            cache_path = get_sidestack_path(entry, self.cache_dir, hash_str)
+            cache_path = get_sidestack_path(entry, cache_dir, hash_str)
 
             logger.debug(
                 f"Sidestack Miss. Generating cache at {os.path.basename(cache_path)}"
