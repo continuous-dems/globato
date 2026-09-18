@@ -33,7 +33,8 @@ class RegionBufferModifier(BaseModifier):
         self.cells = float_or(cells, 0)
         self.pct = float_or(pct, 0)
         self.inc = str2inc(str_or(inc, "1"))
-        self.outname = outname
+        # Placeholders are resolved per tile, after modifiers are applied.
+        self.outname = str_or(outname) or "%name%_%batch_name%"
         self.force = str2bool(force)
 
         if "increment" in kwargs.keys():
