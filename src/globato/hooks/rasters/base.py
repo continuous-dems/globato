@@ -718,6 +718,12 @@ def write_cog(src_path, dst_path, overviews=(2, 4, 8, 16, 32), resampling="avera
 
     from rasterio.enums import Resampling
 
+    # Building overviews into a COG is an in-place edit, which GDAL refuses.
+    if is_cog(src_path):
+        if os.path.abspath(src_path) != os.path.abspath(dst_path):
+            shutil.copy(src_path, dst_path)
+        return
+
     resampling_enum = getattr(Resampling, resampling.lower(), Resampling.average)
     with rasterio.open(src_path, "r+") as src:
         src.build_overviews(list(overviews), resampling_enum)

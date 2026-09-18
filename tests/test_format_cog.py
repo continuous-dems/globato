@@ -113,6 +113,21 @@ def test_format_cog_output_may_be_the_input_itself(tile_dir):
     _assert_is_cog(dem)
 
 
+def test_format_cog_on_a_file_that_is_already_a_cog_is_a_no_op(tile_dir):
+    """Converting twice used to fail: overviews cannot be built into a COG in place."""
+    dem = tile_dir / "name_tile.tif"
+    out = tile_dir / "copy.tif"
+    _write_raster(dem)
+    RasterCOG().run([(None, _entry(dem))])
+    before = dem.read_bytes()
+
+    RasterCOG().run([(None, _entry(dem))])
+    RasterCOG(output=str(out)).run([(None, _entry(dem))])
+
+    assert dem.read_bytes() == before
+    assert out.read_bytes() == before
+
+
 def test_format_cog_handles_a_uint8_hillshade(tile_dir):
     """PREDICTOR=3 is floating point only, so it cannot be hard-coded."""
     hillshade = tile_dir / "name_tile_hs.tif"
