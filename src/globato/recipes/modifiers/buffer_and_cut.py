@@ -30,10 +30,14 @@ class RegionBufferModifier(BaseModifier):
     def __init__(
         self, cells=None, pct=None, inc=None, outname=None, force=False, **kwargs
     ):
-        self.cells = float_or(cells, 0)
-        self.pct = float_or(pct, 0)
+        # None means "not given", which apply() tells apart from an explicit 0.
+        self.cells = float_or(cells)
+        self.pct = float_or(pct)
         self.inc = str2inc(str_or(inc, "1"))
-        self.outname = outname
+        # 'outname' must match the basename of the DEM the recipe writes, so the
+        # cropped DEM replaces the buffered one (see apply()). Placeholders are
+        # resolved per tile, after modifiers are applied.
+        self.outname = str_or(outname) or "%name%_%batch_name%"
         self.force = str2bool(force)
 
         if "increment" in kwargs.keys():
@@ -41,11 +45,15 @@ class RegionBufferModifier(BaseModifier):
 
     def apply(self, config):
         region = config.get("region")
+        if not region:
+            logger.warning(
+                f"[{self.name}] No region set in the recipe, so there is nothing to buffer. Skipping the modification."
+            )
+            return config
+
         parsed_region = parse_region(region)[
             0
         ]  # update this to handle multiple regions.
-        if not region:
-            return config
 
         if self.cells is None and self.pct is None:
             logger.warning(
@@ -53,16 +61,27 @@ class RegionBufferModifier(BaseModifier):
             )
             self.pct = 5.0
 
+        cells = self.cells or 0
+        pct = self.pct or 0
+
         valid = True
-        global_hooks = config.get("global_hooks", [])
-        insert_idx = len(global_hooks)
+        # Attach the list to the config: if the key was missing, the hooks
+        # inserted below would otherwise go into a list nobody keeps.
+        global_hooks = config.get("global_hooks") or []
+        config["global_hooks"] = global_hooks
+        insert_idx = None
 
         for i, hook in enumerate(global_hooks):
-            if hook.get("name", "").replace("-", "_") == "format_cog":
+            hook_name = hook.get("name", "").replace("-", "_")
+            # Only the first format_cog, so every later hook sees the cropped DEM.
+            # Keep scanning past it: a raster_cut may come later in the recipe.
+            if hook_name == "format_cog" and insert_idx is None:
                 insert_idx = i
-                # break
-            if hook.get("name", "").replace("-", "_") == "raster_cut":
+            if hook_name == "raster_cut":
                 valid = False
+
+        if insert_idx is None:
+            insert_idx = len(global_hooks)
 
         if not valid and not self.force:
             logger.warning(
@@ -71,22 +90,25 @@ class RegionBufferModifier(BaseModifier):
 
         else:
             buffer_region = parsed_region.copy().buffer(
-                pct=self.pct, x_inc=self.inc, y_inc=self.inc
+                pct=pct, x_inc=self.inc, y_inc=self.inc
             )
             delivery_region = parsed_region.copy().buffer(
-                x_bv=self.cells * self.inc, y_bv=self.cells * self.inc
+                x_bv=cells * self.inc, y_bv=cells * self.inc
             )
             config["region"] = buffer_region.to_list()
-            if self.pct:
+            if pct:
                 logger.info(
                     f"[{self.name}] Expanded processing region to {buffer_region}."
                 )
 
+            # No suffix: the cropped DEM is written over the buffered one, so that
+            # later hooks (format_cog, copy_artifact) pick up the delivery-sized DEM
+            # under the name the recipe already expects.
             global_hooks.insert(
                 insert_idx,
                 {
                     "name": "raster_crop",
-                    "args": {"output": f"{self.outname}_final.tif"},
+                    "args": {"output": f"{self.outname}.tif"},
                 },
             )
             global_hooks.insert(
