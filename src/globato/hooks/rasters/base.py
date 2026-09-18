@@ -482,6 +482,14 @@ class RasterHook(FetchHook):
     def process_raster(self, src_path, dst_path, entry):
         raise NotImplementedError("Global-mode hooks must implement process_raster()")
 
+    def _dst_fn(self, src_fn):
+        """Where to write the result for `src_fn`. Defaults to a suffixed file in tmp."""
+
+        return self.output or os.path.join(
+            self.local_tmp,
+            f"{os.path.splitext(os.path.basename(src_fn))[0]}{self.suffix}.tif",
+        )
+
     # --- Routing and Processing ---
     def run(self, entries):
         logger.info(
@@ -527,10 +535,7 @@ class RasterHook(FetchHook):
                 new_entries.append((mod, entry))
                 continue
 
-            dst_fn = self.output or os.path.join(
-                self.local_tmp,
-                f"{os.path.splitext(os.path.basename(src_fn))[0]}{self.suffix}.tif",
-            )
+            dst_fn = self._dst_fn(src_fn)
             logger.debug(f"[{self.name}] Processing file: {os.path.basename(src_fn)}")
 
             if getattr(self, "meta_requires", None) == "multi-stack":
@@ -639,9 +644,49 @@ class RasterStreamHook(RasterHook):
     processing_mode = "chunk"
 
 
+def write_cog(src_path, dst_path, overviews=(2, 4, 8, 16, 32), resampling="average"):
+    """Rewrite `src_path` as a Cloud-Optimized GeoTIFF at `dst_path`.
+
+    `dst_path` may be `src_path` itself. Overviews are built into `src_path` first.
+    """
+
+    from rasterio.shutil import copy
+    from rasterio.enums import Resampling
+
+    resampling_enum = getattr(Resampling, resampling.lower(), Resampling.average)
+    with rasterio.open(src_path, "r+") as src:
+        src.build_overviews(list(overviews), resampling_enum)
+        src.update_tags(ns="rio_overview", resampling=resampling.lower())
+        # PREDICTOR=3 is floating point only (e.g. it fails on a uint8 hillshade).
+        predictor = 3 if np.dtype(src.dtypes[0]).kind == "f" else 2
+
+    # Write next to the destination and move into place, so that src and dst
+    # can be the same file and a failed copy never leaves a partial COG behind.
+    tmp_path = f"{dst_path}.cog_tmp"
+    try:
+        with rasterio.Env(GDAL_TIFF_OVR_BLOCKSIZE=256):
+            copy(
+                src_path,
+                tmp_path,
+                copy_src_overviews=True,
+                driver="COG",
+                compress="deflate",
+                predictor=predictor,
+                blocksize=256,  # the COG driver ignores blockxsize/blockysize
+                bigtiff="YES",
+            )
+        os.replace(tmp_path, dst_path)
+    finally:
+        if os.path.exists(tmp_path):
+            os.remove(tmp_path)
+
+
 class RasterCOG(RasterHook):
     """Converts a standard GeoTIFF into a strict Cloud-Optimized GeoTIFF (COG).
     Builds overviews (2, 4, 8, 16, 32) and aligns the byte structure for HTTP streaming.
+
+    With no `output`, the raster is converted in place: the COG replaces the input
+    file, so later hooks (and copy_artifact) pick it up under the same name.
     """
 
     name = "format-cog"
@@ -655,32 +700,14 @@ class RasterCOG(RasterHook):
         self.overviews = parse_arg_to_list(overviews, int)
         self.resampling = resampling
 
-    def process_raster(self, src_path, dst_path, entry):
-        from rasterio.shutil import copy
-        from rasterio.enums import Resampling
+    def _dst_fn(self, src_fn):
+        # In place unless told otherwise. A copy left in tmp would be removed by
+        # cleanup_tmp, and the file that gets delivered would not be the COG.
+        return self.output or src_fn
 
+    def process_raster(self, src_path, dst_path, entry):
         logger.info(
             f"[{self.name}] Building {self.overviews} overviews and aligning COG..."
         )
-
-        resampling_enum = getattr(
-            Resampling, self.resampling.lower(), Resampling.average
-        )
-        with rasterio.open(src_path, "r+") as src:
-            src.build_overviews(self.overviews, resampling_enum)
-            src.update_tags(ns="rio_overview", resampling=self.resampling.lower())
-
-        with rasterio.Env(GDAL_TIFF_OVR_BLOCKSIZE=256):
-            copy(
-                src_path,
-                dst_path,
-                copy_src_overviews=True,
-                driver="COG",
-                compress="deflate",
-                predictor=3,
-                blockxsize=256,
-                blockysize=256,
-                bigtiff="YES",
-            )
-
+        write_cog(src_path, dst_path, self.overviews, self.resampling)
         return True
