@@ -13,7 +13,7 @@ hooks:
             - 1.0
             - 0.5
             - 0.25
-          blend_dists: 135/45/15/5/2/1
+          blend_dists: 160/80/40/20/10/2
       - name: side_stack_check
         args:
           res: .11111111s
