@@ -46,6 +46,9 @@ class RegionBufferModifier(BaseModifier):
     def apply(self, config):
         region = config.get("region")
         if not region:
+            logger.warning(
+                f"[{self.name}] No region set in the recipe, so there is nothing to buffer. Skipping the modification."
+            )
             return config
 
         parsed_region = parse_region(region)[

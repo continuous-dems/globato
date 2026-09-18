@@ -92,12 +92,23 @@ def test_buffer_and_cut_keeps_its_hooks_when_the_config_has_no_global_hooks():
         ]
 
 
-def test_buffer_and_cut_without_a_region_leaves_the_config_alone():
-    """A recipe with no region has nothing to buffer; it must not raise."""
+def test_buffer_and_cut_without_a_region_leaves_the_config_alone(caplog):
+    """A recipe with no region has nothing to buffer; it must warn, not raise."""
     for config in ({"global_hooks": []}, {"region": None, "global_hooks": []}):
         expected = dict(config)
+        caplog.clear()
 
-        assert RegionBufferModifier(pct=20).apply(config) == expected
+        with caplog.at_level("WARNING"):
+            assert RegionBufferModifier(pct=20).apply(config) == expected
+
+        assert "No region set in the recipe" in caplog.text
+
+
+def test_buffer_and_cut_with_a_region_does_not_warn_about_it(caplog):
+    with caplog.at_level("WARNING"):
+        RegionBufferModifier(pct=20).apply(_config())
+
+    assert "No region set" not in caplog.text
 
 
 def test_buffer_and_cut_defaults_to_a_5_pct_buffer_when_none_is_given():
