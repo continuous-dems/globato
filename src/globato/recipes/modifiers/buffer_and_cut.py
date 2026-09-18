@@ -62,7 +62,10 @@ class RegionBufferModifier(BaseModifier):
         pct = self.pct or 0
 
         valid = True
-        global_hooks = config.get("global_hooks", [])
+        # Attach the list to the config: if the key was missing, the hooks
+        # inserted below would otherwise go into a list nobody keeps.
+        global_hooks = config.get("global_hooks") or []
+        config["global_hooks"] = global_hooks
         insert_idx = None
 
         for i, hook in enumerate(global_hooks):

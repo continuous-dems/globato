@@ -78,6 +78,20 @@ def test_buffer_and_cut_still_sees_a_raster_cut_after_format_cog():
     assert "raster_crop" not in [h["name"] for h in config["global_hooks"]]
 
 
+def test_buffer_and_cut_keeps_its_hooks_when_the_config_has_no_global_hooks():
+    """A buffered region with no cut/crop to undo it would deliver an oversize DEM."""
+    for config in ({}, {"global_hooks": None}):
+        config["region"] = _config()["region"]
+
+        config = RegionBufferModifier(pct=20).apply(config)
+
+        assert config["region"] != _config()["region"]
+        assert [h["name"] for h in config["global_hooks"]] == [
+            "raster_cut",
+            "raster_crop",
+        ]
+
+
 def test_buffer_and_cut_without_a_region_leaves_the_config_alone():
     """A recipe with no region has nothing to buffer; it must not raise."""
     for config in ({"global_hooks": []}, {"region": None, "global_hooks": []}):
