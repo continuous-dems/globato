@@ -50,6 +50,34 @@ def test_buffer_and_cut_injects_cut_then_crop_before_format_cog():
     assert names == ["raster_metadata", "raster_cut", "raster_crop", "format_cog"]
 
 
+def test_buffer_and_cut_injects_before_the_first_format_cog():
+    """With several format_cog hooks, everything after the DEM must see the cropped DEM."""
+    config = _config()
+    config["global_hooks"] += [{"name": "viz_geoshade"}, {"name": "format-cog"}]
+
+    names = [
+        h["name"] for h in RegionBufferModifier(pct=20).apply(config)["global_hooks"]
+    ]
+    assert names == [
+        "raster_metadata",
+        "raster_cut",
+        "raster_crop",
+        "format_cog",
+        "viz_geoshade",
+        "format-cog",
+    ]
+
+
+def test_buffer_and_cut_still_sees_a_raster_cut_after_format_cog():
+    config = _config()
+    config["global_hooks"].append({"name": "raster_cut"})
+
+    config = RegionBufferModifier(pct=20).apply(config)
+
+    assert config["region"] == _config()["region"]
+    assert "raster_crop" not in [h["name"] for h in config["global_hooks"]]
+
+
 def test_buffer_and_cut_without_a_region_leaves_the_config_alone():
     """A recipe with no region has nothing to buffer; it must not raise."""
     for config in ({"global_hooks": []}, {"region": None, "global_hooks": []}):

@@ -63,14 +63,19 @@ class RegionBufferModifier(BaseModifier):
 
         valid = True
         global_hooks = config.get("global_hooks", [])
-        insert_idx = len(global_hooks)
+        insert_idx = None
 
         for i, hook in enumerate(global_hooks):
-            if hook.get("name", "").replace("-", "_") == "format_cog":
+            hook_name = hook.get("name", "").replace("-", "_")
+            # Only the first format_cog, so every later hook sees the cropped DEM.
+            # Keep scanning past it: a raster_cut may come later in the recipe.
+            if hook_name == "format_cog" and insert_idx is None:
                 insert_idx = i
-                # break
-            if hook.get("name", "").replace("-", "_") == "raster_cut":
+            if hook_name == "raster_cut":
                 valid = False
+
+        if insert_idx is None:
+            insert_idx = len(global_hooks)
 
         if not valid and not self.force:
             logger.warning(
