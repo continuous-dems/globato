@@ -20,7 +20,7 @@ try:
 except ImportError:
     HAS_MATPLOTLIB = False
 
-from globato.hooks.rasters.base import RasterStreamHook
+from globato.hooks.rasters.base import RasterStreamHook, write_cog
 from . import cpt as cpt_utils
 
 logger = logging.getLogger(__name__)
@@ -51,6 +51,7 @@ class GeoHillshade(RasterStreamHook):
         z_max=None,
         scale=111120.0,  # Degrees to Meters conversion
         split_cpt=0,
+        cog=False,
         **kwargs,
     ):
         kwargs.setdefault("buffer", 2)
@@ -63,6 +64,7 @@ class GeoHillshade(RasterStreamHook):
         self.blend_mode = blend_mode
         self.alpha = str(alpha).lower() in ["true", "1", "yes"]
         self.gamma = float(gamma) if gamma else None
+        self.cog = str(cog).lower() in ["true", "1", "yes"]
 
         self.z_min = float(z_min) if z_min is not None else None
         self.z_max = float(z_max) if z_max is not None else None
@@ -79,6 +81,14 @@ class GeoHillshade(RasterStreamHook):
         if not HAS_MATPLOTLIB:
             return False, "matplotlib is required to generate hillshades."
         return True, ""
+
+    def _process_file_fallback(self, src_path, dst_path, entry):
+        success = super()._process_file_fallback(src_path, dst_path, entry)
+        # The chunk writer produces a plain GeoTIFF (no overviews, no COG layout).
+        # Only applies when this hook writes the file, not when it wraps a stream.
+        if success and self.cog:
+            write_cog(dst_path, dst_path)
+        return success
 
     def modify_profile(self, profile):
         count = 4 if self.alpha else 3

@@ -1,13 +1,17 @@
 # tests/test_format_cog.py
 
 import os
+from pathlib import Path
 
 import numpy as np
 import pytest
 import rasterio
+import yaml
 from rasterio.transform import from_origin
 
+import globato
 from globato.hooks.rasters.base import RasterCOG
+from globato.hooks.viz.geohillshade import GeoHillshade
 
 # Bigger than one 256 px block: a single-block file with no overviews is
 # trivially in COG order, which would hide the bug these tests are for.
@@ -119,3 +123,42 @@ def test_format_cog_handles_a_uint8_hillshade(tile_dir):
     with rasterio.open(hillshade) as src:
         assert src.count == 3
         assert np.array_equal(src.read(), data)
+
+
+def test_viz_geoshade_writes_a_plain_geotiff_by_default(tile_dir):
+    dem = tile_dir / "name_tile.tif"
+    hillshade = tile_dir / "name_tile_hs.tif"
+    _write_raster(dem)
+
+    GeoHillshade(output=str(hillshade)).run([(None, _entry(dem))])
+
+    with rasterio.open(hillshade) as src:
+        assert src.count == 3
+        assert src.overviews(1) == []
+        assert src.tags(ns="IMAGE_STRUCTURE").get("LAYOUT") != "COG"
+
+
+def test_viz_geoshade_cog_option_delivers_a_cog_hillshade(tile_dir):
+    dem = tile_dir / "name_tile.tif"
+    plain = tile_dir / "plain_hs.tif"
+    hillshade = tile_dir / "name_tile_hs.tif"
+    _write_raster(dem)
+
+    GeoHillshade(output=str(plain)).run([(None, _entry(dem))])
+    entries = GeoHillshade(output=str(hillshade), cog=True).run([(None, _entry(dem))])
+
+    assert entries[0][1]["dst_fn"] == str(hillshade)
+    _assert_is_cog(hillshade)
+    with rasterio.open(hillshade) as cog, rasterio.open(plain) as ref:
+        assert np.array_equal(cog.read(), ref.read())
+
+
+def test_mr_globato_has_one_format_cog_and_asks_the_hillshade_for_a_cog():
+    """Preset overrides are matched by hook name, so a second format_cog would
+    receive every override meant for the first (e.g. the same 'output')."""
+    preset_fn = Path(globato.__file__).parent / "hooks" / "presets" / "mr_globato.yaml"
+    hooks = yaml.safe_load(preset_fn.read_text())["hooks"]
+
+    assert [h["name"] for h in hooks].count("format_cog") == 1
+    geoshade = [h for h in hooks if h["name"] == "viz_geoshade"][0]
+    assert geoshade["args"]["cog"] is True
