@@ -27,6 +27,10 @@ class RegionBufferModifier(BaseModifier):
     meta_category = "Globato"
     meta_aliases = ["buffer_and_cut"]
 
+    # Hooks that use the finished DEM, plus anything named viz_*. The cut and crop
+    # have to run before the first of them, whichever that is in a given recipe.
+    dem_consumers = ("format_cog", "cleanup_tmp", "copy_artifact")
+
     def __init__(
         self, cells=None, pct=None, inc=None, outname=None, force=False, **kwargs
     ):
@@ -42,6 +46,9 @@ class RegionBufferModifier(BaseModifier):
 
         if "increment" in kwargs.keys():
             self.inc = str2inc(str_or(kwargs["increment"], "1"))
+
+    def _consumes_dem(self, hook_name):
+        return hook_name in self.dem_consumers or hook_name.startswith("viz_")
 
     def apply(self, config):
         region = config.get("region")
@@ -73,13 +80,15 @@ class RegionBufferModifier(BaseModifier):
 
         for i, hook in enumerate(global_hooks):
             hook_name = hook.get("name", "").replace("-", "_")
-            # Only the first format_cog, so every later hook sees the cropped DEM.
-            # Keep scanning past it: a raster_cut may come later in the recipe.
-            if hook_name == "format_cog" and insert_idx is None:
+            # Only the first hook that uses the finished DEM, so it and everything
+            # after it see the cropped DEM. Keep scanning past it: a raster_cut may
+            # come later in the recipe.
+            if insert_idx is None and self._consumes_dem(hook_name):
                 insert_idx = i
             if hook_name == "raster_cut":
                 valid = False
 
+        # Nothing uses the DEM afterwards, so the end of the recipe is the right place.
         if insert_idx is None:
             insert_idx = len(global_hooks)
 

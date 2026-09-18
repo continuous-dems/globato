@@ -68,6 +68,66 @@ def test_buffer_and_cut_injects_before_the_first_format_cog():
     ]
 
 
+def _names_after_apply(hook_names):
+    config = {
+        "region": _config()["region"],
+        "global_hooks": [{"name": n} for n in hook_names],
+    }
+    return [
+        h["name"] for h in RegionBufferModifier(pct=20).apply(config)["global_hooks"]
+    ]
+
+
+def test_buffer_and_cut_does_not_need_a_format_cog():
+    """Without format_cog, the cut/crop must still precede whatever uses the DEM.
+
+    Appended at the end they ran after copy_artifact, so the buffered DEM and a
+    buffered hillshade were delivered.
+    """
+    names = _names_after_apply(
+        ["ms_binary_cudem", "viz_geoshade", "cleanup_tmp", "copy_artifact"]
+    )
+    assert names == [
+        "ms_binary_cudem",
+        "raster_cut",
+        "raster_crop",
+        "viz_geoshade",
+        "cleanup_tmp",
+        "copy_artifact",
+    ]
+
+
+def test_buffer_and_cut_precedes_a_lone_copy_artifact():
+    names = _names_after_apply(["ms_binary_cudem", "copy-artifact"])
+    assert names == ["ms_binary_cudem", "raster_cut", "raster_crop", "copy-artifact"]
+
+
+def test_buffer_and_cut_is_appended_when_nothing_uses_the_dem():
+    names = _names_after_apply(["multi_stack", "focus_sink", "ms_blend"])
+    assert names == [
+        "multi_stack",
+        "focus_sink",
+        "ms_blend",
+        "raster_cut",
+        "raster_crop",
+    ]
+
+
+def test_buffer_and_cut_position_in_mr_globato_is_unchanged():
+    """format_cog is the first hook in the preset that uses the DEM."""
+    preset_fn = Path(globato.__file__).parent / "hooks" / "presets" / "mr_globato.yaml"
+    hooks = yaml.safe_load(preset_fn.read_text())["hooks"]
+
+    names = _names_after_apply([h["name"] for h in hooks])
+    i = names.index("raster_cut")
+    assert names[i - 1 : i + 3] == [
+        "raster_metadata",
+        "raster_cut",
+        "raster_crop",
+        "format_cog",
+    ]
+
+
 def test_buffer_and_cut_still_sees_a_raster_cut_after_format_cog():
     config = _config()
     config["global_hooks"].append({"name": "raster_cut"})
