@@ -17,6 +17,7 @@ import logging
 from fetchez.utils import str2inc, str2bool, float_or, str_or
 from fetchez.spatial import parse_region
 from fetchez.recipes.modifiers import BaseModifier
+from fetchez.registry import HookRegistry
 
 logger = logging.getLogger(__name__)
 
@@ -26,6 +27,21 @@ class RegionBufferModifier(BaseModifier):
     meta_desc = "Expands the target region by a specified amount or percentage and appends a cut hook."
     meta_category = "Globato"
     meta_aliases = ["buffer_and_cut"]
+
+    # The hooks that turn the buffered region into the DEM: anything carrying the
+    # 'interpolation' meta_tag (ms_binary_cudem, ms_cudem, interp_*, raster_fill),
+    # plus ms_blend, which blends rather than interpolates and so has no such tag.
+    # The cut and crop have to run after the last of them.
+    #
+    # STAND-IN: this tag-plus-name lookup is temporary. Once hooks declare what they
+    # provide (a 'provides' meta_* attribute is planned in the fetchez registry),
+    # replace both of these with a lookup of that.
+    dem_producer_tag = "interpolation"
+    dem_producer_names = ("ms_blend",)
+
+    # Hooks that use the finished DEM, plus anything named viz_*. The cut and crop
+    # have to run before the first of them that follows the DEM.
+    dem_consumers = ("format_cog", "cleanup_tmp", "copy_artifact")
 
     def __init__(
         self, cells=None, pct=None, inc=None, outname=None, force=False, **kwargs
@@ -43,6 +59,18 @@ class RegionBufferModifier(BaseModifier):
         if "increment" in kwargs.keys():
             self.inc = str2inc(str_or(kwargs["increment"], "1"))
 
+    def _produces_dem(self, hook_name):
+        # Stand-in for a 'provides' lookup; see dem_producer_tag above.
+        if hook_name in self.dem_producer_names:
+            return True
+        hook_cls = HookRegistry.get_class(hook_name)
+        return bool(hook_cls) and self.dem_producer_tag in (
+            getattr(hook_cls, "meta_tags", None) or []
+        )
+
+    def _consumes_dem(self, hook_name):
+        return hook_name in self.dem_consumers or hook_name.startswith("viz_")
+
     def apply(self, config):
         region = config.get("region")
         if not region:
@@ -55,6 +83,23 @@ class RegionBufferModifier(BaseModifier):
             0
         ]  # update this to handle multiple regions.
 
+        HookRegistry.load_all()
+        global_hooks = config.get("global_hooks") or []
+        hook_names = [h.get("name", "").replace("-", "_") for h in global_hooks]
+
+        # The buffer only makes sense if something grids the buffered region into a
+        # DEM that can be cut back afterwards. Without that, leave the recipe alone.
+        dem_idx = max(
+            (i for i, n in enumerate(hook_names) if self._produces_dem(n)),
+            default=None,
+        )
+        if dem_idx is None:
+            logger.warning(
+                f"[{self.name}] No hook in the recipe produces a DEM (an interpolation hook such as "
+                "ms_binary_cudem, or ms_blend), so there is nothing to cut back. Skipping the modification."
+            )
+            return config
+
         if self.cells is None and self.pct is None:
             logger.warning(
                 f"[{self.name}] No buffer provided. Defaulting to 5% buffer."
@@ -64,24 +109,18 @@ class RegionBufferModifier(BaseModifier):
         cells = self.cells or 0
         pct = self.pct or 0
 
-        valid = True
-        # Attach the list to the config: if the key was missing, the hooks
-        # inserted below would otherwise go into a list nobody keeps.
-        global_hooks = config.get("global_hooks") or []
-        config["global_hooks"] = global_hooks
-        insert_idx = None
-
-        for i, hook in enumerate(global_hooks):
-            hook_name = hook.get("name", "").replace("-", "_")
-            # Only the first format_cog, so every later hook sees the cropped DEM.
-            # Keep scanning past it: a raster_cut may come later in the recipe.
-            if hook_name == "format_cog" and insert_idx is None:
-                insert_idx = i
-            if hook_name == "raster_cut":
-                valid = False
-
-        if insert_idx is None:
-            insert_idx = len(global_hooks)
+        # After the last hook that produces the DEM, and before the first hook after
+        # it that uses the DEM, so that one and everything later see the cropped DEM.
+        # If nothing uses it afterwards, the end of the recipe is the right place.
+        insert_idx = next(
+            (
+                i
+                for i in range(dem_idx + 1, len(hook_names))
+                if self._consumes_dem(hook_names[i])
+            ),
+            len(global_hooks),
+        )
+        valid = "raster_cut" not in hook_names
 
         if not valid and not self.force:
             logger.warning(
