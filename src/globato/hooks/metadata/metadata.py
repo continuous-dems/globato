@@ -17,6 +17,8 @@ import rasterio
 
 from fetchez.hooks import FetchHook
 
+from globato.hooks.rasters.base import is_cog, update_cog_metadata
+
 logger = logging.getLogger(__name__)
 
 
@@ -53,15 +55,23 @@ class RasterMetadataHook(FetchHook):
                 continue
 
             try:
-                # Open in 'r+' mode to inject metadata without rewriting the data array!
-                with rasterio.open(path, "r+") as dst:
-                    if self.tags:
-                        dst.update_tags(**self.tags)
+                if is_cog(path):
+                    # GDAL will not edit a COG in place: it would break the layout.
+                    logger.warning(
+                        f"[{self.name}] {os.path.basename(path)} is a COG, which cannot be edited in place. "
+                        "Rewriting it to add the metadata; put raster_metadata before format_cog to avoid the extra write."
+                    )
+                    update_cog_metadata(path, self.tags, self.bands)
+                else:
+                    # Open in 'r+' mode to inject metadata without rewriting the data array!
+                    with rasterio.open(path, "r+") as dst:
+                        if self.tags:
+                            dst.update_tags(**self.tags)
 
-                    if self.bands:
-                        for i, name in enumerate(self.bands, start=1):
-                            if i <= dst.count:
-                                dst.set_band_description(i, name)
+                        if self.bands:
+                            for i, name in enumerate(self.bands, start=1):
+                                if i <= dst.count:
+                                    dst.set_band_description(i, name)
 
                 logger.debug(
                     f"[{self.name}] Injected metadata into {os.path.basename(path)}"

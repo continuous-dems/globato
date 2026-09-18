@@ -10,6 +10,7 @@ import yaml
 from rasterio.transform import from_origin
 
 import globato
+from globato.hooks.metadata.metadata import RasterMetadataHook
 from globato.hooks.rasters.base import RasterCOG
 from globato.hooks.viz.geohillshade import GeoHillshade
 
@@ -162,3 +163,44 @@ def test_mr_globato_has_one_format_cog_and_asks_the_hillshade_for_a_cog():
     assert [h["name"] for h in hooks].count("format_cog") == 1
     geoshade = [h for h in hooks if h["name"] == "viz_geoshade"][0]
     assert geoshade["args"]["cog"] is True
+
+
+def _add_metadata(path):
+    RasterMetadataHook(tags="Project=CRM,Version=6", bands="Elevation (meters)").run(
+        [(None, {"dst_fn": str(path)})]
+    )
+
+
+def test_raster_metadata_on_a_cog_rewrites_it_and_keeps_it_a_cog(tile_dir, caplog):
+    """GDAL refuses to edit a COG in place; forcing it would break the layout."""
+    dem = tile_dir / "name_tile.tif"
+    data = _write_raster(dem)
+    RasterCOG().run([(None, _entry(dem))])
+
+    with caplog.at_level("WARNING"):
+        _add_metadata(dem)
+
+    assert "is a COG" in caplog.text
+    _assert_is_cog(dem)
+    with rasterio.open(dem) as src:
+        assert src.tags()["Project"] == "CRM"
+        assert src.tags()["Version"] == "6"
+        assert src.descriptions == ("Elevation (meters)",)
+        assert np.array_equal(src.read(), data)
+    assert sorted(os.listdir(tile_dir)) == [dem.name, "tmp"]
+
+
+def test_raster_metadata_on_a_plain_geotiff_still_edits_in_place(tile_dir, caplog):
+    dem = tile_dir / "name_tile.tif"
+    _write_raster(dem)
+    inode = os.stat(dem).st_ino
+
+    with caplog.at_level("WARNING"):
+        _add_metadata(dem)
+
+    assert "is a COG" not in caplog.text
+    # Edited in place, not rewritten and moved over the original.
+    assert os.stat(dem).st_ino == inode
+    with rasterio.open(dem) as src:
+        assert src.tags()["Project"] == "CRM"
+        assert src.descriptions == ("Elevation (meters)",)
