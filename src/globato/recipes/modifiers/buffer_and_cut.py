@@ -87,7 +87,7 @@ class RegionBufferModifier(BaseModifier):
                 insert_idx,
                 {
                     "name": "raster_crop",
-                    "args": {"output": f"{self.outname}_final.tif"},
+                    "args": {"output": f"{self.outname}_crop.tif"},
                 },
             )
             global_hooks.insert(

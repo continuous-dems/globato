@@ -17,25 +17,25 @@ def _crop_output(config):
 
 
 def test_buffer_and_cut_default_outname_is_not_none():
-    """Prove that omitting 'outname' does not write a literal 'None_final.tif'."""
+    """Prove that omitting 'outname' does not put a literal 'None' in the output name."""
     config = RegionBufferModifier(pct=20).apply(_config())
 
     output = _crop_output(config)
     assert "None" not in output
     # The recipe runner fills these in for each tile after modifiers are applied.
-    assert output == "%name%_%batch_name%_final.tif"
+    assert output == "%name%_%batch_name%_crop.tif"
 
 
 def test_buffer_and_cut_empty_outname_falls_back_to_default():
     config = RegionBufferModifier(pct=20, outname="").apply(_config())
 
-    assert _crop_output(config) == "%name%_%batch_name%_final.tif"
+    assert _crop_output(config) == "%name%_%batch_name%_crop.tif"
 
 
 def test_buffer_and_cut_explicit_outname_is_kept():
     config = RegionBufferModifier(pct=20, outname="my_dem").apply(_config())
 
-    assert _crop_output(config) == "my_dem_final.tif"
+    assert _crop_output(config) == "my_dem_crop.tif"
 
 
 def test_buffer_and_cut_injects_cut_then_crop_before_format_cog():
