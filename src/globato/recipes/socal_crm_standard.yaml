@@ -21,6 +21,8 @@ modifiers:
   - name: buffer-and-cut
     args:
       pct: 20
+      # Must match the DEM written by the global_hooks preset.
+      outname: "%name%_%batch_name%"
 
 modules:
   - bundle: socal-crm-bathy-topo

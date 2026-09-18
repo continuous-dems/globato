@@ -18,6 +18,8 @@ modifiers:
   - name: buffer-and-cut
     args:
       pct: 10
+      # Must match the DEM written by the global_hooks preset.
+      outname: "%name%_%batch_name%"
 
 modules:
   - bundle: cudem-bathy-topo
