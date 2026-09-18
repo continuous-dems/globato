@@ -92,6 +92,26 @@ class BinaryCudemStepDown(RasterGlobalHook):
         self.cap_rules = self._parse_cap_rules(bathy_max_z)
         self.inland_decay_dist = float(inland_decay_dist)
 
+    @staticmethod
+    def _apply_topological_cap(z, cap_grid, observed_mask, ndv):
+        to_cap = ~observed_mask & (z != ndv) & np.isfinite(z) & np.isfinite(cap_grid)
+
+        z[to_cap] = np.minimum(z[to_cap], cap_grid[to_cap])
+        return z
+
+    def _observed_land_mask(self, z, valid_mask, core_mask):
+        observed_land = valid_mask & core_mask & (z > 0)
+
+        structure = scipy.ndimage.generate_binary_structure(2, 2)
+        closed_land = scipy.ndimage.binary_closing(
+            observed_land,
+            structure=structure,
+            iterations=1,
+        )
+
+        # Never lose actual positive observations.
+        return observed_land | closed_land
+
     def _parse_cap_rules(self, cap_input):
         if cap_input is None:
             return {}
@@ -275,7 +295,9 @@ class BinaryCudemStepDown(RasterGlobalHook):
                 else None
             )
 
-            default_cap = self.cap_rules.get("ocean") or self.cap_rules.get("water")
+            default_cap = self.cap_rules.get("ocean")
+            if default_cap is None:
+                default_cap = self.cap_rules.get("water")
 
             if default_cap is not None or cap_shapes:
                 base_fill = default_cap if default_cap is not None else np.nan
@@ -322,6 +344,254 @@ class BinaryCudemStepDown(RasterGlobalHook):
             logger.error(f"[{self.name}] Failed to generate topological grids: {e}")
             return None, None
 
+    def _align_background(self, previous_surface, shape, transform, crs, ndv):
+        """Align the previous coarser surface to the current tier grid."""
+        bg_aligned = np.full(shape, ndv, dtype="float64")
+
+        with rasterio.open(previous_surface) as bg_src:
+            reproject(
+                source=rasterio.band(bg_src, 1),
+                destination=bg_aligned,
+                src_transform=bg_src.transform,
+                src_crs=bg_src.crs,
+                dst_transform=transform,
+                dst_crs=crs,
+                src_nodata=bg_src.nodata,
+                dst_nodata=ndv,
+                resampling=Resampling.bilinear,
+                num_threads=1,
+            )
+
+        return bg_aligned
+
+    @staticmethod
+    def _distance_to_core(core_mask, barrier_mask=None):
+        """Return distance to same-topology core observations.
+
+        Land and water are measured independently when topology is available so
+        a dense land survey does not create a transition moat through adjacent
+        water (or vice versa).
+        """
+        if barrier_mask is None:
+            return scipy.ndimage.distance_transform_edt(~core_mask)
+
+        dist = np.full(core_mask.shape, np.inf, dtype="float64")
+
+        land_core = core_mask & barrier_mask
+        if np.any(land_core):
+            land_dist = scipy.ndimage.distance_transform_edt(~land_core)
+            dist[barrier_mask] = land_dist[barrier_mask]
+
+        water_core = core_mask & ~barrier_mask
+        if np.any(water_core):
+            water_dist = scipy.ndimage.distance_transform_edt(~water_core)
+            dist[~barrier_mask] = water_dist[~barrier_mask]
+
+        return dist
+
+    def _compose_tier_surface(
+        self,
+        z,
+        w,
+        ndv,
+        previous_surface,
+        transform,
+        crs,
+        current_weight,
+        current_blend_dist,
+        barrier_mask=None,
+    ):
+        """Compose the input surface for one step-down tier.
+
+        Raw observations at or above ``current_weight`` remain hard constraints.
+        Lower-weight observations are *demoted*, not discarded: their influence
+        is already represented by ``previous_surface`` from the coarser tier.
+
+        A moat is left between current-tier core observations and the coarser
+        background.  Only that moat (plus any genuine residual holes) is handed
+        to the interpolation hook.  This keeps low-weight data as broad-scale
+        guidance without allowing individual low-weight samples to survive as
+        high-resolution spikes or dimples.
+        """
+        valid_mask = (z != ndv) & np.isfinite(z)
+        core_mask = valid_mask & (w >= current_weight)
+
+        # The coarsest tier has no previous surface.  All data admitted at its
+        # (normally zero) threshold participates directly in the base surface.
+        if previous_surface is None:
+            work_z = z.copy()
+            interp_mask = ~valid_mask
+            return work_z, valid_mask, core_mask, interp_mask
+
+        bg_aligned = self._align_background(
+            previous_surface,
+            z.shape,
+            transform,
+            crs,
+            ndv,
+        )
+        bg_valid = (bg_aligned != ndv) & np.isfinite(bg_aligned)
+
+        # Start with only observations authoritative at this tier.  All lower
+        # weight samples are scrubbed from their exact native locations.
+        work_z = np.full(z.shape, ndv, dtype="float64")
+        work_z[core_mask] = z[core_mask]
+
+        if not np.any(core_mask):
+            # Nothing at this tier can improve on the coarser solution.
+            work_z[bg_valid] = bg_aligned[bg_valid]
+            interp_mask = (work_z == ndv) | ~np.isfinite(work_z)
+            return work_z, valid_mask, core_mask, interp_mask
+
+        dist_to_core = self._distance_to_core(core_mask, barrier_mask)
+
+        if current_blend_dist > 0:
+            # Keep the coarser surface outside the moat. Inside the moat the
+            # surface is intentionally left empty so interpolation stitches the
+            # hard observations into the coarse background smoothly.
+            background_zone = dist_to_core >= float(current_blend_dist)
+        else:
+            background_zone = ~core_mask
+
+        use_background = background_zone & bg_valid & ~core_mask
+        work_z[use_background] = bg_aligned[use_background]
+
+        # The remaining holes are the transition moat and any locations where
+        # neither current-tier data nor the previous surface has coverage.
+        interp_mask = (work_z == ndv) | ~np.isfinite(work_z)
+
+        return work_z, valid_mask, core_mask, interp_mask
+
+    def _write_interpolation_input(
+        self,
+        step_stack,
+        temp_in,
+        work_z,
+        core_mask,
+        current_weight,
+        ndv,
+    ):
+        """Write a temporary MultiStack whose metadata matches tier semantics."""
+        with rasterio.open(step_stack) as src:
+            profile = src.profile.copy()
+            profile.update(nodata=ndv)
+            data = src.read()
+
+        data[0] = work_z.astype(data[0].dtype, copy=False)
+
+        # Keep auxiliary bands semantically consistent when an interpolation
+        # hook inspects more than band 1.  Core observations retain their source
+        # count/weight.  Coarse-background cells act at the current tier weight;
+        # interpolation voids carry no count/weight.
+        work_valid = (work_z != ndv) & np.isfinite(work_z)
+        background_valid = work_valid & ~core_mask
+
+        if data.shape[0] >= 2:
+            data[1][~work_valid] = 0
+            data[1][background_valid] = 1
+
+        if data.shape[0] >= 3:
+            data[2][~work_valid] = 0
+            data[2][background_valid] = current_weight
+
+        with rasterio.open(temp_in, "w", **profile) as dst:
+            dst.write(data)
+
+    def _interpolate_tier(
+        self,
+        step_stack,
+        work_z,
+        interp_mask,
+        core_mask,
+        current_weight,
+        current_algo,
+        ndv,
+    ):
+        """Fill only the unresolved portion of a composed tier surface."""
+        if not np.any(interp_mask):
+            logger.info("Tier is already resolved; nothing to interpolate")
+            return work_z
+
+        temp_in = step_stack.replace(".tif", f"_{current_weight}_in.tif")
+        temp_out = step_stack.replace(".tif", f"_{current_weight}_out.tif")
+
+        self._write_interpolation_input(
+            step_stack,
+            temp_in,
+            work_z,
+            core_mask,
+            current_weight,
+            ndv,
+        )
+
+        try:
+            current_algo_hook = parse_hook_string(current_algo)
+            interp_hook = self._get_interp_hook(current_algo_hook)
+
+            if interp_hook.processing_mode == "chunk":
+                success = interp_hook._process_file_fallback(
+                    temp_in,
+                    temp_out,
+                    entry={},
+                )
+            else:
+                success = interp_hook.process_raster(
+                    temp_in,
+                    temp_out,
+                    entry={},
+                )
+
+            if success and os.path.exists(temp_out):
+                with rasterio.open(temp_out) as filled_src:
+                    filled_z = filled_src.read(1)
+
+                filled_valid = (filled_z != ndv) & np.isfinite(filled_z)
+                accept = interp_mask & filled_valid
+                work_z[accept] = filled_z[accept]
+
+            return work_z
+        finally:
+            if os.path.exists(temp_in):
+                os.remove(temp_in)
+            if os.path.exists(temp_out):
+                os.remove(temp_out)
+
+    def _decay_inland_caps(self, cap_grid, d2c_path, shape, transform, crs):
+        """Fade water caps inland using the signed distance-to-coast grid."""
+        if cap_grid is None or d2c_path is None:
+            return cap_grid
+
+        d2c_grid = np.zeros(shape, dtype="float32")
+        with rasterio.open(d2c_path) as d2c_src:
+            reproject(
+                source=rasterio.band(d2c_src, 1),
+                destination=d2c_grid,
+                src_transform=d2c_src.transform,
+                src_crs=d2c_src.crs,
+                dst_transform=transform,
+                dst_crs=crs,
+                resampling=Resampling.bilinear,
+                num_threads=1,
+            )
+
+        inland_water = (d2c_grid < 0) & np.isfinite(cap_grid)
+        if not np.any(inland_water):
+            return cap_grid
+
+        dist_inland = np.abs(np.minimum(d2c_grid, 0))
+        decay_weight = np.clip(
+            1.0 - (dist_inland / self.inland_decay_dist),
+            0.0,
+            1.0,
+        )
+
+        with np.errstate(divide="ignore", invalid="ignore"):
+            faded_caps = cap_grid[inland_water] / (decay_weight[inland_water] + 1e-6)
+
+        faded_caps[decay_weight[inland_water] < 0.01] = np.nan
+        cap_grid[inland_water] = faded_caps
+        return cap_grid
+
     def _process_tier(
         self,
         step_stack,
@@ -329,153 +599,84 @@ class BinaryCudemStepDown(RasterGlobalHook):
         current_weight,
         current_algo,
         current_blend_dist,
-        is_coarsest,
         barrier_path,
         d2c_path=None,
     ):
+        """Resolve one resolution/weight tier.
+
+        The ordering is:
+
+        1. classify current-tier hard observations;
+        2. compose them with the previous coarser surface;
+        3. interpolate only the unresolved transition/gaps;
+        4. apply the topology-aware cap to generated values.
+
+        Low-weight observations therefore influence finer tiers through the
+        previous coarse surface instead of surviving as point-scale artifacts.
+        """
         with rasterio.open(step_stack, "r+") as src:
             data = src.read()
             ndv = src.nodata if src.nodata is not None else -9999
-            z = data[0].astype("float64")
+            z_raw = data[0].astype("float64")
             w = data[2].astype("float64")
 
-            _observed_mask = (z != ndv) & np.isfinite(z) & (w > 0)
             cap_grid, barrier_mask = self._create_topological_grids(
-                z.shape, src.transform, barrier_path
+                z_raw.shape,
+                src.transform,
+                barrier_path,
+            )
+            cap_grid = self._decay_inland_caps(
+                cap_grid,
+                d2c_path,
+                z_raw.shape,
+                src.transform,
+                src.crs,
             )
 
-            # --- D2C Cap Inland Decay ---
-            if cap_grid is not None and d2c_path is not None:
-                d2c_grid = np.zeros(z.shape, dtype="float32")
-                with rasterio.open(d2c_path) as d2c_src:
-                    reproject(
-                        source=rasterio.band(d2c_src, 1),
-                        destination=d2c_grid,
-                        src_transform=d2c_src.transform,
-                        src_crs=d2c_src.crs,
-                        dst_transform=src.transform,
-                        dst_crs=src.crs,
-                        resampling=Resampling.bilinear,
-                        num_threads=1,
-                    )
+            work_z, valid_mask, core_mask, interp_mask = self._compose_tier_surface(
+                z_raw,
+                w,
+                ndv,
+                previous_surface,
+                src.transform,
+                src.crs,
+                current_weight,
+                current_blend_dist,
+                barrier_mask=barrier_mask,
+            )
 
-                # Find water pixels that are inland (negative D2C value)
-                inland_water = (d2c_grid < 0) & (~np.isnan(cap_grid))
-                dist_inland = np.abs(np.minimum(d2c_grid, 0))
-
-                # Weight is 1.0 at coastline, decaying to 0.0 at self.inland_decay_dist
-                decay_weight = np.clip(
-                    1.0 - (dist_inland / self.inland_decay_dist), 0.0, 1.0
-                )
-
-                with np.errstate(divide="ignore", invalid="ignore"):
-                    faded_caps = cap_grid[inland_water] / (
-                        decay_weight[inland_water] + 1e-6
-                    )
-
-                # If weight approaches zero, remove the cap constraint entirely
-                faded_caps[decay_weight[inland_water] < 0.01] = np.nan
-                cap_grid[inland_water] = faded_caps
-
-            valid_mask = (z != ndv) & (~np.isnan(z))
-            core_mask = w >= current_weight
-
-            if is_coarsest:
-                tier_zone = np.ones_like(core_mask, dtype=bool)
-                missing_mask = ~valid_mask
-            else:
-                dist_to_core = scipy.ndimage.distance_transform_edt(~core_mask)
-                tier_zone = dist_to_core <= current_blend_dist
-                missing_mask = (~valid_mask) & tier_zone
-
-            y_miss, x_miss = np.where(missing_mask)
-            if len(y_miss) > 0:
-                temp_in = step_stack.replace(".tif", f"_{current_weight}_in.tif")
-                temp_out = step_stack.replace(".tif", f"_{current_weight}_out.tif")
-                shutil.copy(step_stack, temp_in)
-
-                current_algo_hook = parse_hook_string(current_algo)
-                interp_hook = self._get_interp_hook(current_algo_hook)
-                # success = interp_hook.process_raster(step_stack, temp_out, entry={})
-                if interp_hook.processing_mode == "chunk":
-                    success = interp_hook._process_file_fallback(
-                        step_stack, temp_out, entry={}
-                    )
-                else:
-                    success = interp_hook.process_raster(step_stack, temp_out, entry={})
-
-                if success and os.path.exists(temp_out):
-                    with rasterio.open(temp_out) as filled_src:
-                        filled_z = filled_src.read(1)
-                        z[y_miss, x_miss] = filled_z[y_miss, x_miss]
-
-                if os.path.exists(temp_in):
-                    os.remove(temp_in)
-
-                if os.path.exists(temp_out):
-                    os.remove(temp_out)
-            else:
-                logger.info("Tier is filled by data; nothing to interpolate")
-
-            if previous_surface:
-                bg_aligned = np.full(z.shape, ndv, dtype=z.dtype)
-                with rasterio.open(previous_surface) as bg_src:
-                    reproject(
-                        source=rasterio.band(bg_src, 1),
-                        destination=bg_aligned,
-                        src_transform=bg_src.transform,
-                        src_crs=bg_src.crs,
-                        dst_transform=src.transform,
-                        dst_crs=src.crs,
-                        src_nodata=bg_src.nodata,
-                        dst_nodata=ndv,
-                        resampling=Resampling.bilinear,
-                        num_threads=1,
-                    )
-
-                if not np.any(core_mask):
-                    z[:] = bg_aligned[:]
-                else:
-                    if barrier_mask is not None:
-                        dist_land = scipy.ndimage.distance_transform_edt(
-                            ~(core_mask & barrier_mask)
-                        )
-                        dist_water = scipy.ndimage.distance_transform_edt(
-                            ~(core_mask & ~barrier_mask)
-                        )
-                        dist = np.where(barrier_mask, dist_land, dist_water)
-                    else:
-                        dist = scipy.ndimage.distance_transform_edt(~core_mask)
-
-                    if current_blend_dist > 0:
-                        weights = np.clip(dist / float(current_blend_dist), 0.0, 1.0)
-                        bg_only_mask = dist >= current_blend_dist
-                        trans_mask = (dist > 0) & (dist < current_blend_dist)
-                    else:
-                        weights = np.ones_like(dist)
-                        bg_only_mask = dist > 0
-                        trans_mask = np.zeros_like(dist, dtype=bool)
-
-                    z[bg_only_mask] = bg_aligned[bg_only_mask]
-
-                    if np.any(trans_mask):
-                        valid_bg = (bg_aligned != ndv) & (~np.isnan(bg_aligned))
-                        valid_z = (z != ndv) & (~np.isnan(z))
-                        blend_active = trans_mask & valid_bg & valid_z
-                        z[blend_active] = (
-                            (1.0 - weights[blend_active]) * z[blend_active]
-                        ) + (weights[blend_active] * bg_aligned[blend_active])
-
-                    remaining_holes = (z == ndv) | np.isnan(z)
-                    valid_bg_overall = (bg_aligned != ndv) & (~np.isnan(bg_aligned))
-                    fill_from_bg = remaining_holes & valid_bg_overall
-                    z[fill_from_bg] = bg_aligned[fill_from_bg]
-
-            # --- Topological Capping (Post-Interpolation) ---
+            # Positive current-tier observations can locally correct the OSM
+            # water prior.  The small closing only consolidates tiny gaps in
+            # coherent observed land; it does not create a standalone coastline.
+            observed_land = self._observed_land_mask(
+                z_raw,
+                valid_mask,
+                core_mask,
+            )
             if cap_grid is not None:
-                # (~observed_mask)
-                to_cap = (z != ndv) & (~np.isnan(z)) & (~np.isnan(cap_grid))
-                z[to_cap] = np.minimum(z[to_cap], cap_grid[to_cap])
+                cap_grid[observed_land] = np.nan
+
+            z = self._interpolate_tier(
+                step_stack,
+                work_z,
+                interp_mask,
+                core_mask,
+                current_weight,
+                current_algo,
+                ndv,
+            )
+
+            # Hard observations at this tier are immutable.  Morphologically
+            # consolidated positive observations also relax the cap in the tiny
+            # interpolation gaps they enclose.
+            if cap_grid is not None:
+                cap_protected = core_mask | observed_land
+                z = self._apply_topological_cap(
+                    z,
+                    cap_grid,
+                    cap_protected,
+                    ndv,
+                )
 
             src.write(z.astype(rasterio.float32), 1)
 
@@ -515,7 +716,6 @@ class BinaryCudemStepDown(RasterGlobalHook):
             current_weight = self.weights[::-1][i]
             current_algo = self.algos[::-1][i]
             current_blend_dist = self.blend_dists[::-1][i]
-            is_coarsest = i == 0
 
             step_stack = src_path.replace(".tif", f"_step_{inc2str(res_str)}.tif")
 
@@ -530,7 +730,6 @@ class BinaryCudemStepDown(RasterGlobalHook):
                 current_weight,
                 current_algo,
                 current_blend_dist,
-                is_coarsest,
                 barrier_path=barrier_path,
                 d2c_path=d2c_path,
             )

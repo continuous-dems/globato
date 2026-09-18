@@ -13,22 +13,30 @@ modules:
         args:
           source_field: "year"
           method: "chronological"
-          seed: 1995
+          seed: 2010
           offset: 1
-          scale: 3.33
+          scale: 3.5
           on_entry: true
           stage: manifest
       - name: spatial_cull
         args:
           sort_by: "year"
-          min_coverage: 0.98
+          min_coverage: 0.95
+          group_by: "is_bathy"
       - name: stream_reproject
         args:
           dst_srs: "EPSG:4269+5703"
           cache_dir: "%shared_cache%"
-      - name: point_raster_mask
+      # - name: point_raster_mask
+      #   args:
+      #     barrier: "coastline"
+      #     invert: false
+      #     res: .11111111s
+      #     skip_entry: "is_bathy"
+      - name: water_surface_filter
         args:
-          barrier: "coastline"
+          barrier: "osm"
           invert: false
-          res: .11111111s
+          res: 1s
           skip_entry: "is_bathy"
+          hard_clip_below: 1.1

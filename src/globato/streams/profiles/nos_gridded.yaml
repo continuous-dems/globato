@@ -1,0 +1,11 @@
+name: nos-grid
+description: NOS Hydro data to stream elevation points
+stream-type: "point-stream"
+reader:
+  name: "xyz-point-reader"
+  args:
+    delimiter: ","
+    skiprows: 0
+    z_scale: -1
+    usecols: [0, 1, 2]
+    names: ["x", "y", "z"]

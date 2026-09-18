@@ -17,17 +17,18 @@ hooks:
       output: "%name%_%batch_name%_sources.vrt"
       # vector_output: "%name%_%batch_name%_sm.gpkg"
 
-  - name: side_stack_check
-    args:
-      res: 3s
-      mode: sums
-      crs: epsg:4326+3855
+  # Side-stack testing, not default for now.
+  # - name: side_stack_check
+  #   args:
+  #     res: 3s
+  #     mode: sums
+  #     crs: epsg:4326+3855
 
-  - name: side_stack
-    args:
-      res: 3s
-      mode: sums
-      crs: epsg:4326+3855
+  # - name: side_stack
+  #   args:
+  #     res: 3s
+  #     mode: sums
+  #     crs: epsg:4326+3855
 
   - name: multi_stack
     args:
@@ -80,7 +81,7 @@ hooks:
         - 0.5
         - 0.25
       steps: 2
-      blend_dists: 2/10/20
+      blend_dists: 20/10/2
       barrier: osm
       bathy_max_z: "ocean:-0.01,river:0,lake:None,wetland:None,estuary:0"
       algos: "interp_gmt:tension=1/interp_gmt:tension=.75/interp_gmt:tension=.35"

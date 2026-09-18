@@ -70,7 +70,16 @@ modules:
       - name: unzip
       - name: filename_filter
         args:
+          stage: "file"
           match: ".txt"
+      - name: rename
+        args:
+          stage: "file"
+          match: ".txt"
+          replace: ".asc"
+      - name: set_datatype
+        args:
+          data_type: "rio"
       - name: set-srs
         srs: "EPSG:32611+5703"
       - name: stream_reproject

@@ -26,10 +26,35 @@ from globato.hooks.transforms.point_pixels import Point2PixelStream, PixelsToPoi
 logger = logging.getLogger(__name__)
 
 
-def get_sidestack_hash(region, res, crs, mode):
-    """Helper to generate the invalidation hash."""
+def get_hook_signature(mod, entry):
+    """Serialize pipeline hooks into a deterministic string for cache invalidation."""
+    signatures = []
+
+    # Combine hooks safely
+    all_hooks = getattr(mod, "hooks", []) + entry.get("hooks", [])
+
+    for h in all_hooks:
+        h_name = getattr(h, "name", None) or (
+            h.get("name") if isinstance(h, dict) else str(h)
+        )
+        if h_name in ["side_stack_check", "side_stack", "stream-init", "stream_data"]:
+            continue
+
+        if hasattr(h, "__dict__"):
+            args = {k: v for k, v in h.__dict__.items() if not k.startswith("_")}
+            signatures.append(f"{h_name}:{sorted(args.items())}")
+        elif isinstance(h, dict):
+            signatures.append(f"{h_name}:{sorted(h.items())}")
+        else:
+            signatures.append(str(h_name))
+
+    return "|".join(signatures)
+
+
+def get_sidestack_hash(region, res, crs, mode, hook_sig):
+    """Helper to generate the invalidation hash, including the hook signature."""
     region_str = region.format("fn") if region else "global"
-    seed = f"{region_str}_{res}_{crs}_{mode}".encode("utf-8")
+    seed = f"{region_str}_{res}_{crs}_{mode}_{hook_sig}".encode("utf-8")
     return hashlib.md5(seed).hexdigest()[:8]
 
 
@@ -78,7 +103,10 @@ class SideStackCheck(FetchHook):
                 mod, "_outdir", getattr(mod, "outdir", None)
             )
 
-            hash_str = get_sidestack_hash(region, self.res, self.crs, self.mode)
+            hook_sig = get_hook_signature(mod, entry)
+            hash_str = get_sidestack_hash(
+                region, self.res, self.crs, self.mode, hook_sig
+            )
             cache_path = get_sidestack_path(entry, cache_dir, hash_str)
 
             if os.path.exists(cache_path):
@@ -104,6 +132,8 @@ class SideStackCheck(FetchHook):
 
                 # if "hooks" in entry:
                 #     entry["hooks"] = [] # [h for h in entry["hooks"] if h.get("name") in safe_hooks]
+            else:
+                entry["_sidestack_hash"] = hash_str
 
         return entries
 
@@ -178,7 +208,13 @@ class SideStackGenerate(FetchHook):
                 mod, "_outdir", getattr(mod, "outdir", None)
             )
 
-            hash_str = get_sidestack_hash(region, self.res, self.crs, self.mode)
+            hash_str = entry.get("_sidestack_hash")
+            if not hash_str:
+                hook_sig = get_hook_signature(mod, entry)
+                hash_str = get_sidestack_hash(
+                    region, self.res, self.crs, self.mode, hook_sig
+                )
+
             cache_path = get_sidestack_path(entry, cache_dir, hash_str)
 
             logger.debug(
