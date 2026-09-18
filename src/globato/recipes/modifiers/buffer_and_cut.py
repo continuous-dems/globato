@@ -30,8 +30,9 @@ class RegionBufferModifier(BaseModifier):
     def __init__(
         self, cells=None, pct=None, inc=None, outname=None, force=False, **kwargs
     ):
-        self.cells = float_or(cells, 0)
-        self.pct = float_or(pct, 0)
+        # None means "not given", which apply() tells apart from an explicit 0.
+        self.cells = float_or(cells)
+        self.pct = float_or(pct)
         self.inc = str2inc(str_or(inc, "1"))
         # 'outname' must match the basename of the DEM the recipe writes, so the
         # cropped DEM replaces the buffered one (see apply()). Placeholders are
@@ -57,6 +58,9 @@ class RegionBufferModifier(BaseModifier):
             )
             self.pct = 5.0
 
+        cells = self.cells or 0
+        pct = self.pct or 0
+
         valid = True
         global_hooks = config.get("global_hooks", [])
         insert_idx = len(global_hooks)
@@ -75,13 +79,13 @@ class RegionBufferModifier(BaseModifier):
 
         else:
             buffer_region = parsed_region.copy().buffer(
-                pct=self.pct, x_inc=self.inc, y_inc=self.inc
+                pct=pct, x_inc=self.inc, y_inc=self.inc
             )
             delivery_region = parsed_region.copy().buffer(
-                x_bv=self.cells * self.inc, y_bv=self.cells * self.inc
+                x_bv=cells * self.inc, y_bv=cells * self.inc
             )
             config["region"] = buffer_region.to_list()
-            if self.pct:
+            if pct:
                 logger.info(
                     f"[{self.name}] Expanded processing region to {buffer_region}."
                 )

@@ -58,6 +58,21 @@ def test_buffer_and_cut_without_a_region_leaves_the_config_alone():
         assert RegionBufferModifier(pct=20).apply(config) == expected
 
 
+def test_buffer_and_cut_defaults_to_a_5_pct_buffer_when_none_is_given():
+    no_buffer = RegionBufferModifier().apply(_config())
+    five_pct = RegionBufferModifier(pct=5).apply(_config())
+
+    assert no_buffer["region"] != _config()["region"]
+    assert no_buffer["region"] == five_pct["region"]
+
+
+def test_buffer_and_cut_explicit_zero_buffer_is_respected():
+    for kwargs in ({"pct": 0}, {"cells": 0}, {"pct": "0", "cells": "0"}):
+        config = RegionBufferModifier(**kwargs).apply(_config())
+
+        assert config["region"] == _config()["region"]
+
+
 def test_buffer_and_cut_default_replaces_the_preset_dem():
     """The cropped DEM must overwrite the buffered DEM that mr-globato delivers.
 
