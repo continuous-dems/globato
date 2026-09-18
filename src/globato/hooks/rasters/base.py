@@ -28,6 +28,81 @@ from fetchez.utils import float_or, parse_arg_to_list  # , inc2str
 logger = logging.getLogger(__name__)
 
 
+def _missing_metadata(src, dst):
+    """What `src` carries that `dst` lacks: dataset tags, band tags, descriptions and units.
+
+    Metadata describes a particular raster, so it is only carried when `dst` is that
+    raster, modified, i.e. when it has the same bands. A product with a different band
+    structure (the DEM stripped out of a 7-band stack, an RGB hillshade of a DEM) starts
+    clean, and does not inherit labels such as GLOBATO_DATATYPE=MULTI_STACK.
+
+    Only missing items are reported, so anything a hook set on its own output wins.
+    """
+
+    if src.count != dst.count:
+        return {}, {}
+
+    dst_tags = dst.tags()
+    tags = {k: v for k, v in src.tags().items() if k not in dst_tags}
+
+    bands = {}
+    for bidx in range(1, src.count + 1):
+        dst_band_tags = dst.tags(bidx)
+        item = {
+            # Band statistics describe the pixels they were computed from.
+            "tags": {
+                k: v
+                for k, v in src.tags(bidx).items()
+                if k not in dst_band_tags and not k.startswith("STATISTICS_")
+            },
+            "description": src.descriptions[bidx - 1]
+            if not dst.descriptions[bidx - 1]
+            else None,
+            "units": src.units[bidx - 1] if not dst.units[bidx - 1] else None,
+        }
+        if item["tags"] or item["description"] or item["units"]:
+            bands[bidx] = item
+
+    return tags, bands
+
+
+def _apply_metadata(dst, tags, bands):
+    if tags:
+        dst.update_tags(**tags)
+    for bidx, item in bands.items():
+        if item["tags"]:
+            dst.update_tags(bidx, **item["tags"])
+        if item["description"]:
+            dst.set_band_description(bidx, item["description"])
+        if item["units"]:
+            dst.set_band_unit(bidx, item["units"])
+
+
+def copy_metadata(src, dst):
+    """Carry tags, band descriptions and units from the open dataset `src` to the writable `dst`."""
+
+    _apply_metadata(dst, *_missing_metadata(src, dst))
+
+
+def carry_metadata(src_path, dst_path):
+    """As copy_metadata(), for files on disk. `dst_path` is only reopened if something is missing,
+    so an output that already has its metadata (e.g. a COG) is left byte-for-byte alone.
+    """
+
+    if os.path.abspath(src_path) == os.path.abspath(dst_path):
+        return
+
+    try:
+        with rasterio.open(src_path) as src:
+            with rasterio.open(dst_path) as dst:
+                tags, bands = _missing_metadata(src, dst)
+            if tags or bands:
+                with rasterio.open(dst_path, "r+") as dst:
+                    _apply_metadata(dst, tags, bands)
+    except Exception as e:
+        logger.debug(f"Could not carry metadata from {src_path} to {dst_path}: {e}")
+
+
 class RasterHook(FetchHook):
     """Unified base class for all raster hooks.
 
@@ -485,6 +560,9 @@ class RasterHook(FetchHook):
                 if success:
                     self._clamp_raster(dst_fn)
                     self._strip_to_single_band(dst_fn)
+                    # A hook rewrites the raster from its profile alone, which drops
+                    # tags and band descriptions (e.g. those set by raster_metadata).
+                    carry_metadata(src_fn, dst_fn)
                     entry["src_fn"] = str(src_fn)
                     entry["dst_fn"] = str(dst_fn)
                     entry.setdefault("artifacts", {})[self.name] = dst_fn
@@ -517,6 +595,7 @@ class RasterHook(FetchHook):
             profile = self.modify_profile(profile)
 
             with rasterio.open(dst_path, "w", **profile) as dst:
+                copy_metadata(src, dst)
                 for window, buff_win in self.yield_buffered_windows(
                     src, self.buffer, self.chunk_size
                 ):

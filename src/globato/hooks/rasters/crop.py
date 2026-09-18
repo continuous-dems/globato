@@ -12,7 +12,7 @@ import logging
 import numpy as np
 import rasterio
 from rasterio.windows import Window, intersection
-from .base import RasterGlobalHook
+from .base import RasterGlobalHook, copy_metadata
 
 logger = logging.getLogger(__name__)
 
@@ -84,6 +84,7 @@ class RasterCrop(RasterGlobalHook):
             )
 
             with rasterio.open(dst_path, "w", **kwargs) as dst:
+                copy_metadata(src, dst)
                 for _, write_window in src.block_windows(1):
                     try:
                         overlap = intersection(write_window, crop_window)
