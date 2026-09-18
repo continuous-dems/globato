@@ -44,11 +44,12 @@ class RegionBufferModifier(BaseModifier):
 
     def apply(self, config):
         region = config.get("region")
+        if not region:
+            return config
+
         parsed_region = parse_region(region)[
             0
         ]  # update this to handle multiple regions.
-        if not region:
-            return config
 
         if self.cells is None and self.pct is None:
             logger.warning(

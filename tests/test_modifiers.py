@@ -50,6 +50,14 @@ def test_buffer_and_cut_injects_cut_then_crop_before_format_cog():
     assert names == ["raster_metadata", "raster_cut", "raster_crop", "format_cog"]
 
 
+def test_buffer_and_cut_without_a_region_leaves_the_config_alone():
+    """A recipe with no region has nothing to buffer; it must not raise."""
+    for config in ({"global_hooks": []}, {"region": None, "global_hooks": []}):
+        expected = dict(config)
+
+        assert RegionBufferModifier(pct=20).apply(config) == expected
+
+
 def test_buffer_and_cut_default_replaces_the_preset_dem():
     """The cropped DEM must overwrite the buffered DEM that mr-globato delivers.
 
