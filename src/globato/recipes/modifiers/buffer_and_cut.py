@@ -33,7 +33,9 @@ class RegionBufferModifier(BaseModifier):
         self.cells = float_or(cells, 0)
         self.pct = float_or(pct, 0)
         self.inc = str2inc(str_or(inc, "1"))
-        # Placeholders are resolved per tile, after modifiers are applied.
+        # 'outname' must match the basename of the DEM the recipe writes, so the
+        # cropped DEM replaces the buffered one (see apply()). Placeholders are
+        # resolved per tile, after modifiers are applied.
         self.outname = str_or(outname) or "%name%_%batch_name%"
         self.force = str2bool(force)
 
@@ -83,11 +85,14 @@ class RegionBufferModifier(BaseModifier):
                     f"[{self.name}] Expanded processing region to {buffer_region}."
                 )
 
+            # No suffix: the cropped DEM is written over the buffered one, so that
+            # later hooks (format_cog, copy_artifact) pick up the delivery-sized DEM
+            # under the name the recipe already expects.
             global_hooks.insert(
                 insert_idx,
                 {
                     "name": "raster_crop",
-                    "args": {"output": f"{self.outname}_crop.tif"},
+                    "args": {"output": f"{self.outname}.tif"},
                 },
             )
             global_hooks.insert(
