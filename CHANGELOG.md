@@ -20,3 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 * Added invariant tests for FusionState associativity, finalization, persistence/resume behavior, and MultiStack stacking strategies.
 * Updated DEM-generation documentation and added detailed documentation for the PointPixels/FusionState architecture.
 * Reverted the global-bato.yaml bundle's multibeam reference to use the rq hook's 'percent' mode instead of 'iho_2' which was removing too much data in deep water.
+
+### BUGFIX
+
+* Fixed bug in binary_cudem that would wipe background data in the fine tier with a large `blend_dist`
