@@ -718,10 +718,22 @@ def write_cog(src_path, dst_path, overviews=(2, 4, 8, 16, 32), resampling="avera
 
     from rasterio.enums import Resampling
 
-    # Building overviews into a COG is an in-place edit, which GDAL refuses.
+    # Building overviews into a COG is an in-place edit, which GDAL refuses, so an input
+    # that already has a COG layout skips that step and goes straight through the COG
+    # driver. It is still rewritten rather than trusted: the layout flag says nothing
+    # about whether it has overviews, or the compression and block size asked for here.
+    # The driver reuses the input's overviews if it has any and builds them if not, so
+    # the explicit `overviews` levels only apply to a non-COG input.
     if is_cog(src_path):
-        if os.path.abspath(src_path) != os.path.abspath(dst_path):
-            shutil.copy(src_path, dst_path)
+        with rasterio.open(src_path) as src:
+            predictor = _cog_predictor(src)
+        _copy_as_cog(
+            src_path,
+            dst_path,
+            predictor,
+            overviews="AUTO",
+            overview_resampling=resampling.lower(),
+        )
         return
 
     resampling_enum = getattr(Resampling, resampling.lower(), Resampling.average)

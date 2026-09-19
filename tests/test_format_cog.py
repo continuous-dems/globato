@@ -113,19 +113,42 @@ def test_format_cog_output_may_be_the_input_itself(tile_dir):
     _assert_is_cog(dem)
 
 
-def test_format_cog_on_a_file_that_is_already_a_cog_is_a_no_op(tile_dir):
+def test_format_cog_can_be_run_twice(tile_dir):
     """Converting twice used to fail: overviews cannot be built into a COG in place."""
     dem = tile_dir / "name_tile.tif"
     out = tile_dir / "copy.tif"
-    _write_raster(dem)
+    data = _write_raster(dem)
     RasterCOG().run([(None, _entry(dem))])
-    before = dem.read_bytes()
 
     RasterCOG().run([(None, _entry(dem))])
     RasterCOG(output=str(out)).run([(None, _entry(dem))])
 
-    assert dem.read_bytes() == before
-    assert out.read_bytes() == before
+    for path in (dem, out):
+        _assert_is_cog(path)
+        with rasterio.open(path) as src:
+            assert np.array_equal(src.read(), data)
+
+
+def test_format_cog_does_not_trust_a_cog_layout_that_is_incomplete(tile_dir):
+    """LAYOUT=COG only describes byte order. A COG with no overviews, or with other
+    compression and block size, still has to come out as the COG that was asked for."""
+    from rasterio.shutil import copy
+
+    plain = tile_dir / "plain.tif"
+    data = _write_raster(plain)
+    for name, options in (
+        ("no_overviews.tif", {"overviews": "NONE"}),
+        ("other_settings.tif", {"compress": "lzw", "blocksize": 512}),
+    ):
+        cog = tile_dir / name
+        copy(str(plain), str(cog), driver="COG", **options)
+
+        RasterCOG().run([(None, _entry(cog))])
+
+        _assert_is_cog(cog)
+        with rasterio.open(cog) as src:
+            assert src.profile["compress"] == "deflate"
+            assert np.array_equal(src.read(), data)
 
 
 def test_format_cog_handles_a_uint8_hillshade(tile_dir):
