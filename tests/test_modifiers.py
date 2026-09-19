@@ -7,6 +7,8 @@ import yaml
 import globato
 from globato.recipes.modifiers.buffer_and_cut import RegionBufferModifier
 
+from unittest.mock import patch
+
 
 def _config():
     return {
@@ -229,23 +231,47 @@ def test_buffer_and_cut_leaves_a_config_with_no_global_hooks_alone():
         assert RegionBufferModifier(pct=20).apply(config) == expected
 
 
-def test_buffer_and_cut_without_a_region_leaves_the_config_alone(caplog):
+def test_buffer_and_cut_without_a_region_leaves_the_config_alone():
     """A recipe with no region has nothing to buffer; it must warn, not raise."""
     for config in ({"global_hooks": []}, {"region": None, "global_hooks": []}):
         expected = dict(config)
-        caplog.clear()
 
-        with caplog.at_level("WARNING"):
+        with patch(
+            "globato.recipes.modifiers.buffer_and_cut.logger.warning"
+        ) as warning:
             assert RegionBufferModifier(pct=20).apply(config) == expected
 
-        assert "No region set in the recipe" in caplog.text
+        warning.assert_called_once()
+        assert "No region set in the recipe" in warning.call_args.args[0]
 
 
-def test_buffer_and_cut_with_a_region_does_not_warn_about_it(caplog):
-    with caplog.at_level("WARNING"):
+def test_buffer_and_cut_with_a_region_does_not_warn_about_it():
+    with patch("globato.recipes.modifiers.buffer_and_cut.logger.warning") as warning:
         RegionBufferModifier(pct=20).apply(_config())
 
-    assert "No region set" not in caplog.text
+    warning.assert_not_called()
+
+
+# This test can fail if run after test_cli.py due to the logging setup there.
+# We can restore this if we want to fix the cli from polluting the logger in
+# some way.
+# def test_buffer_and_cut_without_a_region_leaves_the_config_alone_caplog(caplog):
+#     """A recipe with no region has nothing to buffer; it must warn, not raise."""
+#     for config in ({"global_hooks": []}, {"region": None, "global_hooks": []}):
+#         expected = dict(config)
+#         caplog.clear()
+
+#         with caplog.at_level("WARNING"):
+#             assert RegionBufferModifier(pct=20).apply(config) == expected
+
+#         assert "No region set in the recipe" in caplog.text
+
+
+# def test_buffer_and_cut_with_a_region_does_not_warn_about_it(caplog):
+#     with caplog.at_level("WARNING"):
+#         RegionBufferModifier(pct=20).apply(_config())
+
+#     assert "No region set" not in caplog.text
 
 
 def test_buffer_and_cut_defaults_to_a_5_pct_buffer_when_none_is_given():

@@ -1,145 +1,431 @@
 # 🌎 DEM Generation Architecture
-Globato produces seamless, high-resolution Digital Elevation Models (DEMs) from heterogeneous, multi-source point clouds and rasters. Globato pairs a rigorous statistical accumulator (`multi_stack`) with a morphological multi-resolution step-down gridding engine (`ms_binary_cudem`). Together, these components preserve the high-frequency fidelity of dense datasets (such as coastal bathymetric LiDAR) while seamlessly bridging coverage gaps across sparse datasets.
 
-## The Multi-Resolution Globato Workflow: `multi_stack` & `ms_binary_cudem`
+Globato builds seamless, high-resolution Digital Elevation Models (DEMs) from heterogeneous elevation sources exposed through Fetchez. The core DEM workflow separates three responsibilities:
 
-1. **The Workflow Execution Lifecycle:**
-When Globato executes a DEM recipe, the data stream passes through seven distinct processing stages:
+1. **Point-to-pixel accumulation** converts normalized elevation observations into an additive statistical state.
+2. **Multi-source fusion** combines those states according to source weighting and stacking policy.
+3. **Multi-resolution interpolation** fills remaining spatial gaps while preserving the detail of observed data.
 
-	```mermaid
-	graph TD
-		A[1. Discovery] --> B[2. Caching]
-		B --> C[3. Filtering]
-		C --> D[4. Transform]
-		D --> E[5. Accumulate: multi_stack]
-		E --> F[6. Interpolate: ms_binary_cudem]
-		F -->|Step-Up & Blend| E
-		F --> G[7. Finalize]
+The primary components are:
 
-		classDef default fill:#1e1e1e,stroke:#0074D9,stroke-width:2px,color:#d4d4d4;
-		classDef core fill:#0074D9,stroke:#ffffff,stroke-width:2px,color:#ffffff,font-weight:bold;
-		class E,F core;
-	```
+* `PointPixels` — converts elevation observations into an associative `FusionState`.
+* `multi_stack` — combines source states into a persistent global `FusionState` and finalizes it into a statistical MultiStack.
+* `ms_binary_cudem` — uses the finalized MultiStack to construct the continuous DEM through multi-resolution interpolation.
 
-	1. **Data Discovery & Access:** Fetchez queries remote APIs (NASA CMR, NOAA, TNM) or crawls local file systems (`local_fs`) to compile the initial data manifest.
+This separation allows Globato to process large datasets incrementally while retaining enough statistical state to cache, resume, and extend DEM builds without reprocessing every original observation.
 
-	2. **Cache Inspection:** Modules check the module-specific `{module}.fetchez_cache` directory for valid, pre-existing queries to bypass unnecessary network I/O.
-
-	3. **Preparation & Filtering:**	Point streams are passed through spatial hooks (such as `point_raster_mask`, `range_z` or `vector_crop`) to remove land/water noise, clip bounding boxes, or filter points.
-	4. **Spatial & Datum Transformations:** Coordinates are transformed to the target horizontal and vertical reference systems (e.g., EPSG:4326, UTM zones, tidal datums, etc.).
-
-	5. **Accumulation & Binning (`multi_stack`):** Points stack into target grid cells. High-priority weight tiers supersede lower-priority data, while identical weights are combined via weighted statistical means.
-
-	6. **Multi-Resolution Interpolation (`ms_binary_cudem`):** The aggregated grid is decimated to coarser scales to close spatial voids, interpolated step-by-step, and blended back up to full resolution.
-
-	7. **Product Finalization:** Globato exports the final DEM, visual inspection products, multi-band statistical stacks, and vector/raster provenance metadata.
-
-2. **The Core Engine:** `multi_stack` & `ms_binary_cudem`
-The core gridding pipeline forms an interdependent loop: ms_binary_cudem steps down to coarser resolutions during gap-filling, calling multi_stack internally to re-bin data while preserving all statistical weights.
-
-	```mermaid
-	graph TD
-		classDef core fill:#0074D9,stroke:#ffffff,stroke-width:2px,color:#ffffff,font-weight:bold;
-		classDef process fill:#f8f9fa,stroke:#cccccc,stroke-width:1px,color:#333333;
-		classDef output fill:#2ECC40,stroke:#ffffff,stroke-width:2px,color:#ffffff,font-weight:bold;
-
-		Stream[Raw Point Streams] --> Accumulate
-
-		subgraph The Core Engine
-			Accumulate[multi_stack]:::core <-->|Decimate & Re-bin| Interpolate[ms_binary_cudem]:::core
-			Interpolate -->|1. Build Coarse Base| InterpStep[Interpolate Voids]:::process
-			InterpStep -->|2. Step-Up to High Res| BlendStep[Blend & Supersede]:::process
-			BlendStep -->|3. Loop Until Native Res| Interpolate
-		end
-
-		BlendStep -->|Final Pass| DEM[Seamless Continuous DEM]:::output
-	```
-
-* **multi_stack:** Statistical Binning & Accumulation
-   The multi_stack hook aggregates points directly from the data streams into pixel bins at your target resolution. It performs no spatial interpolation.
-
-	* **Weight-Based Superseding:** Data are grouped by assigned weights. Data in higher weight tiers completely overwrite data from lower weight tiers. Within the same weight tier, multiple observations are merged using a weighted mean.
-
-	* **Low Memory Footprint:** It maintains a running .sums.tif file on local storage to track cell state incrementally. This allows Globato to process billions of points without exceeding system RAM.
-
-	* **The 7-Band Output:** It generates a multi-band statistical grid summarizing the accumulated point stream:
-
-
-	| Band | Channel Name       | Description                                       |
-	|:----:|:-------------------|:--------------------------------------------------|
-	| 1    | z                  | Weighted-average elevation                        |
-	| 2    | count              | Number of accumulated observations                |
-	| 3    | weight             | Data weight / priority value                      |
-	| 4    | uncertainty        | Accumulated measurement uncertainty               |
-	| 5    | source_uncertainty | Native uncertainty inherent to the source dataset |
-	| 6    | x                  | Weighted-average X coordinate                     |
-	| 7    | y                  | Weighted-average Y coordinate                     |
+See [Point-to-Pixel Fusion State](point_pixels.md) for the detailed accumulation contract.
 
 ---
 
-* **ms_binary_cudem:** Multi-Resolution Interpolation
-The `ms_binary_cudem` hook is a Morphological Multi-Resolution Step-Down gridding tool. It fills data voids without smoothing or degrading dense, high-resolution features (like coastlines or structures).
+## DEM Processing Workflow
 
-	* **Decimation:** It takes the multi_stack grid and decimates it to lower resolution tiers specified by the steps parameter. At lower resolutions, data gaps shrink significantly.
-	* **Iterative Step-Down / Step-Up:**
-		1. It builds an interpolated base surface at the coarsest scale.
-		2. It iterates back up toward full resolution, interpolating voids surrounding each weight group at each step.
-		3. Higher-weighted data tiers blend over and supersede lower-resolution tiers and interpolated regions.
-	* **Topological Landmasks:** Integrates OpenStreetMap topology to apply multi-class interpolation limits and define physical boundaries in the ocean for breakwaters and reefs.
-	* **Morphological Caps:** Stretches taut, distance-bounded linear caps across near-shore voids to prevent artificial interpolation bulges while enforcing natural coastal drop-offs.
+A typical Globato DEM recipe follows this general lifecycle:
 
-	* **Result:** A continuous elevation surface that preserves high resolution detail where data exist and gracefully fills voids where data are missing.
+```mermaid
+graph TD
+    A[1. Discovery] --> B[2. Cache Inspection]
+    B --> C[3. Filtering]
+    C --> D[4. Spatial / Datum Transform]
+    D --> E[5. PointPixels: Local FusionState]
+    E --> F[6. multi_stack: Global FusionState]
+    F --> G[7. Finalize MultiStack]
+    G --> H[8. ms_binary_cudem]
+    H --> I[9. Final DEM + Provenance]
 
-	* 💡 **Configuration Note on steps:**
-	The steps parameter sets how many times the grid "zooms out". Setting `steps=3` results in 4 total resolution tiers (1 Base Native Tier + 3 Decimation Steps). If an array parameter (such as `algos` or `blend_dists`) contains fewer items than the total tier count, Globato automatically pads the array by repeating the last element.
+    classDef default fill:#1e1e1e,stroke:#0074D9,stroke-width:2px,color:#d4d4d4;
+    classDef core fill:#0074D9,stroke:#ffffff,stroke-width:2px,color:#ffffff,font-weight:bold;
+    class E,F,H core;
+```
 
-3. **Output Products & Lineage Tracking:**
-When processing completes, Globato exports the primary elevation surface alongside a suite of supporting lineage artifacts.
+### 1. Data Discovery & Access
 
-**Overview of Generated Products**
+Fetchez modules discover remote or local elevation datasets and produce manifest entries describing the available resources.
 
-| Product File / Pattern | High-Level Description | What It Tells You |
-| :---:     | :----   | :---     |
-| *_final.tif | Finished Coastal DEM | The primary seamless elevation surface. |
-| *_hs.tif | Hillshade Raster | Topographic relief rendering for visual inspection. |
-| tmp_sources/*.tif | Per-File Source Masks | Binary rasters (1 = data present, 0 = no data) for each input file. |
-| *_sources.vrt | Virtual Source Stack | A multi-band VRT aggregating all individual source masks. |
-| *_sm.gpkg | Spatial Metadata Vector | Vector polygons showing source bounds, dissolved by module + weight. |
-| provenance.tif | Bitmask Provenance Raster | A single uint32 raster storing cell-by-cell source contributions using bit IDs. |
-| *_stack.tif | 7-Band Accumulation Stack | Full statistical grid ($Z, Count, Weight, Uncertainty, Source\ Uncertainty, X, Y$). |
+Sources may include:
 
-## Understanding Provenance: Bitmasks vs. Vector Metadata
-Globato provides three complementary ways to inspect where your elevation data originated:
+* bathymetric LiDAR
+* topographic LiDAR
+* multibeam sonar
+* hydrographic surveys
+* nautical chart soundings
+* regional elevation grids
+* global topographic or bathymetric models
 
-### Lineage Tracking System
-| Type                       | Output                            |                                 Description |
-|:---------------------------|:---------------------------------:|--------------------------------------------:|
-| Individual Source Masks    | tmp_sources/*.tif & *_sources.vrt |  Simple 1 / 0 Mask of data source locations |
-| Provenance Bitmask         | *_provenance.tif                  | Compact bitwise OR encoded source locations |
-| Vector Metadata            | *_sm.gpkg                         |                   Dissolved source polygons |
+Globato does not require these sources to share a common original format.
 
-1. **The Source Masks**
-The individual source masks track each file that gets stacked and record a 1 in each cell where data from that source exists. All the individual source masks are combined into a fianl `*_sources.vrt` Virtual Raster to view them all as a group in GIS for inspection and reference.
+### 2. Cache Inspection
 
-2. **The Provenance Bitmask (provenance.tif)**
-The provenance raster uses bitwise encoding to store source contributions compactly in a single uint32 raster. Each contributing module is assigned a unique bit value equal to a power of two ($2^n$):
+Previously fetched resources can be reused through Fetchez caches so that repeated DEM builds avoid unnecessary network access and source discovery.
 
-	```
-	MOD_csb         = 1   (Bit 0: 2^0 -> 00001)
-	MOD_nos_hydro   = 2   (Bit 1: 2^1 -> 00010)
-	MOD_charts      = 4   (Bit 2: 2^2 -> 00100)
-	MOD_tnm         = 8   (Bit 3: 2^3 -> 01000)
-	MOD_ehydro      = 16  (Bit 4: 2^4 -> 10000)
-	```
+Additional Globato caches may preserve processed intermediate products such as FusionState rasters.
 
-	If multiple sources contribute observations to the exact same cell, their bit values are combined using a Bitwise OR (\|) operation:
+### 3. Preparation & Filtering
 
-	$$\text{Pixel Value} = \text{Bit}_1 \mid \text{Bit}_2 \mid \dots \mid \text{Bit}_n$$
+Point streams can pass through hooks that:
 
-	* **Example:** If a cell contains observations from both CSB (1) and Charts (4), the stored pixel value is 5 (00001 | 00100 = 00101 or $1 + 4 = 5$).
-	* **Decoding in GIS:** To verify if a specific dataset (e.g., Charts = 4) contributed to a cell with value $V$, perform a Bitwise AND (&):
+* crop spatially
+* mask land or water
+* filter elevation ranges
+* filter classifications
+* remove invalid observations
+* apply source-specific preprocessing
 
-	$$\text{Cell Contains Module} \iff (V \ \& \ 4) == 4$$
+At this stage the stream still represents individual elevation observations.
 
-3. **Spatial Metadata GeoPackage (`*_sm.gpkg`)**
-For standard GIS mapping, Globato converts individual source masks into a lightweight GeoPackage (`*_sm.gpkg`). Polygons are dissolved by module and weight, preserving spatial attributes (such as dataset agency, dates, resolutions, and source URLs). Globato also auto-generates a companion QGIS Style File (`.qml`) for instant categorised symbology.
+### 4. Spatial & Datum Transformation
+
+Coordinates and elevations are transformed into the horizontal and vertical reference systems required by the target DEM.
+
+By the time observations reach the accumulation stage, downstream components can treat them as normalized elevation points.
+
+---
+
+# FusionState Accumulation
+
+## `PointPixels`
+
+`PointPixels` is the boundary between point observations and Globato's statistical accumulation model.
+
+Rather than immediately calculating a mean elevation for each raster cell, `PointPixels` stores additive sufficient statistics.
+
+For each populated pixel, the current FusionState contains:
+
+| Band | State Field               | Meaning                |
+| ---: | ------------------------- | ---------------------- |
+|    1 | `z_weighted_sum`          | Σ(z × w)               |
+|    2 | `count`                   | Number of observations |
+|    3 | `weight_sum`              | Σw                     |
+|    4 | `z2_weighted_sum`         | Σ(z² × w)              |
+|    5 | `weighted_uncertainty_sq` | Σ((w × u)²)            |
+|    6 | `x_weighted_sum`          | Σ(x × w)               |
+|    7 | `y_weighted_sum`          | Σ(y × w)               |
+
+These values are deliberately **not finalized averages**.
+
+Because every field is additive, FusionState is associative:
+
+```text
+FusionState(A + B)
+    ==
+FusionState(A) + FusionState(B)
+```
+
+This property is central to Globato's streaming and caching architecture.
+
+The same result can be obtained whether observations are:
+
+* processed in one chunk
+* split across many chunks
+* serialized and restored
+* accumulated source-by-source
+* resumed from a previously saved state
+
+Derived quantities such as weighted mean elevation, standard deviation, and propagated uncertainty are calculated only when the state is finalized.
+
+See **Point-to-Pixel Fusion State** for the detailed contract.
+
+---
+
+# Multi-Source Accumulation
+
+## `multi_stack`
+
+The `multi_stack` hook combines local FusionStates into a global FusionState covering the target DEM region.
+
+It performs **no interpolation**.
+
+Its job is to decide how incoming source state interacts with state already present in each cell.
+
+### Stacking Strategies
+
+The stacking behavior is controlled by `strategy`.
+
+#### `mean` / `weighted_mean`
+
+All incoming FusionStates are added.
+
+Because every FusionState field is additive, this operation is simply:
+
+```text
+global_state += incoming_state
+```
+
+#### `supercede`
+
+The mean observation weight of the incoming source is compared with the existing state.
+
+If the incoming weight is greater, the incoming FusionState replaces the existing state for that pixel.
+
+#### `mixed`
+
+Weights are grouped into configured tiers.
+
+For each pixel:
+
+* a higher incoming tier replaces the existing state
+* an equal tier is merged with the existing state
+* a lower tier is ignored
+
+This allows high-priority elevation sources to supersede lower-priority background data while still combining observations of comparable quality.
+
+---
+
+## Persistent FusionState
+
+The accumulator can maintain its state in a FusionState GeoTIFF.
+
+Unlike the finalized MultiStack, this file contains the additive sufficient statistics needed to continue accumulation later.
+
+A persisted state can therefore be:
+
+* resumed in a later run
+* extended with newly available datasets
+* used as a processed-data cache
+* supplied directly by other Globato components
+* re-finalized without re-reading the original source observations
+
+Persistent state is validated before reuse. Globato checks the expected grid geometry, CRS, FusionState schema version, band count, and band descriptions before accepting an existing state.
+
+This makes the FusionState file an explicit data product rather than an opaque temporary scratch raster.
+
+---
+
+# Finalized MultiStack
+
+Once accumulation is complete, the global FusionState is finalized into the user-facing MultiStack.
+
+The finalized MultiStack contains derived statistical values rather than additive state:
+
+| Band | Channel       | Description                              |
+| ---: | ------------- | ---------------------------------------- |
+|    1 | `z`           | Weighted mean elevation                  |
+|    2 | `count`       | Number of accumulated observations       |
+|    3 | `weight`      | Mean observation weight                  |
+|    4 | `uncertainty` | Propagated input measurement uncertainty |
+|    5 | `stddev`      | Observed weighted elevation dispersion   |
+|    6 | `x`           | Weighted mean source X coordinate        |
+|    7 | `y`           | Weighted mean source Y coordinate        |
+
+The FusionState and finalized MultiStack are intentionally separate formats.
+
+```text
+FusionState
+    additive
+    resumable
+    cacheable
+    mergeable
+
+        ↓ finalize
+
+MultiStack
+    derived statistics
+    human/GIS consumable
+    interpolation input
+```
+
+A finalized MultiStack should not be treated as accumulation state because information required for exact future merging has already been collapsed.
+
+---
+
+# Multi-Resolution Interpolation
+
+## `ms_binary_cudem`
+
+`ms_binary_cudem` converts the statistical MultiStack into a continuous elevation model.
+
+Its purpose is to fill spatial voids while preserving observed high-resolution terrain and bathymetry wherever possible.
+
+### Multi-Resolution Step-Down
+
+The grid is progressively decimated into lower-resolution tiers.
+
+At coarser resolutions:
+
+* small data gaps become smaller relative to pixel size
+* sparse observations provide broader spatial support
+* interpolation can construct a stable background surface
+
+An interpolated surface is first established at the coarsest configured tier.
+
+### Step-Up
+
+Globato then progresses back toward native resolution.
+
+At each tier:
+
+1. observed elevation data retain priority
+2. unresolved gaps are inherited or interpolated from the coarser surface
+3. higher-priority source information supersedes lower-resolution support
+4. the result becomes the starting point for the next finer tier
+
+The process continues until the native DEM resolution is reached.
+
+### Why Multi-Resolution Gridding?
+
+A single interpolation performed directly at native resolution can behave poorly when data density varies greatly.
+
+Coastal DEMs frequently combine:
+
+* dense LiDAR
+* sparse soundings
+* multibeam swaths
+* regional DEMs
+* large areas with no direct observations
+
+The multi-resolution approach allows Globato to preserve dense observed detail while deriving broad-scale support only where it is needed.
+
+### Land and Coastal Constraints
+
+The interpolation workflow can incorporate coastline and landmask information to prevent interpolation from crossing inappropriate physical boundaries.
+
+Additional morphological controls can constrain interpolation across coastal and near-shore gaps where unconstrained interpolation would otherwise create unrealistic terrain.
+
+### `steps`
+
+The `steps` option controls how many coarser resolution tiers are generated.
+
+For example:
+
+```yaml
+steps: 3
+```
+
+produces four resolution levels:
+
+```text
+native resolution
+step 1
+step 2
+step 3 / coarsest
+```
+
+Configuration arrays such as algorithms or blend distances may be expanded across these tiers by repeating the final configured value when necessary.
+
+---
+
+# Fusion and Interpolation Together
+
+The core relationship can be summarized as:
+
+```mermaid
+graph TD
+    P[Normalized Elevation Points]
+    PP[PointPixels]
+    FS[Local FusionState]
+    MS[multi_stack]
+    GFS[Global FusionState]
+    FM[Finalized MultiStack]
+    BC[ms_binary_cudem]
+    DEM[Continuous DEM]
+
+    P --> PP
+    PP --> FS
+    FS --> MS
+    MS --> GFS
+    GFS --> FM
+    FM --> BC
+    BC --> DEM
+
+    classDef core fill:#0074D9,stroke:#ffffff,stroke-width:2px,color:#ffffff,font-weight:bold;
+    class PP,MS,BC core;
+```
+
+This separation is important:
+
+* `PointPixels` performs statistical point-to-pixel reduction.
+* `multi_stack` performs source-to-source fusion.
+* `ms_binary_cudem` performs spatial interpolation.
+
+Each component operates at a different level of the DEM construction process.
+
+---
+
+# Provenance & Source Coverage
+
+Globato can generate several complementary provenance products while elevation sources pass through the pipeline.
+
+## Source Masks
+
+Per-file source masks record whether each source contributed observations to a pixel.
+
+These masks are generated using the same point-to-pixel geometry as FusionState accumulation, but only require a boolean coverage result.
+
+Individual masks can be combined into a multi-band VRT for inspection in GIS software.
+
+## Provenance Bitmask
+
+The provenance raster stores module-level source coverage in a compact `uint32` raster.
+
+Each source module is assigned a bit:
+
+```text
+MOD_csb       = 1
+MOD_multibeam = 2
+MOD_charts    = 4
+MOD_tnm       = 8
+```
+
+If several modules contribute to one pixel, their values are combined using bitwise OR:
+
+```text
+pixel = source_a | source_b | source_c
+```
+
+A specific source can later be tested using bitwise AND.
+
+## Spatial Metadata
+
+Source masks may also be polygonized and dissolved into vector metadata products describing the spatial coverage of source datasets together with available metadata such as:
+
+* agency
+* source module
+* weight
+* date
+* resolution
+* URL
+
+---
+
+# Typical Output Products
+
+A Globato DEM build may produce:
+
+| Product                           | Purpose                                  |
+| --------------------------------- | ---------------------------------------- |
+| Final DEM                         | Continuous elevation surface             |
+| Finalized MultiStack              | Statistical input used for interpolation |
+| FusionState                       | Optional resumable accumulation state    |
+| Hillshade / visualization rasters | Visual inspection                        |
+| Individual source masks           | Per-file data coverage                   |
+| Source-mask VRT                   | Combined source inspection               |
+| Provenance raster                 | Compact module-level lineage             |
+| Spatial metadata GeoPackage       | Vector representation of source coverage |
+
+The exact filenames depend on the recipe and hook configuration.
+
+---
+
+# Architectural Summary
+
+Globato's DEM engine is built around one central principle:
+
+> Preserve additive statistical state for as long as possible, and only derive finalized values when they are actually needed.
+
+That gives the pipeline a clean progression:
+
+```text
+observations
+    ↓
+FusionState
+    ↓
+multi-source FusionState
+    ↓
+finalized MultiStack
+    ↓
+multi-resolution interpolation
+    ↓
+DEM
+```
+
+This architecture allows DEM builds to remain reproducible while also supporting streaming, caching, resumable accumulation, provenance tracking, and incremental updates as new elevation data become available.
