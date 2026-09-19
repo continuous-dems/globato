@@ -200,7 +200,11 @@ def build(
     global_hooks.append(
         {
             "name": "viz_geoshade",
-            "args": {"output": f"{batch_outname}_hs.tif", "cmap": "coastal_relief"},
+            "args": {
+                "output": f"{batch_outname}_hs.tif",
+                "cmap": "coastal_relief",
+                "cog": True,
+            },
         }
     )
     global_hooks.append({"name": "cleanup_tmp", "args": {"target_dir": "tmp"}})

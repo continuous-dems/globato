@@ -106,6 +106,7 @@ hooks:
     args:
       output: "%name%_%batch_name%_hs.tif"
       cmap: coastal_relief
+      cog: true
 
   - name: cleanup_tmp
     args: {"target_dir": "tmp"}
