@@ -19,3 +19,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 * Updated provenance/source-mask generation to use the shared point-to-pixel coverage API.
 * Added invariant tests for FusionState associativity, finalization, persistence/resume behavior, and MultiStack stacking strategies.
 * Updated DEM-generation documentation and added detailed documentation for the PointPixels/FusionState architecture.
+* Reverted the global-bato.yaml bundle's multibeam reference to use the rq hook's 'percent' mode instead of 'iho_2' which was removing too much data in deep water.

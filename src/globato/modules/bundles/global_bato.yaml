@@ -131,7 +131,7 @@ modules:
         args:
           reference: "gmrt/gebco"
           threshold: 5
-          mode: "iho_2"
+          mode: "percent"
           builder: "grid"
           res: 1s
 
