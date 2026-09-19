@@ -389,6 +389,45 @@ class BinaryCudemStepDown(RasterGlobalHook):
 
         return dist
 
+    @staticmethod
+    def _support_mask(core_mask, barrier_mask=None, closing_dist=2):
+        """Build a conservative footprint of coherent current-tier coverage."""
+
+        if closing_dist <= 0:
+            return core_mask.copy()
+
+        def close(mask, dist):
+            yy, xx = np.ogrid[
+                -dist : dist + 1,
+                -dist : dist + 1,
+            ]
+            structure = (xx * xx + yy * yy) <= dist * dist
+
+            return scipy.ndimage.binary_closing(
+                mask,
+                structure=structure,
+            )
+
+        if barrier_mask is None:
+            support = close(core_mask, closing_dist)
+        else:
+            support = np.zeros_like(core_mask, dtype=bool)
+
+            land_core = core_mask & barrier_mask
+            water_core = core_mask & ~barrier_mask
+
+            if np.any(land_core):
+                land_support = close(land_core, closing_dist)
+                support[barrier_mask] = land_support[barrier_mask]
+
+            if np.any(water_core):
+                water_support = close(water_core, closing_dist)
+                support[~barrier_mask] = water_support[~barrier_mask]
+
+        support |= core_mask
+
+        return support
+
     def _compose_tier_surface(
         self,
         z,
@@ -401,23 +440,10 @@ class BinaryCudemStepDown(RasterGlobalHook):
         current_blend_dist,
         barrier_mask=None,
     ):
-        """Compose the input surface for one step-down tier.
-
-        Raw observations at or above ``current_weight`` remain hard constraints.
-        Lower-weight observations are *demoted*, not discarded: their influence
-        is already represented by ``previous_surface`` from the coarser tier.
-
-        A moat is left between current-tier core observations and the coarser
-        background.  Only that moat (plus any genuine residual holes) is handed
-        to the interpolation hook.  This keeps low-weight data as broad-scale
-        guidance without allowing individual low-weight samples to survive as
-        high-resolution spikes or dimples.
-        """
         valid_mask = (z != ndv) & np.isfinite(z)
         core_mask = valid_mask & (w >= current_weight)
 
-        # The coarsest tier has no previous surface.  All data admitted at its
-        # (normally zero) threshold participates directly in the base surface.
+        # The coarsest tier has no previous surface.
         if previous_surface is None:
             work_z = z.copy()
             interp_mask = ~valid_mask
@@ -432,32 +458,36 @@ class BinaryCudemStepDown(RasterGlobalHook):
         )
         bg_valid = (bg_aligned != ndv) & np.isfinite(bg_aligned)
 
-        # Start with only observations authoritative at this tier.  All lower
-        # weight samples are scrubbed from their exact native locations.
-        work_z = np.full(z.shape, ndv, dtype="float64")
-        work_z[core_mask] = z[core_mask]
-
+        # Inherit the coarse surface.
         if not np.any(core_mask):
-            # Nothing at this tier can improve on the coarser solution.
+            work_z = np.full(z.shape, ndv, dtype="float64")
             work_z[bg_valid] = bg_aligned[bg_valid]
+
             interp_mask = (work_z == ndv) | ~np.isfinite(work_z)
             return work_z, valid_mask, core_mask, interp_mask
 
-        dist_to_core = self._distance_to_core(core_mask, barrier_mask)
+        support_mask = self._support_mask(
+            core_mask,
+            barrier_mask=barrier_mask,
+            closing_dist=2,
+        )
+
+        work_z = np.full(z.shape, ndv, dtype="float64")
+        work_z[bg_valid] = bg_aligned[bg_valid]
+        work_z[core_mask] = z[core_mask]
 
         if current_blend_dist > 0:
-            # Keep the coarser surface outside the moat. Inside the moat the
-            # surface is intentionally left empty so interpolation stitches the
-            # hard observations into the coarse background smoothly.
-            background_zone = dist_to_core >= float(current_blend_dist)
-        else:
-            background_zone = ~core_mask
+            dist_to_core = self._distance_to_core(
+                core_mask,
+                barrier_mask,
+            )
 
-        use_background = background_zone & bg_valid & ~core_mask
-        work_z[use_background] = bg_aligned[use_background]
+            blend_mask = (
+                support_mask & ~core_mask & (dist_to_core < float(current_blend_dist))
+            )
 
-        # The remaining holes are the transition moat and any locations where
-        # neither current-tier data nor the previous surface has coverage.
+            work_z[blend_mask] = ndv
+
         interp_mask = (work_z == ndv) | ~np.isfinite(work_z)
 
         return work_z, valid_mask, core_mask, interp_mask
@@ -471,7 +501,7 @@ class BinaryCudemStepDown(RasterGlobalHook):
         current_weight,
         ndv,
     ):
-        """Write a temporary MultiStack whose metadata matches tier semantics."""
+        """Write a temporary MultiStack whose metadata matches tier."""
         with rasterio.open(step_stack) as src:
             profile = src.profile.copy()
             profile.update(nodata=ndv)
@@ -479,7 +509,7 @@ class BinaryCudemStepDown(RasterGlobalHook):
 
         data[0] = work_z.astype(data[0].dtype, copy=False)
 
-        # Keep auxiliary bands semantically consistent when an interpolation
+        # Keep auxiliary bands consistent when an interpolation
         # hook inspects more than band 1.  Core observations retain their source
         # count/weight.  Coarse-background cells act at the current tier weight;
         # interpolation voids carry no count/weight.
