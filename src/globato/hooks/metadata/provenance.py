@@ -138,12 +138,16 @@ class ProvenanceHook(FetchHook):
         if not self._initialized or len(points) == 0:
             return
 
-        arrays, sub_win, _ = self.pixel_binner(points, mode="count")
+        has_data, sub_win, _ = self.pixel_binner.coverage(points)
 
-        if arrays["count"] is None:
+        if has_data is None:
             return
+        # arrays, sub_win, _ = self.pixel_binner(points, mode="count")
 
-        has_data = arrays["count"] > 0
+        # if arrays["count"] is None:
+        #     return
+
+        # has_data = arrays["count"] > 0
 
         col_off, row_off, w, h = sub_win
         window = Window(col_off, row_off, w, h)
@@ -366,11 +370,9 @@ class SourceMasks(FetchHook):
         )
         with rasterio.open(tif_path, "r+") as dst:
             for chunk in stream:
-                arrays, sub_win, _ = pixel_binner(chunk, mode="count")
+                has_data, sub_win, _ = pixel_binner.coverage(chunk)
 
-                if arrays["count"] is not None:
-                    has_data = (arrays["count"] > 0).astype("uint8")
-
+                if has_data is not None:
                     col_off, row_off, w, h = sub_win
                     window = Window(col_off, row_off, w, h)
 
