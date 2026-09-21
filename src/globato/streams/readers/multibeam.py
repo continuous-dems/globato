@@ -113,6 +113,35 @@ class MBSReader(BaseGlobatoReader):
 
         return meta
 
+    def _dynamic_weight_factors(self, df, meta, kinematic_factor, amp_factor):
+        import datetime
+
+        current_year = datetime.datetime.now().year
+        file_year = int(meta["date"]) if meta.get("date") else current_year - 10
+
+        age_factor = np.clip(
+            0.5 + 0.5 * ((file_year - 1980) / (current_year - 1980)),
+            0.25,
+            1.0,
+        )
+
+        quality_factor = 1.0
+        if meta.get("perc_good"):
+            quality_factor = float(meta["perc_good"]) / 100.0
+
+        theta = np.arctan2(
+            df["crosstrack_distance"].abs(),
+            df["z"].abs(),
+        )
+        acoustic_factor = np.clip(np.cos(theta) ** 2, 0.4, 1.0)
+
+        soft_quality = np.power(
+            age_factor * quality_factor * acoustic_factor * amp_factor,
+            0.25,
+        )
+
+        return soft_quality * kinematic_factor * (self.weight or 1.0)
+
     def read_native_fbt(self):
         """Natively reads MB-System Format 71 (.fbt) binary files.
         Supports modern V4/V5 formats and legacy V1/V2/V3 formats.
@@ -254,7 +283,7 @@ class MBSReader(BaseGlobatoReader):
                         or pixels_ss < 0
                         or beams_bath > 10000
                     ):
-                        logger.error(
+                        logger.warning(
                             "Corrupt array lengths parsed. Falling back to mblist."
                         )
                         continue
@@ -377,25 +406,8 @@ class MBSReader(BaseGlobatoReader):
 
         df["w"] = self.weight if self.weight else 1.0
         if self.auto_weight:
-            import datetime
-
-            current_year = datetime.datetime.now().year
             src_inf = self.src_fn.replace(".fbt", ".inf")
             meta = self._get_mbs_meta(src_inf)
-
-            # Age Factor: Scale from 0.1 (1980) to 1.5 (Current Year)
-            file_year = int(meta.get("date")) if meta.get("date") else current_year - 10
-            age_factor = np.clip(
-                1.5 * ((file_year - 1980) / (current_year - 1980)), 0.1, 1.5
-            )
-
-            # Quality Factor: 0.0 to 1.0 based on % Good Beams
-            quality_factor = 1.0
-            if meta.get("perc_good"):
-                quality_factor = float(meta.get("perc_good", 100)) / 100.0
-
-            theta = np.arctan2(df["crosstrack_distance"].abs(), df["z"].abs())
-            acoustic_factor = np.clip(np.cos(theta) ** 2, 0.1, 1.0)
 
             ping_headings = df.groupby("ping")["heading"].first()
             heading_diffs = ping_headings.diff().abs()
@@ -403,17 +415,9 @@ class MBSReader(BaseGlobatoReader):
 
             df["rot"] = df["ping"].map(heading_diffs.fillna(0))
 
-            # If the vessel turns more than 2 degrees between pings, heavily penalize the swath
-            # kinematic_factor = np.where(df["rot"] > 2.0, 0.2, 1.0)
             kinematic_factor = np.where(
                 df["rot"] > self.rot_threshold, self.kinematic_penalty, 1.0
             )
-
-            # Cross-Track Factor: Falloff from Centerline (1.0) to Edge (0.1)
-            xtrack = df["crosstrack_distance"].abs()
-            # xtrack_max = xtrack.max() + 1e-5  # Prevent division by zero
-            # xtrack_norm = xtrack / xtrack_max
-            # xtrack_factor = np.clip(1.0 - (xtrack_norm**2), 0.1, 1.0)
 
             if (
                 "amplitude" in df.columns
@@ -435,13 +439,10 @@ class MBSReader(BaseGlobatoReader):
             else:
                 amp_factor = 1.0
 
-            df["w"] = (
-                age_factor
-                * quality_factor
-                * acoustic_factor
-                * kinematic_factor
-                * amp_factor
-            ) * (self.weight or 1.0)
+            df["w"] = self._dynamic_weight_factors(
+                df, meta, kinematic_factor, amp_factor
+            )
+
         else:
             df["w"] = self.weight or 1.0
 
@@ -532,7 +533,7 @@ class MBSReader(BaseGlobatoReader):
                 for line in yield_cmd(cmd_full, verbose=False)
             ]
         except ValueError:
-            logger.info("Parsed invalid data in mblist output.")
+            logger.error("Parsed invalid data in mblist output.")
             return pd.DataFrame(columns=column_names)
 
         if not raw_data:
@@ -566,19 +567,6 @@ class MBSReader(BaseGlobatoReader):
         df = df[rename_map.values()]
 
         if self.auto_weight:
-            import datetime
-
-            current_year = datetime.datetime.now().year
-
-            file_year = int(meta.get("date")) if meta.get("date") else current_year - 10
-            age_factor = np.clip(
-                1.5 * ((file_year - 1980) / (current_year - 1980)), 0.1, 1.5
-            )
-            quality_factor = float(meta.get("perc_good", 100)) / 100.0
-
-            theta = np.arctan2(df["crosstrack_distance"].abs(), df["z"].abs())
-            acoustic_factor = np.clip(np.cos(theta) ** 2, 0.1, 1.0)
-
             kinematic_factor = np.ones(len(df))
 
             if "roll" in df.columns:
@@ -618,15 +606,10 @@ class MBSReader(BaseGlobatoReader):
             else:
                 amp_factor = 1.0
 
-            df["w"] = (
-                age_factor
-                * quality_factor
-                * acoustic_factor
-                * kinematic_factor
-                * amp_factor
-            ) * (self.weight or 1.0)
+            df["w"] = self._dynamic_weight_factors(
+                df, meta, kinematic_factor, amp_factor
+            )
 
-            df.drop(columns=["ping_boundary", "rot"], inplace=True, errors="ignore")
         else:
             df["w"] = self.weight or 1.0
 

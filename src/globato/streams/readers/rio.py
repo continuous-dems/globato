@@ -19,7 +19,7 @@ from rasterio.windows import Window, from_bounds
 from rasterio.warp import transform_bounds
 from rasterio.errors import WindowError
 
-from fetchez.utils import int_or
+from fetchez.utils import int_or, float_or
 
 from .base import BaseGlobatoReader
 
@@ -49,6 +49,8 @@ class RasterioReader(BaseGlobatoReader):
         x_band=None,
         y_band=None,
         auto_weight=False,
+        min_weight=None,
+        uncertainty_scale=1.0,
         **kwargs,
     ):
         super().__init__(path, **kwargs)
@@ -67,6 +69,8 @@ class RasterioReader(BaseGlobatoReader):
         self.x_band = int_or(x_band)
         self.y_band = int_or(y_band)
         self.auto_weight = auto_weight
+        self.min_weight = float_or(min_weight)
+        self.uncertainty_scale = float_or(uncertainty_scale, 1.0)
         self.kwargs = kwargs
 
     def get_srs(self):
@@ -94,24 +98,28 @@ class RasterioReader(BaseGlobatoReader):
                     with rasterio.open(self.src_fn) as new_src:
                         yield from self._read_chunks_from_src(new_src)
             except Exception as e:
-                logger.error(f"Rasterio read failed: {e}")
+                logger.exception(f"Rasterio read failed: {e}")
+                raise
 
     def _read_chunks_from_src(self, src):
         """The core windowing and extraction logic, isolated from file-opening."""
 
         if self.region:
-            w, e, s, n = self.region
+            west, east, south, north = self.region
 
             # Dynamically grab the SRS from the Region object, fallback to WGS84
             region_srs = getattr(self.region, "srs", None) or "EPSG:4326"
 
             if src.crs and src.crs.to_string() != region_srs:
                 try:
-                    w, s, e, n = transform_bounds(region_srs, src.crs, w, s, e, n)
-                except Exception as e:
-                    logger.warning(f"Failed to transform bounds for {self.src_fn}: {e}")
+                    west, south, east, north = transform_bounds(
+                        region_srs, src.crs, west, south, east, north
+                    )
+                except Exception as err:
+                    logger.error(f"Failed to transform bounds for {self.src_fn}: {err}")
+                    raise
 
-            req_window = from_bounds(w, s, e, n, transform=src.transform)
+            req_window = from_bounds(west, south, east, north, transform=src.transform)
 
             try:
                 master_window = req_window.intersection(
@@ -160,23 +168,17 @@ class RasterioReader(BaseGlobatoReader):
                     fallback_weight = getattr(self, "weight", 1.0)
 
                     if self.auto_weight and self.u_band is not None:
-                        # Inverse Variance Weighting: W = Base / (U^2 + epsilon)
-                        # Epsilon (1e-4) prevents division by zero where uncertainty is 0.0
-                        # w = fallback_weight / (u**2 + 1e-4)
+                        scale = max(self.uncertainty_scale, 1e-12)
 
-                        # Soften the uncertainty penaly
-                        w = fallback_weight / (1.0 + u)
+                        # penalty = 1.0 / np.sqrt(1.0 + u / uncertainty_scale)
+                        w = fallback_weight / (1.0 + (u / scale))
 
-                        # Optional: Clip extreme weights so pristine pixels don't overpower the entire mosaic
-                        w = np.clip(w, 0, fallback_weight * 100)
+                        if self.min_weight is not None:
+                            w = np.maximum(w, self.min_weight)
+                        else:
+                            w = np.full_like(z, fallback_weight)
                     else:
                         w = np.full_like(z, fallback_weight)
-                # w = np.full_like(z, fallback_weight)
-                # w = (
-                #     src.read(self.w_band, window=window)
-                #     if self.w_band
-                #     else np.ones_like(z)
-                # )
 
                 x_arr = src.read(self.x_band, window=window) if self.x_band else None
                 y_arr = src.read(self.y_band, window=window) if self.y_band else None

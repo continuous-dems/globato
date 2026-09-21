@@ -49,6 +49,8 @@ class StreamReproject(FetchHook):
         if actual_src in self._cache:
             return self._cache[actual_src]
 
+        effective_logger_level = logger.getEffectiveLevel()
+
         # Use Transformez to generate the shift grid,
         # aligned to the source CRS
         parser = SRSParser(
@@ -57,7 +59,7 @@ class StreamReproject(FetchHook):
             region=region,
             vert_grid=self.vert_grid,
             cache_dir=self.cache_dir,
-            verbose=True,
+            verbose=effective_logger_level < 20,
         )
         horz_transformer, grid_fn = parser.get_components()
         grid_query = RasterQuery(grid_fn) if grid_fn else None
