@@ -44,6 +44,15 @@ import rasterio
 logger = logging.getLogger(__name__)
 
 
+def _newest_first(filenames):
+    """Sort granule paths so the highest release/version/revision comes first.
+
+    The numeric fields in an ATL filename are zero-padded, so a plain string
+    sort orders them correctly (e.g. ``_006_01_002_01`` before ``_006_01_001_01``).
+    """
+    return sorted(filenames, key=os.path.basename, reverse=True)
+
+
 # ==============================================
 # IceSat2Reader (generic)
 # ==============================================
@@ -313,7 +322,7 @@ class ATL03Reader(IceSat2Reader):
             for filt in [atlxx_filter, atlxx_filter_no_ver]:
                 matches = glob.glob(os.path.join(d, f"{short_name}_{filt}*.h5"))
                 if matches:
-                    return matches[0]
+                    return _newest_first(matches)[0]
 
         try:
             for filt in [atlxx_filter, atlxx_filter_no_ver]:
@@ -329,10 +338,11 @@ class ATL03Reader(IceSat2Reader):
                 # run_fetchez([fetcher])
 
                 if fetcher.results:
-                    # Sort descending by filename so the highest algorithm
-                    # version/revision (e.g. _002_01 > _001_01) is first.
+                    # Same ordering as the cache check above, so a cached file
+                    # and a fresh search agree on which granule wins.
                     fetcher.results.sort(
-                        key=lambda e: e.get("dst_fn", ""), reverse=True
+                        key=lambda e: os.path.basename(e.get("dst_fn", "")),
+                        reverse=True,
                     )
                     fetcher.fetch_entry(fetcher.results[0], check_size=True)
                     return fetcher.results[0]["dst_fn"]
