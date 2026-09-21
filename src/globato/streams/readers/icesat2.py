@@ -238,10 +238,17 @@ class ATL03Reader(IceSat2Reader):
         use_dbscan=False,
         dbscan_eps=1.5,
         dbscan_min_samples=10,
+        atl_version=None,
         **kwargs,
     ):
 
         super().__init__(path, **kwargs)
+
+        # The ATL03 release this reader is allowed to process (e.g. "007").
+        # None accepts whatever release the file happens to be.
+        self.atl_version = (
+            str(atl_version).strip().zfill(3) if atl_version not in (None, "") else None
+        )
 
         self.vertical_datum = (
             vertical_datum
@@ -1311,6 +1318,21 @@ class ATL03Reader(IceSat2Reader):
         # bing_geom = None
         # osm_geom = None
         # osm_lakes = None
+
+        if self.atl_version:
+            parts = os.path.basename(self.fn).split("_")
+            release = parts[3] if len(parts) >= 4 else None
+            if release is None:
+                logger.warning(
+                    f"Cannot read an ATL03 release from the filename of {self.fn}; "
+                    f"unable to confirm it is release {self.atl_version}."
+                )
+            elif release != self.atl_version:
+                logger.error(
+                    f"Skipping {self.fn}: it is ATL03 release {release}, but "
+                    f"release {self.atl_version} was requested."
+                )
+                return
 
         bldg_tree = None
         land_tree = None

@@ -64,3 +64,20 @@ def test_atl08_of_the_same_release_is_used(tmp_path, offline):
     reader = _reader(tmp_path, "ATL08_20241107234251_08052501_007_01.h5")
 
     assert reader.fetch_atlxx(reader.fn, "ATL08").endswith("_007_01.h5")
+
+
+@pytest.mark.parametrize("requested", ["008", 8, "8"])
+def test_wrong_atl03_release_is_skipped(tmp_path, offline, requested):
+    # The ATL03 file is empty, so reaching h5py would raise: yielding nothing
+    # shows the release check turned the file away first.
+    reader = _reader(tmp_path, atl_version=requested)
+
+    assert list(reader.yield_chunks()) == []
+
+
+def test_matching_atl03_release_is_read(tmp_path, offline):
+    reader = _reader(tmp_path, atl_version="007", classes="1")
+
+    # Past the release check, the empty file fails to open as HDF5.
+    with pytest.raises(OSError):
+        list(reader.yield_chunks())
