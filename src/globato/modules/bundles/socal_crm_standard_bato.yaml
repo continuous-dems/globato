@@ -56,7 +56,7 @@ modules:
           exclude: ".tif."
       - name: filename_filter
         args:
-          exclude: "MACOSX"
+          exclude: "._Bathymetry"
       - name: set-srs
         srs: "EPSG:32611+5703"
       - name: stream_reproject
