@@ -29,7 +29,6 @@ hooks:
         args:
           res: .1111111s
           crs: "EPSG:4269+5703"
-          weight_threshold: 3/2/1/.75/.5/.4/.3/.2/.1
       - name: source_masks
         args:
           res: .1111111s

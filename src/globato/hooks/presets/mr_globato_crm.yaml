@@ -8,12 +8,12 @@ hooks:
           steps: 3
           resolutions: 1s/3s/9s/15s
           weights:
-            - .5
+            - .75
             - 0.25
             - 0.1
           # algos: raster_fill
           algos: raster_fill/raster_fill/raster_fill/interp_gmt:tension=1,verbose=True
-          blend_dists: 16/8/4/2
+          blend_dists: 32/16/8/4
       - name: side_stack_check
         args:
           res: 1s
@@ -26,7 +26,6 @@ hooks:
         args:
           res: 1s
           crs: "EPSG:4326+3855"
-          weight_threshold: 3/2/1/.75/.5/.25/.1
       - name: source_masks
         args:
           res: 1s
