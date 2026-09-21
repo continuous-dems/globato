@@ -43,6 +43,23 @@ import rasterio
 
 logger = logging.getLogger(__name__)
 
+# Aux products that may be paired with an ATL03 granule of a different release.
+# ATL24 joins to ATL03 on delta_time, which is the same in every release, and
+# NSIDC reprocesses it on its own schedule, so its release rarely matches.
+# Everything else (ATL08 in particular) joins on photon index positions within
+# one specific ATL03 release, so a granule from another release can
+# misclassify photons without raising anything.
+CROSS_RELEASE_AUX = frozenset({"ATL24"})
+
+
+def _newest_first(filenames):
+    """Sort granule paths so the highest release/version/revision comes first.
+
+    The numeric fields in an ATL filename are zero-padded, so a plain string
+    sort orders them correctly (e.g. ``_006_01_002_01`` before ``_006_01_001_01``).
+    """
+    return sorted(filenames, key=os.path.basename, reverse=True)
+
 
 # ==============================================
 # IceSat2Reader (generic)
@@ -221,10 +238,17 @@ class ATL03Reader(IceSat2Reader):
         use_dbscan=False,
         dbscan_eps=1.5,
         dbscan_min_samples=10,
+        atl_version=None,
         **kwargs,
     ):
 
         super().__init__(path, **kwargs)
+
+        # The ATL03 release this reader is allowed to process (e.g. "007").
+        # None accepts whatever release the file happens to be.
+        self.atl_version = (
+            str(atl_version).strip().zfill(3) if atl_version not in (None, "") else None
+        )
 
         self.vertical_datum = (
             vertical_datum
@@ -308,15 +332,21 @@ class ATL03Reader(IceSat2Reader):
         atlxx_filter = "_".join(parts[1:4])
         atlxx_filter_no_ver = "_".join(parts[1:3])
 
+        # Match on timestamp, track and release. Only products that are safe
+        # to pair across releases may fall back to timestamp and track alone.
+        filters = [atlxx_filter]
+        if short_name.upper() in CROSS_RELEASE_AUX:
+            filters.append(atlxx_filter_no_ver)
+
         # Check Local/Cache
         for d in [os.path.dirname(atl03_fn), self.cache_dir]:
-            for filt in [atlxx_filter, atlxx_filter_no_ver]:
+            for filt in filters:
                 matches = glob.glob(os.path.join(d, f"{short_name}_{filt}*.h5"))
                 if matches:
-                    return matches[0]
+                    return _newest_first(matches)[0]
 
         try:
-            for filt in [atlxx_filter, atlxx_filter_no_ver]:
+            for filt in filters:
                 fetcher = earthdata.IceSat2(
                     src_region=None,
                     verbose=self.verbose,
@@ -329,15 +359,24 @@ class ATL03Reader(IceSat2Reader):
                 # run_fetchez([fetcher])
 
                 if fetcher.results:
-                    # Sort descending by filename so the highest algorithm
-                    # version/revision (e.g. _002_01 > _001_01) is first.
+                    # Same ordering as the cache check above, so a cached file
+                    # and a fresh search agree on which granule wins.
                     fetcher.results.sort(
-                        key=lambda e: e.get("dst_fn", ""), reverse=True
+                        key=lambda e: os.path.basename(e.get("dst_fn", "")),
+                        reverse=True,
                     )
                     fetcher.fetch_entry(fetcher.results[0], check_size=True)
                     return fetcher.results[0]["dst_fn"]
         except Exception as e:
             logger.debug(f"Aux fetch failed: {e}\n{traceback.format_exc()}")
+
+        # Debug, not a warning: plenty of ATL03 granules (open ocean, for one)
+        # never had an ATL08 product, so this is routine.
+        if short_name.upper() not in CROSS_RELEASE_AUX:
+            logger.debug(
+                f"No {short_name} granule of release {parts[3]} found for {bn}; "
+                f"{short_name} classifications will not be applied."
+            )
 
         return None
 
@@ -1279,6 +1318,21 @@ class ATL03Reader(IceSat2Reader):
         # bing_geom = None
         # osm_geom = None
         # osm_lakes = None
+
+        if self.atl_version:
+            parts = os.path.basename(self.fn).split("_")
+            release = parts[3] if len(parts) >= 4 else None
+            if release is None:
+                logger.warning(
+                    f"Cannot read an ATL03 release from the filename of {self.fn}; "
+                    f"unable to confirm it is release {self.atl_version}."
+                )
+            elif release != self.atl_version:
+                logger.error(
+                    f"Skipping {self.fn}: it is ATL03 release {release}, but "
+                    f"release {self.atl_version} was requested."
+                )
+                return
 
         bldg_tree = None
         land_tree = None

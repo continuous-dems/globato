@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### ADDED
 * Add a Changelog
+* `ATL03Reader` takes an `atl_version` option (e.g. `"007"`) and skips any ATL03 granule of a different release.
 
 ### CHANGED
 
@@ -24,3 +25,5 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### BUGFIX
 
 * Fixed bug in binary_cudem that would wipe background data in the fine tier with a large `blend_dist`
+* `ATL03Reader` now picks the newest cached ATL24 granule when several versions of one track are in the cache, matching how search results were already ranked. Before, whichever file the directory listing returned first was used.
+* `ATL03Reader` no longer pairs an ATL03 granule with an ATL08 granule of a different release. ATL08 indexes photons by their position in one specific ATL03 release, so a mismatched pair can misclassify photons without any error. ATL24 joins on `delta_time` and may still come from another release.
