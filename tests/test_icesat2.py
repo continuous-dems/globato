@@ -1,4 +1,4 @@
-# tests/test_icesat2_aux.py
+# tests/test_icesat2.py
 
 import h5py
 import numpy as np
