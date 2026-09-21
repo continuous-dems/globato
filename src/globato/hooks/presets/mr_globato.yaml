@@ -36,8 +36,10 @@ hooks:
       crs: epsg:4326+3855
       mode: mixed
       nodata: -9999.0
-      weight_threshold: 0.5/.25
+      # weight_threshold: 0.25/.1
+      weight_threshold: 3/2/1/.75/.5/.4/.3/.2/.1
       output: "%name%_%batch_name%_stack.tif"
+      state: "%name%_%batch_name%_state.tif"
 
   - name: focus_sink
     args:
@@ -78,15 +80,18 @@ hooks:
     args:
       resolutions: 3s/9s/15s
       weights:
-        - 0.5
         - 0.25
+        - 0.1
       steps: 2
-      blend_dists: 20/10/2
+      blend_dists: 8/4/2
       barrier: osm
+      previous_tier_resampling: "cubic_spline"
       bathy_max_z: "ocean:-0.01,river:0,lake:None,wetland:None,estuary:0"
-      algos: "interp_gmt:tension=1/interp_gmt:tension=.75/interp_gmt:tension=.35"
-      # algos: interp_rbf
+      # algos: interp_gmt
+      # algos: "interp_gmt:tension=1/interp_gmt:tension=.75/interp_gmt:tension=.35"
+      # algos: raster_fill/interp_rbf
       # algos: raster_fill:max_distance=6/raster_fill:max_distance=12/interp_gmt:tension=.95
+      algos: raster_fill/raster_fill/interp_rbf
       output: "%name%_%batch_name%.tif"
 
   - name: focus_sink

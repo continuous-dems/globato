@@ -138,7 +138,7 @@ modules:
   # Global Marine Gravity Bathymetry
   - module: sysu
     args:
-      weight: .1
+      weight: .01
     hooks:
       - name: set-datatype
         args:
@@ -152,16 +152,16 @@ modules:
           cache_dir: "%shared_cache%"
       - name: rq
         args:
-          reference: "gebco"
+          reference: "gmrt/gebco"
           threshold: 20
           mode: "percent"
           builder: "grid"
-          res: 3s
+          res: 60s
 
   # Global Marine Gravity Bathymetry
   - module: margrav
     args:
-      weight: .1
+      weight: .01
     hooks:
       - name: set-datatype
         args:
@@ -178,11 +178,11 @@ modules:
           cache_dir: "%shared_cache%"
       - name: rq
         args:
-          reference: "gebco"
+          reference: "gmrt/gebco"
           threshold: 20
           mode: "percent"
           builder: "grid"
-          res: 3s
+          res: 60s
 
   - module: csb
     args:

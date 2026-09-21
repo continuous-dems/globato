@@ -530,6 +530,11 @@ class MultiStackAccumulator:
                     STATISTICS_MEAN=str(stats.mean),
                     STATISTICS_STDDEV=str(stats.std),
                     DESCRIPTION=desc,
+                    GLOBATO_DATATYPE="MULTI_STACK",
+                    GLOBATO_FUSION_VERSION=str(FUSION_STATE_VERSION),
+                    GLOBATO_STACK_STRATEGY=self.strategy,
+                    GLOBATO_WEIGHT_TIERS=json.dumps(self.wts.tolist()),
+                    VERSION=__version__,
                 )
 
         return self.output_fn

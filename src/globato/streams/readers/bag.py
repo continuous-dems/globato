@@ -16,7 +16,6 @@ import logging
 
 import rasterio
 
-from fetchez.utils import float_or
 from fetchez.spatial import Region
 
 from .rio import RasterioReader
@@ -40,9 +39,17 @@ class BAGReader(RasterioReader):
     meta_extensions = ["bag"]
 
     def __init__(
-        self, path, mode="RESAMPLED_GRID", min_weight=0, auto_weight=True, **kwargs
+        self,
+        path,
+        mode="RESAMPLED_GRID",
+        min_weight=0.25,
+        auto_weight=True,
+        uncertainty_scale=5.0,
+        **kwargs,
     ):
-        super().__init__(path, auto_weight=auto_weight, **kwargs)
+        super().__init__(
+            path, auto_weight=auto_weight, uncertainty_scale=uncertainty_scale, **kwargs
+        )
         self.modes = [
             "LOW_RES_GRID",
             "LIST_SUPERGRIDS",
@@ -51,7 +58,6 @@ class BAGReader(RasterioReader):
             "AUTO",
         ]
         self.mode = mode if mode.upper() in self.modes else "AUTO"
-        self.min_weight = float_or(min_weight, 0)
 
     def _calculate_bag_weight(self, transform):
         """Weight scales directly with physical resolution.
@@ -65,21 +71,7 @@ class BAGReader(RasterioReader):
         if x_res == 0:
             return 1.0
 
-        calc_weight = 32.0 / x_res
-
-        return max(calc_weight, self.min_weight)
-
-    # def _calculate_bag_weight(self, transform):
-    #     """Weight = (3 * (10 if res <=3 else 1)) / res"""
-
-    #     x_res = transform.a
-    #     if x_res == 0:
-    #         return 1.0
-
-    #     base_mult = 10 if x_res <= 3.0 else 1
-    #     calc_weight = (3 * base_mult) / x_res
-
-    #     return max(calc_weight, self.min_weight)
+        return 32.0 / x_res
 
     def _yield_raw_chunks(self):
         env_opts = {

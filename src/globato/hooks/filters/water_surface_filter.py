@@ -87,7 +87,7 @@ class WaterSurfaceFilter(GlobatoFilter):
             return False
 
         if self.skip_entry and str2bool(entry.get(self.skip_entry)):
-            logger.warning(
+            logger.debug(
                 f"[{self.name}] {self.skip_entry} detected in "
                 f"{entry.get('dst_fn', '')}. Skipping."
             )

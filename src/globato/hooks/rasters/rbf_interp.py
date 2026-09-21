@@ -38,10 +38,10 @@ class RBFInterp(RasterStreamHook):
     def __init__(
         self,
         kernel="thin_plate_spline",
-        smoothing=20.0,
-        neighbors=100,
+        smoothing=0.2,
+        neighbors=128,
         epsilon=None,
-        degree=6,
+        degree=-1,
         **kwargs,
     ):
         """
@@ -60,7 +60,7 @@ class RBFInterp(RasterStreamHook):
 
         # We need a large buffer for smooth continuous RBF boundaries
         if getattr(self, "buffer", 0) == 0:
-            self.buffer = 40
+            self.buffer = 100
 
     def process_chunk(self, data, ndv, entry, transform=None, window=None):
         is_3d = data.ndim == 3
@@ -86,8 +86,18 @@ class RBFInterp(RasterStreamHook):
         missing_mask = ~valid_mask
         y_missing_idx, x_missing_idx = np.where(missing_mask)
         xq, yq = transform * (x_missing_idx + 0.5, y_missing_idx + 0.5)
-        query_points = np.column_stack((xq, yq))
+        # query_points = np.column_stack((xq, yq))
         # query_points = np.column_stack((x_missing, y_missing))
+
+        xy = np.column_stack((x_valid, y_valid))
+        xy0 = np.mean(xy, axis=0)
+        scale = np.ptp(xy, axis=0)
+        scale[scale == 0] = 1.0
+
+        points = (xy - xy0) / scale
+
+        query_xy = np.column_stack((xq, yq))
+        query_points = (query_xy - xy0) / scale
 
         if len(query_points) == 0:
             return data

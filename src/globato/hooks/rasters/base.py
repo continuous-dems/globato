@@ -492,7 +492,7 @@ class RasterHook(FetchHook):
 
     # --- Routing and Processing ---
     def run(self, entries):
-        logger.info(
+        logger.debug(
             f"[{self.name}] Running in '{self.processing_mode}' mode on {len(entries)} entries"
         )
         new_entries = []

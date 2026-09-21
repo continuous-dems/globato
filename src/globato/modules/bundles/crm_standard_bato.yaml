@@ -171,7 +171,7 @@ modules:
   # NOAA Electronic Nautical Charts
   - module: charts
     args:
-      weight: .15
+      weight: .085
     hooks:
       - name: unzip
       - name: filename_filter

@@ -13,6 +13,7 @@ degrading the high-frequency fidelity of dense coastal data.
 
 import os
 import shutil
+import json
 import logging
 import numpy as np
 
@@ -64,6 +65,8 @@ class BinaryCudemStepDown(RasterGlobalHook):
         algos=None,
         blend_dists=None,
         decimation_mode="weighted_mean",
+        previous_tier_mode="raster",
+        previous_tier_resampling="bilinear",
         bathy_max_z="-0.01",
         inland_decay_dist=5.0,  # km
         keep_steps=True,
@@ -85,12 +88,40 @@ class BinaryCudemStepDown(RasterGlobalHook):
         self.blend_dists = parse_arg_to_list(blend_dists, int)
         self.algos = parse_arg_to_list(algos, str)
         self.decimation_mode = str_or(decimation_mode, "weighted_mean")
+        self.previous_tier_mode = str_or(previous_tier_mode, "raster").lower()
+        self.previous_tier_resampling = str_or(
+            previous_tier_resampling, "bilinear"
+        ).lower()
         self.keep_steps = keep_steps
+
+        if self.previous_tier_mode not in {"points", "raster"}:
+            raise ValueError("previous_tier_mode must be either 'points' or 'raster'")
 
         self.bathy_max_z = float_or(bathy_max_z)
         # Parse the spatial cap rules
         self.cap_rules = self._parse_cap_rules(bathy_max_z)
         self.inland_decay_dist = float(inland_decay_dist)
+
+    def _stack_weight_tiers(self, src_path):
+        with rasterio.open(src_path) as src:
+            tags = src.tags()
+
+        raw = tags.get("GLOBATO_WEIGHT_TIERS")
+        if not raw:
+            return []
+
+        try:
+            return sorted(
+                [float(v) for v in json.loads(raw)],
+                reverse=True,
+            )
+        except (TypeError, ValueError, json.JSONDecodeError):
+            logger.warning(
+                "[%s] Invalid GLOBATO_WEIGHT_TIERS metadata: %r",
+                self.name,
+                raw,
+            )
+            return []
 
     @staticmethod
     def _apply_topological_cap(z, cap_grid, observed_mask, ndv):
@@ -172,7 +203,11 @@ class BinaryCudemStepDown(RasterGlobalHook):
         )
         self.steps = target_tiers - 1
 
-        self.weights = sorted(self.weights, reverse=True)
+        if not self.weights:
+            self.weights = self._stack_weight_tiers(src_path)
+        else:
+            self.weights = sorted(self.weights, reverse=True)
+
         while len(self.weights) < self.steps:
             if len(self.weights) == 0:
                 self.weights.append(1.0)
@@ -344,8 +379,26 @@ class BinaryCudemStepDown(RasterGlobalHook):
             logger.error(f"[{self.name}] Failed to generate topological grids: {e}")
             return None, None
 
+    def _raster_resampling(self):
+        """Return the configured Rasterio resampling method."""
+        methods = {
+            "nearest": Resampling.nearest,
+            "bilinear": Resampling.bilinear,
+            "cubic": Resampling.cubic,
+            "cubic_spline": Resampling.cubic_spline,
+            "lanczos": Resampling.lanczos,
+        }
+        try:
+            return methods[self.previous_tier_resampling]
+        except KeyError as exc:
+            valid = ", ".join(sorted(methods))
+            raise ValueError(
+                f"Unknown previous_tier_resampling "
+                f"'{self.previous_tier_resampling}'; choose from {valid}"
+            ) from exc
+
     def _align_background(self, previous_surface, shape, transform, crs, ndv):
-        """Align the previous coarser surface to the current tier grid."""
+        """Resample the previous coarser surface onto the current tier grid."""
         bg_aligned = np.full(shape, ndv, dtype="float64")
 
         with rasterio.open(previous_surface) as bg_src:
@@ -358,11 +411,85 @@ class BinaryCudemStepDown(RasterGlobalHook):
                 dst_crs=crs,
                 src_nodata=bg_src.nodata,
                 dst_nodata=ndv,
-                resampling=Resampling.bilinear,
+                resampling=self._raster_resampling(),
                 num_threads=1,
             )
 
         return bg_aligned
+
+    def _previous_tier_guides(
+        self,
+        previous_surface,
+        shape,
+        transform,
+        crs,
+        ndv,
+    ):
+        """Map previous-tier cell centers to sparse current-tier constraints.
+
+        The completed previous surface is sampled only at its native cell
+        centers.  Those values become guide constraints for a fresh
+        interpolation at the current resolution; the coarse raster is never
+        promoted into a continuous finer-resolution background.
+        """
+        guide_z = np.full(shape, ndv, dtype="float64")
+        guide_mask = np.zeros(shape, dtype=bool)
+
+        with rasterio.open(previous_surface) as src:
+            prev_z = src.read(1).astype("float64")
+            prev_ndv = src.nodata
+
+            valid = np.isfinite(prev_z)
+            if prev_ndv is not None:
+                valid &= prev_z != prev_ndv
+
+            if not np.any(valid):
+                return guide_z, guide_mask
+
+            src_rows, src_cols = np.where(valid)
+            values = prev_z[src_rows, src_cols]
+            xs, ys = rasterio.transform.xy(
+                src.transform,
+                src_rows,
+                src_cols,
+                offset="center",
+            )
+            xs = np.asarray(xs, dtype="float64")
+            ys = np.asarray(ys, dtype="float64")
+
+            if src.crs is not None and crs is not None and src.crs != crs:
+                xs, ys = rasterio.warp.transform(
+                    src.crs,
+                    crs,
+                    xs.tolist(),
+                    ys.tolist(),
+                )
+                xs = np.asarray(xs, dtype="float64")
+                ys = np.asarray(ys, dtype="float64")
+
+        dst_rows, dst_cols = rasterio.transform.rowcol(
+            transform,
+            xs,
+            ys,
+        )
+        dst_rows = np.asarray(dst_rows, dtype="int64")
+        dst_cols = np.asarray(dst_cols, dtype="int64")
+
+        inside = (
+            (dst_rows >= 0)
+            & (dst_rows < shape[0])
+            & (dst_cols >= 0)
+            & (dst_cols < shape[1])
+        )
+
+        dst_rows = dst_rows[inside]
+        dst_cols = dst_cols[inside]
+        values = values[inside]
+
+        guide_z[dst_rows, dst_cols] = values
+        guide_mask[dst_rows, dst_cols] = True
+
+        return guide_z, guide_mask
 
     @staticmethod
     def _distance_to_core(core_mask, barrier_mask=None):
@@ -428,7 +555,7 @@ class BinaryCudemStepDown(RasterGlobalHook):
 
         return support
 
-    def _compose_tier_surface(
+    def _compose_tier_surface_raster(
         self,
         z,
         w,
@@ -440,10 +567,10 @@ class BinaryCudemStepDown(RasterGlobalHook):
         current_blend_dist,
         barrier_mask=None,
     ):
+        """Compose a tier using a resampled previous-tier background."""
         valid_mask = (z != ndv) & np.isfinite(z)
         core_mask = valid_mask & (w >= current_weight)
 
-        # The coarsest tier has no previous surface.
         if previous_surface is None:
             work_z = z.copy()
             interp_mask = ~valid_mask
@@ -458,11 +585,9 @@ class BinaryCudemStepDown(RasterGlobalHook):
         )
         bg_valid = (bg_aligned != ndv) & np.isfinite(bg_aligned)
 
-        # Inherit the coarse surface.
         if not np.any(core_mask):
             work_z = np.full(z.shape, ndv, dtype="float64")
             work_z[bg_valid] = bg_aligned[bg_valid]
-
             interp_mask = (work_z == ndv) | ~np.isfinite(work_z)
             return work_z, valid_mask, core_mask, interp_mask
 
@@ -477,20 +602,99 @@ class BinaryCudemStepDown(RasterGlobalHook):
         work_z[core_mask] = z[core_mask]
 
         if current_blend_dist > 0:
-            dist_to_core = self._distance_to_core(
-                core_mask,
-                barrier_mask,
-            )
-
+            dist_to_core = self._distance_to_core(core_mask, barrier_mask)
             blend_mask = (
                 support_mask & ~core_mask & (dist_to_core < float(current_blend_dist))
             )
-
             work_z[blend_mask] = ndv
 
         interp_mask = (work_z == ndv) | ~np.isfinite(work_z)
-
         return work_z, valid_mask, core_mask, interp_mask
+
+    def _compose_tier_surface_points(
+        self,
+        z,
+        w,
+        ndv,
+        previous_surface,
+        transform,
+        crs,
+        current_weight,
+        current_blend_dist,
+        barrier_mask=None,
+    ):
+        """Compose a tier from sparse previous-tier guide constraints."""
+        valid_mask = (z != ndv) & np.isfinite(z)
+        core_mask = valid_mask & (w >= current_weight)
+
+        if previous_surface is None:
+            work_z = z.copy()
+            interp_mask = ~valid_mask
+            return work_z, valid_mask, core_mask, interp_mask
+
+        guide_z, guide_mask = self._previous_tier_guides(
+            previous_surface,
+            z.shape,
+            transform,
+            crs,
+            ndv,
+        )
+
+        # Current-tier observations always supersede coarse guide constraints.
+        guide_mask &= ~core_mask
+
+        # Blending is optional in point mode.  Rather than carving a raster moat,
+        # it suppresses coarse guide constraints near coherent high-resolution
+        # support so the newly admitted observations have more freedom.
+        if current_blend_dist > 0 and np.any(core_mask):
+            support_mask = self._support_mask(
+                core_mask,
+                barrier_mask=barrier_mask,
+                closing_dist=2,
+            )
+            dist_to_core = self._distance_to_core(core_mask, barrier_mask)
+            suppress_guides = (
+                guide_mask & support_mask & (dist_to_core < float(current_blend_dist))
+            )
+            guide_mask[suppress_guides] = False
+
+        work_z = np.full(z.shape, ndv, dtype="float64")
+        work_z[guide_mask] = guide_z[guide_mask]
+        work_z[core_mask] = z[core_mask]
+
+        # Every non-constraint cell is freshly resolved at the current tier.
+        interp_mask = (work_z == ndv) | ~np.isfinite(work_z)
+        return work_z, valid_mask, core_mask, interp_mask
+
+    def _compose_tier_surface(
+        self,
+        z,
+        w,
+        ndv,
+        previous_surface,
+        transform,
+        crs,
+        current_weight,
+        current_blend_dist,
+        barrier_mask=None,
+    ):
+        """Compose one tier using the configured previous-tier strategy."""
+        compose = (
+            self._compose_tier_surface_points
+            if self.previous_tier_mode == "points"
+            else self._compose_tier_surface_raster
+        )
+        return compose(
+            z,
+            w,
+            ndv,
+            previous_surface,
+            transform,
+            crs,
+            current_weight,
+            current_blend_dist,
+            barrier_mask=barrier_mask,
+        )
 
     def _write_interpolation_input(
         self,
@@ -509,10 +713,10 @@ class BinaryCudemStepDown(RasterGlobalHook):
 
         data[0] = work_z.astype(data[0].dtype, copy=False)
 
-        # Keep auxiliary bands consistent when an interpolation
-        # hook inspects more than band 1.  Core observations retain their source
-        # count/weight.  Coarse-background cells act at the current tier weight;
-        # interpolation voids carry no count/weight.
+        # Keep auxiliary bands consistent when an interpolation hook inspects
+        # more than band 1. Core observations retain their source metadata.
+        # Synthetic previous-tier constraints (either resampled raster cells or
+        # sparse point guides) act at the current tier weight.
         work_valid = (work_z != ndv) & np.isfinite(work_z)
         background_valid = work_valid & ~core_mask
 
