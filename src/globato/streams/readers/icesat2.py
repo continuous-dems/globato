@@ -43,6 +43,14 @@ import rasterio
 
 logger = logging.getLogger(__name__)
 
+# Aux products that may be paired with an ATL03 granule of a different release.
+# ATL24 joins to ATL03 on delta_time, which is the same in every release, and
+# NSIDC reprocesses it on its own schedule, so its release rarely matches.
+# Everything else (ATL08 in particular) joins on photon index positions within
+# one specific ATL03 release, so a granule from another release can
+# misclassify photons without raising anything.
+CROSS_RELEASE_AUX = frozenset({"ATL24"})
+
 
 def _newest_first(filenames):
     """Sort granule paths so the highest release/version/revision comes first.
@@ -317,15 +325,21 @@ class ATL03Reader(IceSat2Reader):
         atlxx_filter = "_".join(parts[1:4])
         atlxx_filter_no_ver = "_".join(parts[1:3])
 
+        # Match on timestamp, track and release. Only products that are safe
+        # to pair across releases may fall back to timestamp and track alone.
+        filters = [atlxx_filter]
+        if short_name.upper() in CROSS_RELEASE_AUX:
+            filters.append(atlxx_filter_no_ver)
+
         # Check Local/Cache
         for d in [os.path.dirname(atl03_fn), self.cache_dir]:
-            for filt in [atlxx_filter, atlxx_filter_no_ver]:
+            for filt in filters:
                 matches = glob.glob(os.path.join(d, f"{short_name}_{filt}*.h5"))
                 if matches:
                     return _newest_first(matches)[0]
 
         try:
-            for filt in [atlxx_filter, atlxx_filter_no_ver]:
+            for filt in filters:
                 fetcher = earthdata.IceSat2(
                     src_region=None,
                     verbose=self.verbose,
@@ -348,6 +362,14 @@ class ATL03Reader(IceSat2Reader):
                     return fetcher.results[0]["dst_fn"]
         except Exception as e:
             logger.debug(f"Aux fetch failed: {e}\n{traceback.format_exc()}")
+
+        # Debug, not a warning: plenty of ATL03 granules (open ocean, for one)
+        # never had an ATL08 product, so this is routine.
+        if short_name.upper() not in CROSS_RELEASE_AUX:
+            logger.debug(
+                f"No {short_name} granule of release {parts[3]} found for {bn}; "
+                f"{short_name} classifications will not be applied."
+            )
 
         return None
 

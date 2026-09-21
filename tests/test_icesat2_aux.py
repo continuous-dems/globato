@@ -44,3 +44,23 @@ def test_cached_atl24_prefers_the_newest_version(tmp_path, offline):
     found = reader.fetch_atlxx(reader.fn, "ATL24")
 
     assert found.endswith("_006_01_002_01.h5")
+
+
+def test_atl24_may_come_from_another_release(tmp_path, offline):
+    reader = _reader(tmp_path, "ATL24_20241107234251_08052501_006_01_002_01.h5")
+
+    assert reader.fetch_atlxx(reader.fn, "ATL24") is not None
+
+
+def test_atl08_must_match_the_atl03_release(tmp_path, offline):
+    reader = _reader(tmp_path, "ATL08_20241107234251_08052501_006_01.h5")
+
+    assert reader.fetch_atlxx(reader.fn, "ATL08") is None
+    # Only the release-specific search ran; no fallback to timestamp and track.
+    assert offline.searched == [("ATL08", "20241107234251_08052501_007")]
+
+
+def test_atl08_of_the_same_release_is_used(tmp_path, offline):
+    reader = _reader(tmp_path, "ATL08_20241107234251_08052501_007_01.h5")
+
+    assert reader.fetch_atlxx(reader.fn, "ATL08").endswith("_007_01.h5")
