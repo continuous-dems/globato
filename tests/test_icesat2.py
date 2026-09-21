@@ -6,7 +6,12 @@ import pandas as pd
 import pytest
 
 from fetchez.modules import earthdata
-from globato.streams.readers.icesat2 import ATL03Reader, _atl24_rows_in_atl03
+from globato.streams.readers.icesat2 import (
+    ATL03Reader,
+    _as_atl24_time,
+    _atl24_rows_in_atl03,
+    _read_atl24_block,
+)
 
 ATL03 = "ATL03_20241107234251_08052501_007_01_subsetted.h5"
 
@@ -91,6 +96,7 @@ def test_matching_atl03_release_is_read(tmp_path, offline):
 # ---------------------------------------------------------------------------
 EPOCH = 1198800018.0
 OFFSET = 72_472  # rows of the full granule that come before the subset
+CHUNK = 4  # photons per storage chunk in the ATL24 files written here
 SEAFLOOR_ROWS = [2, 9, 10]  # one photon of a 3-photon pulse, two of a 4-photon pulse
 
 
@@ -106,15 +112,21 @@ def _atl03_delta_time():
     return np.repeat(pulse_times, photons_per_pulse)
 
 
-def _atl24_beam(atl03_dt, offset=OFFSET, omit=(4, 12)):
+def _atl24_beam(atl03_dt, offset=OFFSET, omit=(4, 12), outside=1):
     """ATL24's view of that beam: it omits a few photons, and it covers the whole
-    granule, so it also has photons from before and after the subset."""
+    granule, so it also has `outside` photons from before and after the subset."""
     rows = np.array([r for r in range(len(atl03_dt)) if r not in omit])
-    outside = _atl24_time(atl03_dt[[0, -1]] + [-0.5, 0.5])
-    delta_time = np.concatenate(
-        ([outside[0]], _atl24_time(atl03_dt[rows]), [outside[1]])
+    away = 0.5 + 1e-4 * np.arange(outside)
+    before = _atl24_time(atl03_dt[0] - away[::-1])
+    after = _atl24_time(atl03_dt[-1] + away)
+    delta_time = np.concatenate((before, _atl24_time(atl03_dt[rows]), after))
+    index_ph = np.concatenate(
+        (
+            offset - 5000 - np.arange(outside)[::-1],
+            rows + offset,
+            offset + 5000 + np.arange(outside),
+        )
     )
-    index_ph = np.concatenate(([offset - 5000], rows + offset, [offset + 5000]))
     return rows, delta_time, index_ph
 
 
@@ -162,24 +174,28 @@ def test_atl24_rows_are_refused_when_the_photons_do_not_line_up():
     assert _atl24_rows_in_atl03(with_extra_photon, atl24_dt, index_ph, EPOCH) is None
 
 
-def _write_atl24(path, atl03_dt, laser="gt1l"):
-    rows, delta_time, index_ph = _atl24_beam(atl03_dt)
+def _write_atl24(path, atl03_dt, laser="gt1l", outside=1, order=None):
+    """Write an ATL24 file in small chunks; `order` rearranges its photons."""
+    rows, delta_time, index_ph = _atl24_beam(atl03_dt, outside=outside)
     class_ph = np.full(len(delta_time), 41, dtype=np.int8)
     class_ph[np.isin(index_ph - OFFSET, SEAFLOOR_ROWS)] = 40
     class_ph[0] = 40  # a seafloor photon outside the ATL03 file
     n = len(delta_time)
+    columns = {
+        "delta_time": delta_time,
+        "index_ph": index_ph.astype(np.int32),
+        "class_ph": class_ph,
+        "confidence": np.where(index_ph - OFFSET == SEAFLOOR_ROWS[0], 0.4, 0.9),
+        "lat_ph": 24.0 + 1e-6 * np.arange(n),
+        "lon_ph": -81.0 - 1e-6 * np.arange(n),
+        "ortho_h": (-5.0 - 0.1 * np.arange(n)).astype(np.float32),
+    }
+    order = np.arange(n) if order is None else order
     with h5py.File(path, "w") as f:
         f["ancillary_data/atlas_sdp_gps_epoch"] = np.array([EPOCH])
-        f[f"{laser}/delta_time"] = delta_time
-        f[f"{laser}/index_ph"] = index_ph.astype(np.int32)
-        f[f"{laser}/class_ph"] = class_ph
-        f[f"{laser}/confidence"] = np.where(
-            index_ph - OFFSET == SEAFLOOR_ROWS[0], 0.4, 0.9
-        )
-        f[f"{laser}/lat_ph"] = 24.0 + 1e-6 * np.arange(n)
-        f[f"{laser}/lon_ph"] = -81.0 - 1e-6 * np.arange(n)
-        f[f"{laser}/ortho_h"] = (-5.0 - 0.1 * np.arange(n)).astype(np.float32)
-    return index_ph - OFFSET
+        for name, values in columns.items():
+            f.create_dataset(f"{laser}/{name}", data=values[order], chunks=(CHUNK,))
+    return (index_ph - OFFSET)[order]
 
 
 def _atl03_frame(atl03_dt):
@@ -250,3 +266,65 @@ def test_atl24_that_does_not_line_up_changes_nothing(tmp_path, offline):
     )
 
     pd.testing.assert_frame_equal(after, before)
+
+
+def _span(atl03_dt):
+    times = _as_atl24_time(atl03_dt, EPOCH)
+    return times.min(), times.max()
+
+
+def test_atl24_block_covers_the_atl03_span(tmp_path):
+    atl03_dt = _atl03_delta_time()
+    atl24_fn = tmp_path / "atl24.h5"
+    _write_atl24(atl24_fn, atl03_dt, outside=1000)
+    first, last = _span(atl03_dt)
+
+    with h5py.File(atl24_fn) as f:
+        everything = f["gt1l/delta_time"][...]
+        start, block = _read_atl24_block(f["gt1l/delta_time"], first, last)
+
+    wanted = np.flatnonzero((everything >= first) & (everything <= last))
+    assert start <= wanted[0] and wanted[-1] < start + len(block)
+    assert block.tolist() == everything[start : start + len(block)].tolist()
+    assert len(block) < len(everything) / 10
+
+
+def test_atl24_block_is_widened_until_both_ends_pass(tmp_path):
+    # 992 photons before the 13 in the file puts the first of them on a chunk
+    # boundary, so the chunk it is in does not show where the range begins.
+    atl03_dt = _atl03_delta_time()
+    atl24_fn = tmp_path / "atl24.h5"
+    _write_atl24(atl24_fn, atl03_dt, outside=992)
+    first, last = _span(atl03_dt)
+
+    with h5py.File(atl24_fn) as f:
+        start, block = _read_atl24_block(f["gt1l/delta_time"], first, last)
+
+    assert start == 992 - CHUNK
+    assert block[0] < first and block[-1] > last
+
+
+def test_atl24_block_is_refused_when_not_in_time_order(tmp_path):
+    atl03_dt = _atl03_delta_time()
+    atl24_fn = tmp_path / "atl24.h5"
+    n = 2 * 1000 + 13
+    _write_atl24(atl24_fn, atl03_dt, outside=1000, order=np.arange(n)[::-1])
+
+    with h5py.File(atl24_fn) as f:
+        assert _read_atl24_block(f["gt1l/delta_time"], *_span(atl03_dt)) is None
+
+
+@pytest.mark.parametrize("in_time_order", [True, False])
+def test_atl24_in_a_long_file_labels_the_same_photons(tmp_path, offline, in_time_order):
+    atl03_dt = _atl03_delta_time()
+    atl24_fn = tmp_path / "ATL24_20241107234251_08052501_006_01_002_01.h5"
+    n = 2 * 1000 + 13
+    order = None if in_time_order else np.arange(n)[::-1]
+    _write_atl24(atl24_fn, atl03_dt, outside=1000, order=order)
+    reader = _reader(tmp_path)
+
+    df = reader.apply_atl24_classifications(
+        _atl03_frame(atl03_dt), str(atl24_fn), "gt1l", None, None
+    )
+
+    assert np.flatnonzero(df["ph_h_classed"] == 40).tolist() == SEAFLOOR_ROWS

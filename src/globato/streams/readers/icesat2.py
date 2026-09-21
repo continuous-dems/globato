@@ -62,6 +62,89 @@ def _newest_first(filenames):
     return sorted(filenames, key=os.path.basename, reverse=True)
 
 
+def _as_atl24_time(atl03_dt, epoch):
+    """Put an ATL03 ``delta_time`` through the round trip ATL24's is stored with.
+
+    ATL24's value is ATL03's after a trip through absolute time in a float64:
+    seconds since the ATLAS epoch, to GPS nanoseconds, and back. That costs it
+    everything below about 2.4e-7 s, so the raw values of the two products are
+    equal for only ~1 photon in 10, while the converted ones are bit-equal.
+    """
+    return ((np.asarray(atl03_dt) + epoch) * 1e9) / 1e9 - epoch
+
+
+def _read_atl24_block(delta_time, first, last):
+    """Read only the part of an ATL24 ``delta_time`` column that spans a time range.
+
+    ATL24 covers the whole granule, and a spatially subsetted ATL03 file
+    overlaps about 1% of it, so reading every column in full is most of the cost
+    of applying ATL24. The photons are stored in time order, which lets the
+    overlap be found by bisection and read as one block.
+
+    Args:
+        delta_time: The beam's ``delta_time`` h5py dataset (not yet read).
+        first: Earliest time wanted, as ATL24 stores it (see `_as_atl24_time`).
+        last: Latest time wanted.
+
+    Returns:
+        ``(start, block)``: the row the block starts at and its ``delta_time``
+        values. The block is made of whole storage chunks, so it usually runs a
+        little past the range on both sides. ``None`` if the column turns out
+        not to be in time order, in which case it has to be read in full.
+    """
+    n = len(delta_time)
+    if n == 0:
+        return 0, delta_time[0:0]
+    step = delta_time.chunks[0] if delta_time.chunks else 10_000
+
+    # Bisect on the file itself, a value at a time, remembering what was read.
+    probed = {}
+
+    def first_row_where(is_past):
+        lo, hi = 0, n
+        while lo < hi:
+            mid = (lo + hi) // 2
+            if mid not in probed:
+                probed[mid] = float(delta_time[mid])
+            lo, hi = (lo, mid) if is_past(probed[mid]) else (mid + 1, hi)
+        return lo
+
+    begin = first_row_where(lambda t: t >= first)
+    end = first_row_where(lambda t: t > last)
+
+    # Bisection is only right if the column is in time order. The values it
+    # read are scattered over the whole file, so they make a cheap spot check.
+    rows = sorted(probed)
+    if any(probed[a] > probed[b] for a, b in zip(rows, rows[1:])):
+        return None
+
+    # Read whole chunks: part of a chunk costs as much to read as all of it.
+    start = (begin // step) * step
+    stop = min(n, -(-max(end, begin + 1) // step) * step)
+    block = delta_time[start:stop]
+
+    # The block holds every photon of the range once it begins before the range
+    # and ends after it (or reaches an end of the file). Widen it a chunk at a
+    # time on whichever side does not show that yet.
+    while True:
+        short_before = start > 0 and not block[0] < first
+        short_after = stop < n and not block[-1] > last
+        if not (short_before or short_after):
+            break
+        if short_before:
+            wider = max(0, start - step)
+            block = np.concatenate((delta_time[wider:start], block))
+            start = wider
+        if short_after:
+            wider = min(n, stop + step)
+            block = np.concatenate((block, delta_time[stop:wider]))
+            stop = wider
+
+    if np.any(np.diff(block) < 0):
+        return None
+    return start, block
+
+
 def _atl24_rows_in_atl03(atl03_dt, atl24_dt, atl24_index_ph, epoch):
     """Find the ATL03 heights row of each ATL24 photon.
 
@@ -72,9 +155,7 @@ def _atl24_rows_in_atl03(atl03_dt, atl24_dt, atl24_index_ph, epoch):
     has to land on a row of its own transmit pulse.
 
     Pulses are compared after putting ATL03's ``delta_time`` through the round
-    trip ATL24's was stored with (seconds since the ATLAS epoch, to absolute
-    nanoseconds in a float64, and back). That costs ATL24 everything below
-    about 2.4e-7 s, so the raw values are equal for only ~1 photon in 10.
+    trip ATL24's was stored with (see `_as_atl24_time`).
 
     Args:
         atl03_dt: ``heights/delta_time`` of one ATL03 beam, in file order.
@@ -90,7 +171,7 @@ def _atl24_rows_in_atl03(atl03_dt, atl24_dt, atl24_index_ph, epoch):
     """
     # Put ATL03's delta_time through ATL24's round trip, so that the two
     # products hold bit-equal values for the same transmit pulse.
-    atl03_key = ((np.asarray(atl03_dt) + epoch) * 1e9) / 1e9 - epoch
+    atl03_key = _as_atl24_time(atl03_dt, epoch)
 
     # The distinct pulses in the ATL03 file (sorted), and the first and last
     # heights row that each one occupies.
@@ -607,17 +688,29 @@ class ATL03Reader(IceSat2Reader):
                 if laser not in f:
                     return df
                 grp = f[laser]
+                if df.empty:
+                    return df
                 try:
-                    atl24_class = grp["class_ph"][...]
-                    atl24_dt = grp["delta_time"][...]
-                    atl24_index_ph = grp["index_ph"][...]
-                    atl24_conf = grp["confidence"][...]
-                    atl24_lat = grp["lat_ph"][...]
-                    atl24_lon = grp["lon_ph"][...]
-                    atl24_z = grp["ortho_h"][...]
                     epoch = float(
                         np.ravel(f["ancillary_data/atlas_sdp_gps_epoch"][...])[0]
                     )
+                    # Read only the stretch of ATL24 that overlaps this ATL03
+                    # file, or all of it if it is not stored in time order.
+                    atl03_time = _as_atl24_time(df["delta_time"].to_numpy(), epoch)
+                    found = _read_atl24_block(
+                        grp["delta_time"], atl03_time.min(), atl03_time.max()
+                    )
+                    if found is None:
+                        block, atl24_dt = slice(None), grp["delta_time"][...]
+                    else:
+                        block = slice(found[0], found[0] + len(found[1]))
+                        atl24_dt = found[1]
+                    atl24_class = grp["class_ph"][block]
+                    atl24_index_ph = grp["index_ph"][block]
+                    atl24_conf = grp["confidence"][block]
+                    atl24_lat = grp["lat_ph"][block]
+                    atl24_lon = grp["lon_ph"][block]
+                    atl24_z = grp["ortho_h"][block]
                 except KeyError:
                     return df
 

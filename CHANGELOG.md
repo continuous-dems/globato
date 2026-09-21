@@ -21,6 +21,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 * Added invariant tests for FusionState associativity, finalization, persistence/resume behavior, and MultiStack stacking strategies.
 * Updated DEM-generation documentation and added detailed documentation for the PointPixels/FusionState architecture.
 * Reverted the global-bato.yaml bundle's multibeam reference to use the rq hook's 'percent' mode instead of 'iho_2' which was removing too much data in deep water.
+* `ATL03Reader` reads only the part of an ATL24 granule that overlaps the ATL03 file, rather than every photon of the beam. ATL24 granules are never subsetted, so with a spatially subsetted ATL03 file this was most of the cost of applying ATL24; reading such a granule now takes roughly 20-55% less time. An ATL24 file that is not stored in time order is still read in full.
 
 ### BUGFIX
 
