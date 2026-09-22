@@ -859,9 +859,10 @@ class ATL03Reader(IceSat2Reader):
                         atl24_dt[is_bathy],
                     )
                     if shift is None:
-                        logger.debug(
-                            f"Too few un-refracted ATL24 photons in {laser} to tie "
-                            "ATL24 positions to this ATL03 file; using them as they are."
+                        logger.warning(
+                            f"Too few un-refracted ATL24 photons in {laser} of "
+                            f"{os.path.basename(self.fn)} to tie ATL24 positions to "
+                            "this ATL03 file; bathymetry keeps ATL24's positions"
                         )
                         shift = {"lat": 0.0, "lon": 0.0, "h": 0.0}
 
@@ -902,11 +903,12 @@ class ATL03Reader(IceSat2Reader):
         # Anything else raised in here is a bug. The granule still goes through
         # without its bathymetry, but with the traceback on record, because a
         # granule that has no bathymetry looks the same as one where this step
-        # broke, and a one-line warning let a broken join go unnoticed.
+        # broke, and a one-line message let a broken join go unnoticed.
         except Exception:
-            logger.exception(
+            logger.warning(
                 f"Applying ATL24 to {laser} of {os.path.basename(self.fn)} failed; "
-                "bathymetry left unclassified"
+                "bathymetry left unclassified",
+                exc_info=True,
             )
         return df
 

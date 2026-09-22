@@ -428,14 +428,13 @@ def test_atl24_errors_in_the_join_itself_are_logged_with_a_traceback(
     _write_atl24(atl24_fn, atl03_dt)
     before = _atl03_frame(atl03_dt).drop(columns=["photon_meantide"])
 
-    with caplog.at_level(logging.ERROR, logger="globato.streams.readers.icesat2"):
+    with caplog.at_level(logging.WARNING, logger="globato.streams.readers.icesat2"):
         after = _reader(tmp_path).apply_atl24_classifications(
             before.copy(), str(atl24_fn), "gt1l", None, None
         )
 
     pd.testing.assert_frame_equal(after, before)
-    (record,) = [r for r in caplog.records if r.levelno >= logging.ERROR]
-    assert record.exc_info is not None
+    (record,) = [r for r in caplog.records if r.exc_info is not None]
     assert record.exc_info[0] is KeyError
 
 
