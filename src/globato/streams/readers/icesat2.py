@@ -44,12 +44,20 @@ import rasterio
 logger = logging.getLogger(__name__)
 
 # Aux products that may be paired with an ATL03 granule of a different release.
-# ATL24 joins to ATL03 on delta_time, which is the same in every release, and
-# NSIDC reprocesses it on its own schedule, so its release rarely matches.
-# Everything else (ATL08 in particular) joins on photon index positions within
-# one specific ATL03 release, so a granule from another release can
-# misclassify photons without raising anything.
+# NSIDC reprocesses ATL24 on its own schedule, so its release rarely matches.
+# Its join checks every photon against delta_time, which is the same in every
+# release, and leaves the beam alone if the photon rows do not line up (see
+# _atl24_rows_in_atl03). Everything else (ATL08 in particular) joins on photon
+# index positions within one specific ATL03 release with no such check, so a
+# granule from another release can misclassify photons without raising anything.
 CROSS_RELEASE_AUX = frozenset({"ATL24"})
+
+# How far apart (seconds) ATL03 and ATL24 may put the same transmit pulse's
+# delta_time and still be taken as one pulse. ATL24 keeps about 2.4e-7 s of
+# precision, and a pulse's delta_time can differ in its last bit between two
+# ATL03 releases (3e-8 s), so a converted value can miss by up to ~5e-7 s.
+# Pulses are 1e-4 s apart, so 5e-6 s is well clear of both.
+ATL24_PULSE_TOLERANCE = 5e-6
 
 
 def _newest_first(filenames):
@@ -59,6 +67,226 @@ def _newest_first(filenames):
     sort orders them correctly (e.g. ``_006_01_002_01`` before ``_006_01_001_01``).
     """
     return sorted(filenames, key=os.path.basename, reverse=True)
+
+
+def _as_atl24_time(atl03_dt, epoch):
+    """Put an ATL03 ``delta_time`` through the round trip ATL24's is stored with.
+
+    ATL24's value is ATL03's after a trip through absolute time in a float64:
+    seconds since the ATLAS epoch, to GPS nanoseconds, and back. That costs it
+    everything below about 2.4e-7 s, so the raw values of the two products are
+    equal for only ~1 photon in 10, while the converted ones are bit-equal.
+    """
+    return ((np.asarray(atl03_dt) + epoch) * 1e9) / 1e9 - epoch
+
+
+def _read_atl24_block(delta_time, first, last):
+    """Read only the part of an ATL24 ``delta_time`` column that spans a time range.
+
+    ATL24 covers the whole granule, and a spatially subsetted ATL03 file
+    overlaps about 1% of it, so reading every column in full is most of the cost
+    of applying ATL24. The photons are stored in time order, which lets the
+    overlap be found by bisection and read as one block.
+
+    Args:
+        delta_time: The beam's ``delta_time`` h5py dataset (not yet read).
+        first: Earliest time wanted, as ATL24 stores it (see `_as_atl24_time`).
+        last: Latest time wanted.
+
+    Returns:
+        ``(start, block)``: the row the block starts at and its ``delta_time``
+        values. The block is made of whole storage chunks, so it usually runs a
+        little past the range on both sides. ``None`` if the column turns out
+        not to be in time order, in which case it has to be read in full.
+    """
+    n = len(delta_time)
+    if n == 0:
+        return 0, delta_time[0:0]
+    step = delta_time.chunks[0] if delta_time.chunks else 10_000
+
+    # Bisect on the file itself, a value at a time, remembering what was read.
+    probed = {}
+
+    def first_row_where(is_past):
+        lo, hi = 0, n
+        while lo < hi:
+            mid = (lo + hi) // 2
+            if mid not in probed:
+                probed[mid] = float(delta_time[mid])
+            lo, hi = (lo, mid) if is_past(probed[mid]) else (mid + 1, hi)
+        return lo
+
+    begin = first_row_where(lambda t: t >= first)
+    end = first_row_where(lambda t: t > last)
+
+    # Bisection is only right if the column is in time order. The values it
+    # read are scattered over the whole file, so they make a cheap spot check.
+    rows = sorted(probed)
+    if any(probed[a] > probed[b] for a, b in zip(rows, rows[1:])):
+        return None
+
+    # Read whole chunks: part of a chunk costs as much to read as all of it.
+    start = (begin // step) * step
+    stop = min(n, -(-max(end, begin + 1) // step) * step)
+    block = delta_time[start:stop]
+
+    # The block holds every photon of the range once it begins before the range
+    # and ends after it (or reaches an end of the file). Widen it a chunk at a
+    # time on whichever side does not show that yet.
+    while True:
+        short_before = start > 0 and not block[0] < first
+        short_after = stop < n and not block[-1] > last
+        if not (short_before or short_after):
+            break
+        if short_before:
+            wider = max(0, start - step)
+            block = np.concatenate((delta_time[wider:start], block))
+            start = wider
+        if short_after:
+            wider = min(n, stop + step)
+            block = np.concatenate((block, delta_time[stop:wider]))
+            stop = wider
+
+    if np.any(np.diff(block) < 0):
+        return None
+    return start, block
+
+
+def _atl24_rows_in_atl03(
+    atl03_dt, atl24_dt, atl24_index_ph, epoch, tolerance=ATL24_PULSE_TOLERANCE
+):
+    """Find the ATL03 heights row of each ATL24 photon.
+
+    ATL24's ``index_ph`` is the photon's row in the full ATL03 granule. A
+    spatially subsetted ATL03 file holds one contiguous run of those rows, so
+    ``row = index_ph - offset`` with one offset per beam (0 for a full granule).
+    The subset does not record the offset, but ``delta_time`` fixes it: a photon
+    has to land on a row of its own transmit pulse.
+
+    Pulses are compared after putting ATL03's ``delta_time`` through the round
+    trip ATL24's was stored with (see `_as_atl24_time`), and a photon belongs
+    to the nearest ATL03 pulse within ``tolerance``.
+
+    Args:
+        atl03_dt: ``heights/delta_time`` of one ATL03 beam, in file order.
+        atl24_dt: ``delta_time`` of the same beam in ATL24.
+        atl24_index_ph: ``index_ph`` of the same beam in ATL24.
+        epoch: ``ancillary_data/atlas_sdp_gps_epoch``, in GPS seconds.
+        tolerance: Seconds. See `ATL24_PULSE_TOLERANCE`.
+
+    Returns:
+        ``(in_file, rows)``. ``in_file`` flags the ATL24 photons whose pulse is
+        in the ATL03 file, and ``rows`` holds the ATL03 row of each of those.
+        ``None`` if the rows cannot be established: no single offset fits, or
+        a photon lands outside its pulse, or two photons land on one row.
+    """
+    # Put ATL03's delta_time through ATL24's round trip, so that the two
+    # products hold bit-equal values for the same transmit pulse.
+    atl03_key = _as_atl24_time(atl03_dt, epoch)
+
+    # The distinct pulses in the ATL03 file (sorted), and the first and last
+    # heights row that each one occupies.
+    pulses, first_row = np.unique(atl03_key, return_index=True)
+    last_row = len(atl03_key) - 1 - np.unique(atl03_key[::-1], return_index=True)[1]
+
+    # Look up each ATL24 photon's nearest pulse. ATL24 covers the whole granule,
+    # so most of its photons belong to pulses a subsetted ATL03 does not have.
+    atl24_dt = np.asarray(atl24_dt)
+    after = np.clip(np.searchsorted(pulses, atl24_dt), 0, len(pulses) - 1)
+    before = np.maximum(after - 1, 0)
+    pulse = np.where(
+        np.abs(pulses[before] - atl24_dt) <= np.abs(pulses[after] - atl24_dt),
+        before,
+        after,
+    )
+    in_file = np.abs(pulses[pulse] - atl24_dt) <= tolerance
+    if not np.any(in_file):
+        return in_file, np.array([], dtype=np.int64)
+
+    # Each photon bounds the offset: its row must fall between the first and
+    # last row of its pulse. Take the tightest lower and upper bounds over all
+    # photons; the offset is known only if they meet at a single value.
+    pulse = pulse[in_file]
+    index_ph = np.asarray(atl24_index_ph)[in_file].astype(np.int64)
+    offset = np.max(index_ph - last_row[pulse])
+    if offset != np.min(index_ph - first_row[pulse]):
+        return None
+
+    # Check the result before trusting it: every row must exist, belong to the
+    # photon's own pulse, and be claimed by one photon only.
+    rows = index_ph - offset
+    if rows.min() < 0 or rows.max() >= len(atl03_key):
+        return None
+    if np.any(np.abs(atl03_key[rows] - atl24_dt[in_file]) > tolerance):
+        return None
+    if len(np.unique(rows)) != len(rows):
+        return None
+    return in_file, rows
+
+
+def _atl24_release_shift(times, differences, at, window=1.0, min_count=10):
+    """Estimate how far ATL24's photon positions sit from this ATL03 file's.
+
+    ATL24 takes its geolocation from the ATL03 release it was built from, which
+    need not be the release being read. ATL24 V002 is built from release 006, and
+    against release 007 its photons sit 0.05 to 1.7 m away horizontally and up to
+    3 cm vertically: a rigid shift, the same for every beam of a granule,
+    different from one granule to the next, drifting by centimetres along one.
+    For a photon ATL24 does not refract, the difference between the two products
+    is that shift and nothing else, so those photons measure it. What is left of
+    a seafloor photon's difference once the shift is taken away is ATL24's
+    refraction correction.
+
+    Each estimate is the median over the reference photons within ``window``
+    seconds of track centred on the photon's time. Where that holds fewer than
+    ``min_count`` photons, the window grows by half of ``window`` on each side
+    until it holds enough or takes in every reference photon there is. Growing
+    it both ways keeps the estimate centred on the photon, so the drift along
+    the track costs little: about 7 cm over a whole granule, so under a
+    centimetre for any window that stays within a minute or so of the photon.
+    The reference photons are the ones paired with this ATL03 file, so the
+    window can never reach past the file's own extent.
+
+    Args:
+        times: ``delta_time`` of photons that ATL24 does not refract.
+        differences: ``{name: ATL24 minus ATL03}`` for those photons.
+        at: ``delta_time`` values to estimate the shift at.
+        window: Seconds of track (about 7 km) an estimate starts from.
+        min_count: Photons an estimate needs.
+
+    Returns:
+        ``{name: shift}`` at each of ``at``, or ``None`` if the file holds
+        fewer than ``min_count`` reference photons in all.
+    """
+    if len(times) < min_count:
+        return None
+    order = np.argsort(times)
+    times = np.asarray(times)[order]
+    values = {name: np.asarray(v)[order] for name, v in differences.items()}
+
+    # Seafloor photons come in dense runs (a pulse every 1e-4 s), so estimate
+    # once per hundredth of a window and share it: the shift moves well under
+    # a millimetre across that, and the medians are what this step costs.
+    cell = window / 100
+    cells, which = np.unique(np.round(np.asarray(at) / cell), return_inverse=True)
+    centre = cells * cell
+
+    # Widen every window that is short of photons, all of them at once, until
+    # none is short or none can grow any further.
+    half = np.full(len(centre), window / 2)
+    while True:
+        lo = np.searchsorted(times, centre - half, "left")
+        hi = np.searchsorted(times, centre + half, "right")
+        short = (hi - lo < min_count) & ((lo > 0) | (hi < len(times)))
+        if not np.any(short):
+            break
+        half[short] += window / 2
+
+    shift = {name: np.empty(len(centre)) for name in values}
+    for i, (a, b) in enumerate(zip(lo, hi)):
+        for name, v in values.items():
+            shift[name][i] = np.median(v[a:b])
+    return {name: v[which] for name, v in shift.items()}
 
 
 # ==============================================
@@ -543,46 +771,106 @@ class ATL03Reader(IceSat2Reader):
                 if laser not in f:
                     return df
                 grp = f[laser]
+                if df.empty:
+                    return df
                 try:
-                    atl24_class = grp["class_ph"][...]
-                    atl24_dt = grp["delta_time"][...]
-                    atl24_conf = grp["confidence"][...]
-                    atl24_lat = grp["lat_ph"][...]
-                    atl24_lon = grp["lon_ph"][...]
-                    atl24_z = grp["ortho_h"][...]
-                except KeyError:
+                    epoch = float(
+                        np.ravel(f["ancillary_data/atlas_sdp_gps_epoch"][...])[0]
+                    )
+                    # Read only the stretch of ATL24 that overlaps this ATL03
+                    # file, or all of it if it is not stored in time order.
+                    atl03_time = _as_atl24_time(df["delta_time"].to_numpy(), epoch)
+                    found = _read_atl24_block(
+                        grp["delta_time"],
+                        atl03_time.min() - ATL24_PULSE_TOLERANCE,
+                        atl03_time.max() + ATL24_PULSE_TOLERANCE,
+                    )
+                    if found is None:
+                        block, atl24_dt = slice(None), grp["delta_time"][...]
+                    else:
+                        block = slice(found[0], found[0] + len(found[1]))
+                        atl24_dt = found[1]
+                    atl24_class = grp["class_ph"][block]
+                    atl24_index_ph = grp["index_ph"][block]
+                    atl24_conf = grp["confidence"][block]
+                    atl24_lat = grp["lat_ph"][block]
+                    atl24_lon = grp["lon_ph"][block]
+                    atl24_z = grp["ortho_h"][block]
+                    atl24_ellipse_h = grp["ellipse_h"][block]
+                    atl24_surface_h = grp["surface_h"][block]
+                except KeyError as e:
+                    logger.warning(
+                        f"ATL24 file {os.path.basename(atl24_fn)} has no {e} in "
+                        f"{laser}; bathymetry left unclassified"
+                    )
                     return df
 
-                # Join ATL24 → ATL03 by delta_time: both products reference the
-                # same physical photon events, so timestamps are exact matches.
-                atl24_df = pd.DataFrame(
-                    {
-                        "delta_time": atl24_dt,
-                        "atl24_class": atl24_class,
-                        "atl24_conf": atl24_conf,
-                        "atl24_lat": atl24_lat,
-                        "atl24_lon": atl24_lon,
-                        "atl24_z": atl24_z,
-                    }
-                )
-
-                is_bathy = atl24_df["atl24_class"] == 40
+                is_bathy = atl24_class == 40
                 if self.min_bathy_confidence is not None:
-                    is_bathy &= atl24_df["atl24_conf"] >= self.min_bathy_confidence
-                atl24_df = atl24_df[is_bathy]
-
-                if atl24_df.empty:
+                    is_bathy &= atl24_conf >= self.min_bathy_confidence
+                if not np.any(is_bathy):
                     return df
 
-                merged = df.merge(atl24_df, on="delta_time", how="left")
-                mask = merged["atl24_class"].notna()
-                if np.any(mask):
-                    df.loc[mask, "ph_h_classed"] = merged.loc[
-                        mask, "atl24_class"
-                    ].astype(int)
-                    df.loc[mask, "bathy_confidence"] = merged.loc[mask, "atl24_conf"]
-                    df.loc[mask, "latitude"] = merged.loc[mask, "atl24_lat"]
-                    df.loc[mask, "longitude"] = merged.loc[mask, "atl24_lon"]
+                # Join ATL24 → ATL03 photon by photon. delta_time is per
+                # transmit pulse, and a pulse usually returns several photons,
+                # so it cannot pick out the seafloor photon on its own. df must
+                # still hold every heights row of this beam, in file order.
+                found = _atl24_rows_in_atl03(
+                    df["delta_time"].to_numpy(), atl24_dt, atl24_index_ph, epoch
+                )
+                if found is None:
+                    logger.warning(
+                        f"ATL24 photons do not line up with {laser} in "
+                        f"{os.path.basename(self.fn)}; bathymetry left unclassified"
+                    )
+                    return df
+                in_file, all_rows = found
+
+                # all_rows runs over the ATL24 photons flagged in_file, in order.
+                rows = all_rows[is_bathy[in_file]]
+                is_bathy &= in_file
+                if len(rows):
+                    # ATL24's positions come from the ATL03 release it was built
+                    # from. Measure how far that puts them from this file's, on
+                    # the photons ATL24 leaves un-refracted (sea surface, and
+                    # unclassified photons at or above it), and take it off, so
+                    # that bathymetry keeps ATL24's refraction correction but
+                    # sits among this file's photons like every other class.
+                    unrefracted = in_file & (
+                        (atl24_class == 41)
+                        | ((atl24_class == 0) & (atl24_surface_h - atl24_z <= 0))
+                    )
+                    ref_rows = all_rows[unrefracted[in_file]]
+                    atl03_lat = df["latitude"].to_numpy()
+                    atl03_lon = df["longitude"].to_numpy()
+                    atl03_h_ph = (
+                        df["photon_meantide"].to_numpy()
+                        - df["photon_tide_f2m"].to_numpy()
+                        + df["photon_geoid"].to_numpy()
+                        + df["photon_f2m"].to_numpy()
+                    )
+                    shift = _atl24_release_shift(
+                        atl24_dt[unrefracted],
+                        {
+                            "lat": atl24_lat[unrefracted] - atl03_lat[ref_rows],
+                            "lon": atl24_lon[unrefracted] - atl03_lon[ref_rows],
+                            "h": atl24_ellipse_h[unrefracted] - atl03_h_ph[ref_rows],
+                        },
+                        atl24_dt[is_bathy],
+                    )
+                    if shift is None:
+                        logger.warning(
+                            f"Too few un-refracted ATL24 photons in {laser} of "
+                            f"{os.path.basename(self.fn)} to tie ATL24 positions to "
+                            "this ATL03 file; bathymetry keeps ATL24's positions"
+                        )
+                        shift = {"lat": 0.0, "lon": 0.0, "h": 0.0}
+
+                    matched = df.index[rows]
+                    df.loc[matched, "ph_h_classed"] = atl24_class[is_bathy].astype(int)
+                    df.loc[matched, "bathy_confidence"] = atl24_conf[is_bathy]
+                    df.loc[matched, "latitude"] = atl24_lat[is_bathy] - shift["lat"]
+                    df.loc[matched, "longitude"] = atl24_lon[is_bathy] - shift["lon"]
 
                     # ATL24's ortho_h is a tide-free EGM2008 orthometric height —
                     # the same frame as this reader's "geoid" output (h_ortho).
@@ -590,10 +878,10 @@ class ATL03Reader(IceSat2Reader):
                     # the matched ATL03 photon's own geoid/tide terms, so bathy
                     # photons land in the same frame as every other class instead
                     # of silently staying geoid-referenced.
-                    atl24_ortho = merged.loc[mask, "atl24_z"]
-                    p_geoid_m = merged.loc[mask, "photon_geoid"]
-                    p_f2m_m = merged.loc[mask, "photon_f2m"]
-                    p_tide_f2m_m = merged.loc[mask, "photon_tide_f2m"]
+                    atl24_ortho = (atl24_z[is_bathy] - shift["h"]).astype(atl24_z.dtype)
+                    p_geoid_m = df["photon_geoid"].to_numpy()[rows]
+                    p_f2m_m = df["photon_f2m"].to_numpy()[rows]
+                    p_tide_f2m_m = df["photon_tide_f2m"].to_numpy()[rows]
 
                     if self.vertical_datum == "geoid-mean-tide":
                         converted = atl24_ortho + p_tide_f2m_m - p_f2m_m
@@ -604,9 +892,24 @@ class ATL03Reader(IceSat2Reader):
                     else:
                         converted = atl24_ortho + p_geoid_m  # ellipsoid
 
-                    df.loc[mask, "photon_height"] = converted
-        except Exception as e:
-            logger.warning(f"Failed to apply ATL24 data: {e}")
+                    df.loc[matched, "photon_height"] = converted
+        # A file that cannot be opened or read is a failure that comes from
+        # outside, and a granule is still worth reading without its bathymetry.
+        except OSError as e:
+            logger.warning(
+                f"Could not read ATL24 file {os.path.basename(atl24_fn)}: {e}; "
+                "bathymetry left unclassified"
+            )
+        # Anything else raised in here is a bug. The granule still goes through
+        # without its bathymetry, but with the traceback on record, because a
+        # granule that has no bathymetry looks the same as one where this step
+        # broke, and a one-line message let a broken join go unnoticed.
+        except Exception:
+            logger.warning(
+                f"Applying ATL24 to {laser} of {os.path.basename(self.fn)} failed; "
+                "bathymetry left unclassified",
+                exc_info=True,
+            )
         return df
 
     def classify_outliers_algo(self, df, multiplier=3.0):
