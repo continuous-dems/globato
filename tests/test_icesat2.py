@@ -418,7 +418,7 @@ def test_atl24_file_missing_a_dataset_changes_nothing(tmp_path, offline):
 
 
 def test_atl24_errors_in_the_join_itself_are_logged_with_a_traceback(
-    tmp_path, offline, caplog
+    tmp_path, offline, cap_globato
 ):
     # A frame without the columns the join needs is a caller's mistake. The
     # granule still comes through, without bathymetry, but the error and where
@@ -428,13 +428,15 @@ def test_atl24_errors_in_the_join_itself_are_logged_with_a_traceback(
     _write_atl24(atl24_fn, atl03_dt)
     before = _atl03_frame(atl03_dt).drop(columns=["photon_meantide"])
 
-    with caplog.at_level(logging.WARNING, logger="globato.streams.readers.icesat2"):
+    with cap_globato.at_level(
+        logging.WARNING, logger="globato.streams.readers.icesat2"
+    ):
         after = _reader(tmp_path).apply_atl24_classifications(
             before.copy(), str(atl24_fn), "gt1l", None, None
         )
 
     pd.testing.assert_frame_equal(after, before)
-    (record,) = [r for r in caplog.records if r.exc_info is not None]
+    (record,) = [r for r in cap_globato.records if r.exc_info is not None]
     assert record.exc_info[0] is KeyError
 
 

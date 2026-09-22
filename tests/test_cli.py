@@ -63,9 +63,9 @@ def test_recipe_build_save_only(runner):
         assert result.exit_code == 0
         assert "Globato recipe exported to" in result.output
         assert "test_dem_recipe.yaml" in result.output
-        assert os.path.exists("test_dem_recipe.yaml")
+        assert os.path.exists("test_dem/test_dem_recipe.yaml")
 
-        with open("test_dem_recipe.yaml", "r") as f:
+        with open("test_dem/test_dem_recipe.yaml", "r") as f:
             config = yaml.safe_load(f)
 
         assert config["project"]["name"] == "test_dem"

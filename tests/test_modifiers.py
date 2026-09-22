@@ -126,7 +126,7 @@ def test_buffer_and_cut_is_appended_when_nothing_uses_the_dem():
     ]
 
 
-def test_buffer_and_cut_is_not_applied_without_a_dem_producing_hook(caplog):
+def test_buffer_and_cut_is_not_applied_without_a_dem_producing_hook():
     """With nothing turning the buffered region into a DEM there is nothing to cut back,
     and a buffered region with no cut would only make the outputs oversize."""
     for hooks in (
@@ -140,12 +140,37 @@ def test_buffer_and_cut_is_not_applied_without_a_dem_producing_hook(caplog):
     ):
         config = {"region": _config()["region"], "global_hooks": hooks}
         expected = {"region": _config()["region"], "global_hooks": list(hooks)}
-        caplog.clear()
+        # caplog.clear()
 
-        with caplog.at_level("WARNING"):
+        with patch(
+            "globato.recipes.modifiers.buffer_and_cut.logger.warning"
+        ) as warning:
             assert RegionBufferModifier(pct=20).apply(config) == expected
 
-        assert "No hook in the recipe produces a DEM" in caplog.text
+        warning.assert_called_once()
+        assert "No hook in the recipe produces a DEM" in warning.call_args.args[0]
+
+
+# def test_buffer_and_cut_is_not_applied_without_a_dem_producing_hook_caplog(caplog):
+#     """With nothing turning the buffered region into a DEM there is nothing to cut back,
+#     and a buffered region with no cut would only make the outputs oversize."""
+#     for hooks in (
+#         [{"name": "multi_stack"}, {"name": "focus_sink"}, {"name": "raster_stream"}],
+#         [
+#             {"name": "raster_metadata"},
+#             {"name": "format_cog"},
+#             {"name": "copy_artifact"},
+#         ],
+#         [],
+#     ):
+#         config = {"region": _config()["region"], "global_hooks": hooks}
+#         expected = {"region": _config()["region"], "global_hooks": list(hooks)}
+#         caplog.clear()
+
+#         with caplog.at_level("WARNING"):
+#             assert RegionBufferModifier(pct=20).apply(config) == expected
+
+#         assert "No hook in the recipe produces a DEM" in caplog.text
 
 
 def test_buffer_and_cut_accepts_any_interpolation_hook_and_ms_blend():
