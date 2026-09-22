@@ -770,7 +770,11 @@ class ATL03Reader(IceSat2Reader):
                     atl24_z = grp["ortho_h"][block]
                     atl24_ellipse_h = grp["ellipse_h"][block]
                     atl24_surface_h = grp["surface_h"][block]
-                except KeyError:
+                except KeyError as e:
+                    logger.warning(
+                        f"ATL24 file {os.path.basename(atl24_fn)} has no {e} in "
+                        f"{laser}; bathymetry left unclassified"
+                    )
                     return df
 
                 is_bathy = atl24_class == 40
@@ -860,8 +864,22 @@ class ATL03Reader(IceSat2Reader):
                         converted = atl24_ortho + p_geoid_m  # ellipsoid
 
                     df.loc[matched, "photon_height"] = converted
-        except Exception as e:
-            logger.warning(f"Failed to apply ATL24 data: {e}")
+        # A file that cannot be opened or read is a failure that comes from
+        # outside, and a granule is still worth reading without its bathymetry.
+        except OSError as e:
+            logger.warning(
+                f"Could not read ATL24 file {os.path.basename(atl24_fn)}: {e}; "
+                "bathymetry left unclassified"
+            )
+        # Anything else raised in here is a bug. The granule still goes through
+        # without its bathymetry, but with the traceback on record, because a
+        # granule that has no bathymetry looks the same as one where this step
+        # broke, and a one-line warning let a broken join go unnoticed.
+        except Exception:
+            logger.exception(
+                f"Applying ATL24 to {laser} of {os.path.basename(self.fn)} failed; "
+                "bathymetry left unclassified"
+            )
         return df
 
     def classify_outliers_algo(self, df, multiplier=3.0):

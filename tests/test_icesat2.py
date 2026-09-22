@@ -1,5 +1,7 @@
 # tests/test_icesat2.py
 
+import logging
+
 import h5py
 import numpy as np
 import pandas as pd
@@ -360,6 +362,56 @@ def test_atl24_that_does_not_line_up_changes_nothing(tmp_path, offline):
     )
 
     pd.testing.assert_frame_equal(after, before)
+
+
+def test_atl24_file_that_cannot_be_read_changes_nothing(tmp_path, offline):
+    atl03_dt = _atl03_delta_time()
+    atl24_fn = tmp_path / "ATL24_20241107234251_08052501_006_01_002_01.h5"
+    atl24_fn.write_bytes(b"not an HDF5 file")
+    before = _atl03_frame(atl03_dt)
+
+    after = _reader(tmp_path).apply_atl24_classifications(
+        before.copy(), str(atl24_fn), "gt1l", None, None
+    )
+
+    pd.testing.assert_frame_equal(after, before)
+
+
+def test_atl24_file_missing_a_dataset_changes_nothing(tmp_path, offline):
+    atl03_dt = _atl03_delta_time()
+    atl24_fn = tmp_path / "ATL24_20241107234251_08052501_006_01_002_01.h5"
+    _write_atl24(atl24_fn, atl03_dt)
+    with h5py.File(atl24_fn, "a") as f:
+        del f["gt1l/confidence"]
+    before = _atl03_frame(atl03_dt)
+
+    after = _reader(tmp_path).apply_atl24_classifications(
+        before.copy(), str(atl24_fn), "gt1l", None, None
+    )
+
+    pd.testing.assert_frame_equal(after, before)
+
+
+def test_atl24_errors_in_the_join_itself_are_logged_with_a_traceback(
+    tmp_path, offline, caplog
+):
+    # A frame without the columns the join needs is a caller's mistake. The
+    # granule still comes through, without bathymetry, but the error and where
+    # it happened go on record.
+    atl03_dt = _atl03_delta_time()
+    atl24_fn = tmp_path / "ATL24_20241107234251_08052501_006_01_002_01.h5"
+    _write_atl24(atl24_fn, atl03_dt)
+    before = _atl03_frame(atl03_dt).drop(columns=["photon_meantide"])
+
+    with caplog.at_level(logging.ERROR, logger="globato.streams.readers.icesat2"):
+        after = _reader(tmp_path).apply_atl24_classifications(
+            before.copy(), str(atl24_fn), "gt1l", None, None
+        )
+
+    pd.testing.assert_frame_equal(after, before)
+    (record,) = [r for r in caplog.records if r.levelno >= logging.ERROR]
+    assert record.exc_info is not None
+    assert record.exc_info[0] is KeyError
 
 
 def _span(atl03_dt):
