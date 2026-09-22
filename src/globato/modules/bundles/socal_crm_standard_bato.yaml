@@ -26,6 +26,21 @@ modules:
           dst_srs: "EPSG:4326+3855"
           cache_dir: "%shared_cache%"
 
+  # - module: coned
+  #   args: {weight: 5.0}
+  #   hooks:
+  #     - name: filename_filter
+  #       args: {exclude: "Southern_California_Topobathy_DEM_1m_B_01.tif"}
+  #     - name: filename_filter
+  #       args: {exclude: "Southern_California_Topobathy_DEM_1m_B_02.tif"}
+  #     - name: stream_data
+  #     - name: range_z
+  #       # Trench to Peak range to remove extreme artifacts.
+  #       args: {min_z: -11000, max_z: 9000}
+  #     - name: stream_reproject
+  #       args: {dst_srs: "EPSG:4326+3855"}
+  #     - name: spatial_crop
+
   - module: dav
     args:
       survey_id: '2616'
@@ -80,3 +95,43 @@ modules:
         args:
           dst_srs: "EPSG:4326+3855"
           cache_dir: "%shared_cache%"
+
+
+  - module: usgs_ds702
+    hooks:
+      - name: unzip
+      - name: filename_filter
+        args:
+          stage: "file"
+          match: ".asc"
+      - name: set_datatype
+        args:
+          data_type: "rio"
+      - name: set-srs
+        srs: "EPSG:32611+5703"
+      - name: stream_reproject
+        args:
+          dst_srs: "EPSG:4326+3855"
+          cache_dir: "%shared_cache%"
+
+
+  # - module: usgs_of2005_1170
+  #   args:
+  #     datatype: cntr10m
+  #     weight: 0.35
+  #     uncertainty: 5.0
+  #   hooks:
+  #     - name: unzip
+  #     - name: filename_filter
+  #       args:
+  #         stage: "file"
+  #         match: ".shp"
+  #     - name: set_datatype
+  #       args:
+  #         data_type: usgs-of2005-1170-cntr10m
+  #     - name: set-srs
+  #       srs: "EPSG:32611+vdatum:mllw"
+  #     - name: stream_reproject
+  #       args:
+  #         dst_srs: "EPSG:4326+3855"
+  #         cache_dir: "%shared_cache%"

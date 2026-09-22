@@ -8,9 +8,9 @@ hooks:
           steps: 3
           resolutions: 1s/3s/9s/15s
           weights:
-            - .75
+            - 1
+            - 0.5
             - 0.25
-            - 0.1
           # algos: raster_fill
           algos: raster_fill/raster_fill/raster_fill/interp_gmt:tension=1,verbose=True
           blend_dists: 32/16/8/4

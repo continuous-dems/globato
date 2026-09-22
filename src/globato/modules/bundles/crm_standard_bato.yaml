@@ -107,7 +107,7 @@ modules:
   - module: nos_hydro
     args:
       datatype: "xyz"
-      weight: .35
+      weight: .5
     hooks:
       - name: unzip
       - name: set_datatype
@@ -120,8 +120,8 @@ modules:
         args:
           source_field: "date"
           method: "chronological"
-          seed: 2010
-          offset: .01
+          seed: 2000
+          offset: .1
           scale: 5
           cap: .5
           on_entry: true
