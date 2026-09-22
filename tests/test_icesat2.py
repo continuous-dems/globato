@@ -331,6 +331,31 @@ def test_release_shift_follows_a_drift_along_the_track():
     assert shift["h"] == pytest.approx(0.5 + 0.01 * (at - 100.0), abs=1e-3)
 
 
+def test_release_shift_widens_its_window_where_photons_are_sparse():
+    # Five reference photons at t=100 and five at t=103. No one-second window
+    # holds ten, so every estimate has to grow until it spans both groups, and
+    # each then sees the same ten photons.
+    times = np.concatenate((np.full(5, 100.0), np.full(5, 103.0)))
+    values = np.concatenate((np.full(5, 0.4), np.full(5, 0.6)))
+    at = np.array([99.0, 100.0, 101.5, 103.0, 104.0])
+
+    shift = _atl24_release_shift(times, {"h": values}, at)
+
+    assert shift["h"] == pytest.approx(np.full(5, 0.5))
+
+
+def test_release_shift_stays_local_where_photons_are_plentiful():
+    # Twenty photons per second with a step in the shift at t=105: an estimate
+    # on either side sees only its own side.
+    times = np.linspace(100.0, 110.0, 201)
+    values = np.where(times < 105.0, 0.2, 0.8)
+    at = np.array([102.0, 108.0])
+
+    shift = _atl24_release_shift(times, {"h": values}, at)
+
+    assert shift["h"] == pytest.approx([0.2, 0.8])
+
+
 def test_release_shift_needs_enough_photons():
     times = np.linspace(100.0, 100.5, 9)
 

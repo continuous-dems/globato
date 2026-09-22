@@ -237,28 +237,56 @@ def _atl24_release_shift(times, differences, at, window=1.0, min_count=10):
     a seafloor photon's difference once the shift is taken away is ATL24's
     refraction correction.
 
+    Each estimate is the median over the reference photons within ``window``
+    seconds of track centred on the photon's time. Where that holds fewer than
+    ``min_count`` photons, the window grows by half of ``window`` on each side
+    until it holds enough or takes in every reference photon there is. Growing
+    it both ways keeps the estimate centred on the photon, so the drift along
+    the track costs little: about 7 cm over a whole granule, so under a
+    centimetre for any window that stays within a minute or so of the photon.
+    The reference photons are the ones paired with this ATL03 file, so the
+    window can never reach past the file's own extent.
+
     Args:
         times: ``delta_time`` of photons that ATL24 does not refract.
         differences: ``{name: ATL24 minus ATL03}`` for those photons.
         at: ``delta_time`` values to estimate the shift at.
-        window: Seconds of track (about 7 km each) pooled into one estimate.
-        min_count: Photons a window needs before its estimate is used.
+        window: Seconds of track (about 7 km) an estimate starts from.
+        min_count: Photons an estimate needs.
 
     Returns:
-        ``{name: shift}`` interpolated to ``at``, or ``None`` if no window holds
-        enough photons to estimate from.
+        ``{name: shift}`` at each of ``at``, or ``None`` if the file holds
+        fewer than ``min_count`` reference photons in all.
     """
-    if not len(times):
+    if len(times) < min_count:
         return None
-    windows = np.floor((times - times.min()) / window)
-    grouped = pd.DataFrame({"time": times, **differences}).groupby(windows)
-    medians = grouped.median()[grouped.size() >= min_count]
-    if medians.empty:
-        return None
-    return {
-        name: np.interp(at, medians["time"].to_numpy(), medians[name].to_numpy())
-        for name in differences
-    }
+    order = np.argsort(times)
+    times = np.asarray(times)[order]
+    values = {name: np.asarray(v)[order] for name, v in differences.items()}
+
+    # Seafloor photons come in dense runs (a pulse every 1e-4 s), so estimate
+    # once per hundredth of a window and share it: the shift moves well under
+    # a millimetre across that, and the medians are what this step costs.
+    cell = window / 100
+    cells, which = np.unique(np.round(np.asarray(at) / cell), return_inverse=True)
+    centre = cells * cell
+
+    # Widen every window that is short of photons, all of them at once, until
+    # none is short or none can grow any further.
+    half = np.full(len(centre), window / 2)
+    while True:
+        lo = np.searchsorted(times, centre - half, "left")
+        hi = np.searchsorted(times, centre + half, "right")
+        short = (hi - lo < min_count) & ((lo > 0) | (hi < len(times)))
+        if not np.any(short):
+            break
+        half[short] += window / 2
+
+    shift = {name: np.empty(len(centre)) for name in values}
+    for i, (a, b) in enumerate(zip(lo, hi)):
+        for name, v in values.items():
+            shift[name][i] = np.median(v[a:b])
+    return {name: v[which] for name, v in shift.items()}
 
 
 # ==============================================
