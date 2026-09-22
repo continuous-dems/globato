@@ -14,6 +14,7 @@ from globato.hooks.metadata.metadata import RasterMetadataHook
 from globato.hooks.rasters.base import RasterCOG
 from globato.hooks.viz.geohillshade import GeoHillshade
 
+
 # Bigger than one 256 px block: a single-block file with no overviews is
 # trivially in COG order, which would hide the bug these tests are for.
 SIZE = 700
@@ -209,16 +210,17 @@ def _add_metadata(path):
     )
 
 
-def test_raster_metadata_on_a_cog_rewrites_it_and_keeps_it_a_cog(tile_dir, caplog):
+def test_raster_metadata_on_a_cog_rewrites_it_and_keeps_it_a_cog(tile_dir, cap_globato):
     """GDAL refuses to edit a COG in place; forcing it would break the layout."""
     dem = tile_dir / "name_tile.tif"
     data = _write_raster(dem)
     RasterCOG().run([(None, _entry(dem))])
 
-    with caplog.at_level("WARNING"):
+    with cap_globato.at_level("WARNING"):
         _add_metadata(dem)
 
-    assert "is a COG" in caplog.text
+    print(cap_globato.text)
+    assert "is a COG" in cap_globato.text
     _assert_is_cog(dem)
     with rasterio.open(dem) as src:
         assert src.tags()["Project"] == "CRM"
@@ -228,15 +230,15 @@ def test_raster_metadata_on_a_cog_rewrites_it_and_keeps_it_a_cog(tile_dir, caplo
     assert sorted(os.listdir(tile_dir)) == [dem.name, "tmp"]
 
 
-def test_raster_metadata_on_a_plain_geotiff_still_edits_in_place(tile_dir, caplog):
+def test_raster_metadata_on_a_plain_geotiff_still_edits_in_place(tile_dir, cap_globato):
     dem = tile_dir / "name_tile.tif"
     _write_raster(dem)
     inode = os.stat(dem).st_ino
 
-    with caplog.at_level("WARNING"):
+    with cap_globato.at_level("WARNING"):
         _add_metadata(dem)
 
-    assert "is a COG" not in caplog.text
+    assert "is a COG" not in cap_globato.text
     # Edited in place, not rewritten and moved over the original.
     assert os.stat(dem).st_ino == inode
     with rasterio.open(dem) as src:
