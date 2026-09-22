@@ -143,6 +143,24 @@ def test_atl24_rows_are_found_in_a_subsetted_atl03():
     assert found.tolist() == rows.tolist()
 
 
+def test_atl24_rows_survive_a_last_bit_change_in_delta_time():
+    # Between ATL03 releases a pulse's delta_time can differ in its last bit,
+    # which can move it to the next value ATL24 is able to store.
+    atl03_dt = _atl03_delta_time()
+    rows, atl24_dt, index_ph = _atl24_beam(atl03_dt)
+    pulse = atl03_dt == atl03_dt[9]
+    for last_bits in range(1, 20):
+        nudged = np.where(pulse, atl03_dt + last_bits * np.spacing(atl03_dt), atl03_dt)
+        if _atl24_time(nudged[9]) != _atl24_time(atl03_dt[9]):
+            break
+    else:
+        pytest.fail("could not move the pulse onto another ATL24 value")
+
+    _, found = _atl24_rows_in_atl03(nudged, atl24_dt, index_ph, EPOCH)
+
+    assert found.tolist() == rows.tolist()
+
+
 def test_atl24_rows_are_found_in_a_full_atl03_granule():
     atl03_dt = _atl03_delta_time()
     rows, atl24_dt, index_ph = _atl24_beam(atl03_dt, offset=0)

@@ -52,6 +52,13 @@ logger = logging.getLogger(__name__)
 # granule from another release can misclassify photons without raising anything.
 CROSS_RELEASE_AUX = frozenset({"ATL24"})
 
+# How far apart (seconds) ATL03 and ATL24 may put the same transmit pulse's
+# delta_time and still be taken as one pulse. ATL24 keeps about 2.4e-7 s of
+# precision, and a pulse's delta_time can differ in its last bit between two
+# ATL03 releases (3e-8 s), so a converted value can miss by up to ~5e-7 s.
+# Pulses are 1e-4 s apart, so 5e-6 s is well clear of both.
+ATL24_PULSE_TOLERANCE = 5e-6
+
 
 def _newest_first(filenames):
     """Sort granule paths so the highest release/version/revision comes first.
@@ -145,7 +152,9 @@ def _read_atl24_block(delta_time, first, last):
     return start, block
 
 
-def _atl24_rows_in_atl03(atl03_dt, atl24_dt, atl24_index_ph, epoch):
+def _atl24_rows_in_atl03(
+    atl03_dt, atl24_dt, atl24_index_ph, epoch, tolerance=ATL24_PULSE_TOLERANCE
+):
     """Find the ATL03 heights row of each ATL24 photon.
 
     ATL24's ``index_ph`` is the photon's row in the full ATL03 granule. A
@@ -155,13 +164,15 @@ def _atl24_rows_in_atl03(atl03_dt, atl24_dt, atl24_index_ph, epoch):
     has to land on a row of its own transmit pulse.
 
     Pulses are compared after putting ATL03's ``delta_time`` through the round
-    trip ATL24's was stored with (see `_as_atl24_time`).
+    trip ATL24's was stored with (see `_as_atl24_time`), and a photon belongs
+    to the nearest ATL03 pulse within ``tolerance``.
 
     Args:
         atl03_dt: ``heights/delta_time`` of one ATL03 beam, in file order.
         atl24_dt: ``delta_time`` of the same beam in ATL24.
         atl24_index_ph: ``index_ph`` of the same beam in ATL24.
         epoch: ``ancillary_data/atlas_sdp_gps_epoch``, in GPS seconds.
+        tolerance: Seconds. See `ATL24_PULSE_TOLERANCE`.
 
     Returns:
         ``(in_file, rows)``. ``in_file`` flags the ATL24 photons whose pulse is
@@ -178,10 +189,17 @@ def _atl24_rows_in_atl03(atl03_dt, atl24_dt, atl24_index_ph, epoch):
     pulses, first_row = np.unique(atl03_key, return_index=True)
     last_row = len(atl03_key) - 1 - np.unique(atl03_key[::-1], return_index=True)[1]
 
-    # Look up each ATL24 photon's pulse. ATL24 covers the whole granule, so
-    # most of its photons belong to pulses that a subsetted ATL03 does not have.
-    pulse = np.clip(np.searchsorted(pulses, atl24_dt), 0, len(pulses) - 1)
-    in_file = pulses[pulse] == atl24_dt
+    # Look up each ATL24 photon's nearest pulse. ATL24 covers the whole granule,
+    # so most of its photons belong to pulses a subsetted ATL03 does not have.
+    atl24_dt = np.asarray(atl24_dt)
+    after = np.clip(np.searchsorted(pulses, atl24_dt), 0, len(pulses) - 1)
+    before = np.maximum(after - 1, 0)
+    pulse = np.where(
+        np.abs(pulses[before] - atl24_dt) <= np.abs(pulses[after] - atl24_dt),
+        before,
+        after,
+    )
+    in_file = np.abs(pulses[pulse] - atl24_dt) <= tolerance
     if not np.any(in_file):
         return in_file, np.array([], dtype=np.int64)
 
@@ -199,7 +217,7 @@ def _atl24_rows_in_atl03(atl03_dt, atl24_dt, atl24_index_ph, epoch):
     rows = index_ph - offset
     if rows.min() < 0 or rows.max() >= len(atl03_key):
         return None
-    if np.any(atl03_key[rows] != np.asarray(atl24_dt)[in_file]):
+    if np.any(np.abs(atl03_key[rows] - atl24_dt[in_file]) > tolerance):
         return None
     if len(np.unique(rows)) != len(rows):
         return None
@@ -698,7 +716,9 @@ class ATL03Reader(IceSat2Reader):
                     # file, or all of it if it is not stored in time order.
                     atl03_time = _as_atl24_time(df["delta_time"].to_numpy(), epoch)
                     found = _read_atl24_block(
-                        grp["delta_time"], atl03_time.min(), atl03_time.max()
+                        grp["delta_time"],
+                        atl03_time.min() - ATL24_PULSE_TOLERANCE,
+                        atl03_time.max() + ATL24_PULSE_TOLERANCE,
                     )
                     if found is None:
                         block, atl24_dt = slice(None), grp["delta_time"][...]
