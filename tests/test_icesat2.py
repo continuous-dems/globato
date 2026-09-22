@@ -9,6 +9,7 @@ from fetchez.modules import earthdata
 from globato.streams.readers.icesat2 import (
     ATL03Reader,
     _as_atl24_time,
+    _atl24_release_shift,
     _atl24_rows_in_atl03,
     _read_atl24_block,
 )
@@ -98,6 +99,12 @@ EPOCH = 1198800018.0
 OFFSET = 72_472  # rows of the full granule that come before the subset
 CHUNK = 4  # photons per storage chunk in the ATL24 files written here
 SEAFLOOR_ROWS = [2, 9, 10]  # one photon of a 3-photon pulse, two of a 4-photon pulse
+GEOID = -25.0
+# Where ATL24 has every photon, relative to the ATL03 file being read, because it
+# was built from another ATL03 release: (degrees latitude, degrees longitude, metres).
+RELEASE_SHIFT = (3e-6, -7e-6, 0.02)
+# What ATL24's refraction correction adds to that for a seafloor photon.
+REFRACTION = (1e-7, 2e-7, 1.5)
 
 
 def _atl24_time(atl03_dt):
@@ -106,8 +113,8 @@ def _atl24_time(atl03_dt):
 
 
 def _atl03_delta_time():
-    """One subsetted beam: 8 pulses 1e-4 s apart returning 1-4 photons each."""
-    photons_per_pulse = [1, 3, 2, 1, 4, 1, 2, 1]
+    """One subsetted beam: 10 pulses 1e-4 s apart returning 1-4 photons each."""
+    photons_per_pulse = [1, 3, 2, 1, 4, 1, 2, 1, 2, 3]
     pulse_times = 181_635_480.123456789 + 1e-4 * np.arange(len(photons_per_pulse))
     return np.repeat(pulse_times, photons_per_pulse)
 
@@ -192,21 +199,40 @@ def test_atl24_rows_are_refused_when_the_photons_do_not_line_up():
     assert _atl24_rows_in_atl03(with_extra_photon, atl24_dt, index_ph, EPOCH) is None
 
 
-def _write_atl24(path, atl03_dt, laser="gt1l", outside=1, order=None):
-    """Write an ATL24 file in small chunks; `order` rearranges its photons."""
+def _atl03_photons(n):
+    """Latitude, longitude and ellipsoid height of the ATL03 photons: a sea surface
+    at the geoid, with the seafloor photons 6 m below it before refraction."""
+    h_ph = np.full(n, GEOID)
+    h_ph[SEAFLOOR_ROWS] -= 6.0
+    return 25.0 + 1e-5 * np.arange(n), -80.0 + 1e-6 * np.arange(n), h_ph
+
+
+def _write_atl24(path, atl03_dt, laser="gt1l", outside=1, order=None, sea_surface=True):
+    """Write an ATL24 file in small chunks; `order` rearranges its photons. Without
+    `sea_surface`, the photons that are not seafloor are unclassified ones under
+    the surface, which ATL24 refracts too."""
     rows, delta_time, index_ph = _atl24_beam(atl03_dt, outside=outside)
-    class_ph = np.full(len(delta_time), 41, dtype=np.int8)
-    class_ph[np.isin(index_ph - OFFSET, SEAFLOOR_ROWS)] = 40
-    class_ph[0] = 40  # a seafloor photon outside the ATL03 file
     n = len(delta_time)
+    atl03_row = np.clip(index_ph - OFFSET, 0, len(atl03_dt) - 1)
+    is_seafloor = np.isin(index_ph - OFFSET, SEAFLOOR_ROWS)
+    class_ph = np.full(n, 41 if sea_surface else 0, dtype=np.int8)
+    class_ph[is_seafloor] = 40
+    class_ph[0] = 40  # a seafloor photon outside the ATL03 file
+
+    lat, lon, h_ph = (v[atl03_row] for v in _atl03_photons(len(atl03_dt)))
+    lat = lat + RELEASE_SHIFT[0] + REFRACTION[0] * is_seafloor
+    lon = lon + RELEASE_SHIFT[1] + REFRACTION[1] * is_seafloor
+    ellipse_h = h_ph + RELEASE_SHIFT[2] + REFRACTION[2] * is_seafloor
     columns = {
         "delta_time": delta_time,
         "index_ph": index_ph.astype(np.int32),
         "class_ph": class_ph,
         "confidence": np.where(index_ph - OFFSET == SEAFLOOR_ROWS[0], 0.4, 0.9),
-        "lat_ph": 24.0 + 1e-6 * np.arange(n),
-        "lon_ph": -81.0 - 1e-6 * np.arange(n),
-        "ortho_h": (-5.0 - 0.1 * np.arange(n)).astype(np.float32),
+        "lat_ph": lat,
+        "lon_ph": lon,
+        "ellipse_h": ellipse_h.astype(np.float32),
+        "ortho_h": (ellipse_h - GEOID).astype(np.float32),
+        "surface_h": np.full(n, 1.0 if not sea_surface else 0.0, dtype=np.float32),
     }
     order = np.arange(n) if order is None else order
     with h5py.File(path, "w") as f:
@@ -218,13 +244,15 @@ def _write_atl24(path, atl03_dt, laser="gt1l", outside=1, order=None):
 
 def _atl03_frame(atl03_dt):
     n = len(atl03_dt)
+    lat, lon, h_ph = _atl03_photons(n)
     return pd.DataFrame(
         {
-            "latitude": np.full(n, 25.0),
-            "longitude": np.full(n, -80.0),
-            "photon_height": np.zeros(n, dtype=np.float32),
+            "latitude": lat,
+            "longitude": lon,
+            "photon_height": (h_ph - GEOID).astype(np.float32),
             "delta_time": atl03_dt,
-            "photon_geoid": np.full(n, -25.0, dtype=np.float32),
+            "photon_meantide": (h_ph - GEOID).astype(np.float32),
+            "photon_geoid": np.full(n, GEOID, dtype=np.float32),
             "photon_f2m": np.zeros(n, dtype=np.float32),
             "photon_tide_f2m": np.zeros(n, dtype=np.float32),
             "ph_h_classed": -1,
@@ -236,27 +264,75 @@ def _atl03_frame(atl03_dt):
 def test_atl24_labels_only_the_seafloor_photon_of_a_pulse(tmp_path, offline):
     atl03_dt = _atl03_delta_time()
     atl24_fn = tmp_path / "ATL24_20241107234251_08052501_006_01_002_01.h5"
-    atl24_rows = _write_atl24(atl24_fn, atl03_dt)
+    _write_atl24(atl24_fn, atl03_dt)
     reader = _reader(tmp_path)
+    before = _atl03_frame(atl03_dt)
 
     df = reader.apply_atl24_classifications(
-        _atl03_frame(atl03_dt), str(atl24_fn), "gt1l", None, None
+        before.copy(), str(atl24_fn), "gt1l", None, None
     )
 
     assert np.flatnonzero(df["ph_h_classed"] == 40).tolist() == SEAFLOOR_ROWS
-    assert (df["ph_h_classed"].drop(SEAFLOOR_ROWS) == -1).all()
-    # Each labelled photon takes the position and height of its own ATL24 photon.
-    with h5py.File(atl24_fn) as f:
-        at = [int(np.flatnonzero(atl24_rows == r)[0]) for r in SEAFLOOR_ROWS]
-        assert (
-            df.loc[SEAFLOOR_ROWS, "latitude"].tolist()
-            == f["gt1l/lat_ph"][...][at].tolist()
-        )
-        assert (
-            df.loc[SEAFLOOR_ROWS, "photon_height"].tolist()
-            == f["gt1l/ortho_h"][...][at].tolist()
-        )
-    assert (df["latitude"].drop(SEAFLOOR_ROWS) == 25.0).all()
+    others = df.index.difference(SEAFLOOR_ROWS)
+    pd.testing.assert_frame_equal(df.loc[others], before.loc[others])
+
+
+def test_atl24_bathymetry_keeps_the_refraction_but_not_the_release_shift(
+    tmp_path, offline
+):
+    # ATL24 has every photon displaced by RELEASE_SHIFT, and the seafloor photons by
+    # REFRACTION as well. Only the refraction belongs in the output.
+    atl03_dt = _atl03_delta_time()
+    atl24_fn = tmp_path / "ATL24_20241107234251_08052501_006_01_002_01.h5"
+    _write_atl24(atl24_fn, atl03_dt)
+    before = _atl03_frame(atl03_dt).loc[SEAFLOOR_ROWS]
+
+    df = _reader(tmp_path).apply_atl24_classifications(
+        _atl03_frame(atl03_dt), str(atl24_fn), "gt1l", None, None
+    )
+    after = df.loc[SEAFLOOR_ROWS]
+
+    assert after["latitude"].to_numpy() == pytest.approx(
+        before["latitude"].to_numpy() + REFRACTION[0], abs=1e-10
+    )
+    assert after["longitude"].to_numpy() == pytest.approx(
+        before["longitude"].to_numpy() + REFRACTION[1], abs=1e-10
+    )
+    assert after["photon_height"].to_numpy() == pytest.approx(
+        before["photon_height"].to_numpy() + REFRACTION[2], abs=1e-4
+    )
+
+
+def test_atl24_positions_are_kept_when_nothing_measures_the_shift(tmp_path, offline):
+    # No sea surface photons here, so nothing ATL24 left un-refracted to compare.
+    atl03_dt = _atl03_delta_time()
+    atl24_fn = tmp_path / "ATL24_20241107234251_08052501_006_01_002_01.h5"
+    _write_atl24(atl24_fn, atl03_dt, sea_surface=False)
+    before = _atl03_frame(atl03_dt).loc[SEAFLOOR_ROWS]
+
+    df = _reader(tmp_path).apply_atl24_classifications(
+        _atl03_frame(atl03_dt), str(atl24_fn), "gt1l", None, None
+    )
+
+    assert df.loc[SEAFLOOR_ROWS, "latitude"].to_numpy() == pytest.approx(
+        before["latitude"].to_numpy() + RELEASE_SHIFT[0] + REFRACTION[0], abs=1e-10
+    )
+
+
+def test_release_shift_follows_a_drift_along_the_track():
+    times = np.linspace(100.0, 110.0, 2001)
+    drift = 0.5 + 0.01 * (times - 100.0)
+    at = np.array([102.0, 105.0, 108.0])
+
+    shift = _atl24_release_shift(times, {"h": drift}, at)
+
+    assert shift["h"] == pytest.approx(0.5 + 0.01 * (at - 100.0), abs=1e-3)
+
+
+def test_release_shift_needs_enough_photons():
+    times = np.linspace(100.0, 100.5, 9)
+
+    assert _atl24_release_shift(times, {"h": np.ones(9)}, times) is None
 
 
 def test_atl24_min_bathy_confidence_is_applied(tmp_path, offline):
@@ -308,7 +384,7 @@ def test_atl24_block_covers_the_atl03_span(tmp_path):
 
 
 def test_atl24_block_is_widened_until_both_ends_pass(tmp_path):
-    # 992 photons before the 13 in the file puts the first of them on a chunk
+    # 992 photons before the ones in the file puts the first of them on a chunk
     # boundary, so the chunk it is in does not show where the range begins.
     atl03_dt = _atl03_delta_time()
     atl24_fn = tmp_path / "atl24.h5"
@@ -325,7 +401,7 @@ def test_atl24_block_is_widened_until_both_ends_pass(tmp_path):
 def test_atl24_block_is_refused_when_not_in_time_order(tmp_path):
     atl03_dt = _atl03_delta_time()
     atl24_fn = tmp_path / "atl24.h5"
-    n = 2 * 1000 + 13
+    n = 2 * 1000 + len(_atl24_beam(atl03_dt)[0])
     _write_atl24(atl24_fn, atl03_dt, outside=1000, order=np.arange(n)[::-1])
 
     with h5py.File(atl24_fn) as f:
@@ -336,7 +412,7 @@ def test_atl24_block_is_refused_when_not_in_time_order(tmp_path):
 def test_atl24_in_a_long_file_labels_the_same_photons(tmp_path, offline, in_time_order):
     atl03_dt = _atl03_delta_time()
     atl24_fn = tmp_path / "ATL24_20241107234251_08052501_006_01_002_01.h5"
-    n = 2 * 1000 + 13
+    n = 2 * 1000 + len(_atl24_beam(atl03_dt)[0])
     order = None if in_time_order else np.arange(n)[::-1]
     _write_atl24(atl24_fn, atl03_dt, outside=1000, order=order)
     reader = _reader(tmp_path)

@@ -224,6 +224,43 @@ def _atl24_rows_in_atl03(
     return in_file, rows
 
 
+def _atl24_release_shift(times, differences, at, window=1.0, min_count=10):
+    """Estimate how far ATL24's photon positions sit from this ATL03 file's.
+
+    ATL24 takes its geolocation from the ATL03 release it was built from, which
+    need not be the release being read. ATL24 V002 is built from release 006, and
+    against release 007 its photons sit 0.05 to 1.7 m away horizontally and up to
+    3 cm vertically: a rigid shift, the same for every beam of a granule,
+    different from one granule to the next, drifting by centimetres along one.
+    For a photon ATL24 does not refract, the difference between the two products
+    is that shift and nothing else, so those photons measure it. What is left of
+    a seafloor photon's difference once the shift is taken away is ATL24's
+    refraction correction.
+
+    Args:
+        times: ``delta_time`` of photons that ATL24 does not refract.
+        differences: ``{name: ATL24 minus ATL03}`` for those photons.
+        at: ``delta_time`` values to estimate the shift at.
+        window: Seconds of track (about 7 km each) pooled into one estimate.
+        min_count: Photons a window needs before its estimate is used.
+
+    Returns:
+        ``{name: shift}`` interpolated to ``at``, or ``None`` if no window holds
+        enough photons to estimate from.
+    """
+    if not len(times):
+        return None
+    windows = np.floor((times - times.min()) / window)
+    grouped = pd.DataFrame({"time": times, **differences}).groupby(windows)
+    medians = grouped.median()[grouped.size() >= min_count]
+    if medians.empty:
+        return None
+    return {
+        name: np.interp(at, medians["time"].to_numpy(), medians[name].to_numpy())
+        for name in differences
+    }
+
+
 # ==============================================
 # IceSat2Reader (generic)
 # ==============================================
@@ -731,6 +768,8 @@ class ATL03Reader(IceSat2Reader):
                     atl24_lat = grp["lat_ph"][block]
                     atl24_lon = grp["lon_ph"][block]
                     atl24_z = grp["ortho_h"][block]
+                    atl24_ellipse_h = grp["ellipse_h"][block]
+                    atl24_surface_h = grp["surface_h"][block]
                 except KeyError:
                     return df
 
@@ -753,17 +792,52 @@ class ATL03Reader(IceSat2Reader):
                         f"{os.path.basename(self.fn)}; bathymetry left unclassified"
                     )
                     return df
-                in_file, rows = found
+                in_file, all_rows = found
 
-                # rows runs over the ATL24 photons flagged in_file, in order.
-                rows = rows[is_bathy[in_file]]
+                # all_rows runs over the ATL24 photons flagged in_file, in order.
+                rows = all_rows[is_bathy[in_file]]
                 is_bathy &= in_file
                 if len(rows):
+                    # ATL24's positions come from the ATL03 release it was built
+                    # from. Measure how far that puts them from this file's, on
+                    # the photons ATL24 leaves un-refracted (sea surface, and
+                    # unclassified photons at or above it), and take it off, so
+                    # that bathymetry keeps ATL24's refraction correction but
+                    # sits among this file's photons like every other class.
+                    unrefracted = in_file & (
+                        (atl24_class == 41)
+                        | ((atl24_class == 0) & (atl24_surface_h - atl24_z <= 0))
+                    )
+                    ref_rows = all_rows[unrefracted[in_file]]
+                    atl03_lat = df["latitude"].to_numpy()
+                    atl03_lon = df["longitude"].to_numpy()
+                    atl03_h_ph = (
+                        df["photon_meantide"].to_numpy()
+                        - df["photon_tide_f2m"].to_numpy()
+                        + df["photon_geoid"].to_numpy()
+                        + df["photon_f2m"].to_numpy()
+                    )
+                    shift = _atl24_release_shift(
+                        atl24_dt[unrefracted],
+                        {
+                            "lat": atl24_lat[unrefracted] - atl03_lat[ref_rows],
+                            "lon": atl24_lon[unrefracted] - atl03_lon[ref_rows],
+                            "h": atl24_ellipse_h[unrefracted] - atl03_h_ph[ref_rows],
+                        },
+                        atl24_dt[is_bathy],
+                    )
+                    if shift is None:
+                        logger.debug(
+                            f"Too few un-refracted ATL24 photons in {laser} to tie "
+                            "ATL24 positions to this ATL03 file; using them as they are."
+                        )
+                        shift = {"lat": 0.0, "lon": 0.0, "h": 0.0}
+
                     matched = df.index[rows]
                     df.loc[matched, "ph_h_classed"] = atl24_class[is_bathy].astype(int)
                     df.loc[matched, "bathy_confidence"] = atl24_conf[is_bathy]
-                    df.loc[matched, "latitude"] = atl24_lat[is_bathy]
-                    df.loc[matched, "longitude"] = atl24_lon[is_bathy]
+                    df.loc[matched, "latitude"] = atl24_lat[is_bathy] - shift["lat"]
+                    df.loc[matched, "longitude"] = atl24_lon[is_bathy] - shift["lon"]
 
                     # ATL24's ortho_h is a tide-free EGM2008 orthometric height —
                     # the same frame as this reader's "geoid" output (h_ortho).
@@ -771,7 +845,7 @@ class ATL03Reader(IceSat2Reader):
                     # the matched ATL03 photon's own geoid/tide terms, so bathy
                     # photons land in the same frame as every other class instead
                     # of silently staying geoid-referenced.
-                    atl24_ortho = atl24_z[is_bathy]
+                    atl24_ortho = (atl24_z[is_bathy] - shift["h"]).astype(atl24_z.dtype)
                     p_geoid_m = df["photon_geoid"].to_numpy()[rows]
                     p_f2m_m = df["photon_f2m"].to_numpy()[rows]
                     p_tide_f2m_m = df["photon_tide_f2m"].to_numpy()[rows]
