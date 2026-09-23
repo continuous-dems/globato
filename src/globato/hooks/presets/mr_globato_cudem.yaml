@@ -15,8 +15,10 @@ hooks:
             - 0.1
           blend_dists: 64/32/16/8/4/2
           # blend_dists: 0
-          # algos: raster_fill/raster_fill/raster_fill/raster_fill/raster_fill/interp_gmt:tension=.95
-          algos: raster_fill/raster_fill/raster_fill/raster_fill/interp_gmt:tension=1,verbose=True
+          # previous_tier_mode: points
+          algos: raster_fill/raster_fill/raster_fill/raster_fill/raster_fill/interp_gmt:tension=.95
+          # algos: raster_fill/raster_fill/raster_fill/raster_fill/raster_fill/raster_fill
+          # interp_gmt:tension=1,verbose=True
       - name: side_stack_check
         args:
           res: .11111111s
