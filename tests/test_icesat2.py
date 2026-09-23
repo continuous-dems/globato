@@ -474,6 +474,27 @@ def test_atl24_block_is_widened_until_both_ends_pass(tmp_path):
     assert block[0] < first and block[-1] > last
 
 
+@pytest.mark.parametrize("side", ["before", "past"])
+def test_atl24_block_is_empty_when_the_atl03_span_is_off_the_file(tmp_path, side):
+    # An ATL24 beam holds only the photons over coastal water, so it can end
+    # before the stretch of the orbit a subsetted ATL03 file covers (or begin
+    # after it). The column here ends on a chunk boundary, where the chunk
+    # around a range past its end would be empty.
+    first, last = _span(_atl03_delta_time())
+    n = 5 * CHUNK
+    if side == "past":
+        delta_time, start = first - np.arange(n, 0, -1), n
+    else:
+        delta_time, start = last + np.arange(1, n + 1), 0
+
+    with h5py.File(tmp_path / "atl24.h5", "w") as f:
+        f.create_dataset("gt1l/delta_time", data=delta_time, chunks=(CHUNK,))
+        found = _read_atl24_block(f["gt1l/delta_time"], first, last)
+
+    assert found[0] == start
+    assert len(found[1]) == 0
+
+
 def test_atl24_block_is_refused_when_not_in_time_order(tmp_path):
     atl03_dt = _atl03_delta_time()
     atl24_fn = tmp_path / "atl24.h5"
