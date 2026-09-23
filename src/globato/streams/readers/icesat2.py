@@ -125,6 +125,13 @@ def _read_atl24_block(delta_time, first, last):
     if any(probed[a] > probed[b] for a, b in zip(rows, rows[1:])):
         return None
 
+    # No photon in the range: the ATL03 file lies in a stretch ATL24 has no
+    # photons for (usually past its last one). There is nothing to read, and
+    # the widening below would index an empty block when the file ends on a
+    # chunk boundary.
+    if begin == end:
+        return begin, delta_time[begin:begin]
+
     # Read whole chunks: part of a chunk costs as much to read as all of it.
     start = (begin // step) * step
     stop = min(n, -(-max(end, begin + 1) // step) * step)
