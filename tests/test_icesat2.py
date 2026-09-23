@@ -791,3 +791,65 @@ def test_prebuilt_trees_are_used_as_given(tmp_path, monkeypatch, offline):
     # Past the masks, the empty file fails to open as HDF5.
     with pytest.raises(OSError):
         list(reader.yield_chunks())
+
+
+def _offshore_frame():
+    """Four photons out at sea, one of each: a wanted land class, an unwanted
+    land class, open ocean, and noise."""
+    return pd.DataFrame(
+        {
+            "longitude": [-79.2, -79.2, -79.2, -79.2],
+            "latitude": [25.5, 25.5, 25.5, 25.5],
+            "photon_height": np.array([1.0, 1.0, 1.0, 1.0], dtype=np.float32),
+            "ph_h_classed": [1, 2, 44, 0],
+        }
+    )
+
+
+LAND = STRtree([shapely.box(-79.9, 25.1, -79.5, 25.9)])
+
+
+def test_landmask_tests_only_photons_the_reader_could_yield(tmp_path):
+    out = _reader(tmp_path, classes="1/40").classify_offshore_by_landmask(
+        _offshore_frame(), LAND
+    )
+    # The class-2 photon would be dropped as 2 or as 41: not tested. The
+    # noise photon is: as 41 it counts as signal in the steps that follow.
+    assert out["ph_h_classed"].tolist() == [41, 2, 44, 41]
+
+
+@pytest.mark.parametrize("classes", [None, "1/44", "1/7", "1/42"])
+def test_landmask_tests_every_photon_when_a_water_class_is_wanted(tmp_path, classes):
+    out = _reader(tmp_path, classes=classes).classify_offshore_by_landmask(
+        _offshore_frame(), LAND
+    )
+    assert out["ph_h_classed"].tolist() == [41, 41, 44, 41]
+
+
+def test_landmask_tests_every_photon_when_dbscan_starts_from_classes(tmp_path):
+    reader = _reader(tmp_path, classes="1/40", use_dbscan=True)
+    if not icesat2.HAS_SKLEARN:
+        pytest.skip("scikit-learn not installed")
+    out = reader.classify_offshore_by_landmask(_offshore_frame(), LAND)
+    assert out["ph_h_classed"].tolist() == [41, 41, 44, 41]
+
+
+def test_building_mask_tests_only_photons_the_reader_could_yield(tmp_path):
+    df = pd.DataFrame(
+        {
+            "longitude": [-79.7, -79.7, -79.7],
+            "latitude": [25.5, 25.5, 25.5],
+            "ph_h_classed": [1, 2, 44],
+        }
+    )
+    reader = _reader(tmp_path, classes="1/40")
+    out = reader.classify_by_mask_tree(
+        df.copy(), LAND, 7, except_classes=[40, 41, 42, 44]
+    )
+    assert out["ph_h_classed"].tolist() == [7, 2, 44]
+
+    reader = _reader(tmp_path, classes="1/7")
+    out = reader.classify_by_mask_tree(
+        df.copy(), LAND, 7, except_classes=[40, 41, 42, 44]
+    )
+    assert out["ph_h_classed"].tolist() == [7, 7, 44]

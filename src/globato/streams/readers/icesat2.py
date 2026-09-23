@@ -1509,6 +1509,61 @@ class ATL03Reader(IceSat2Reader):
         # multiply the tree's memory.
         return STRtree(geoms)
 
+    def _photons_worth_testing(self, classed, may_become):
+        """Rows a mask step has to test, or None for all of them.
+
+        A mask step leaves a photon's class alone or turns it into one of
+        ``may_become`` (directly, or through the per-photon steps after it).
+        When the reader is filtering by class and none of those is wanted, a
+        photon whose class is not wanted either is dropped whichever way the
+        test goes, so it is not tested. The steps after the landmask decide
+        each photon from its own height, reflectance, position and signal
+        flag (a nonzero class), and from segment statistics of the same,
+        never from which nonzero class the landmask assigns, except the
+        DBSCAN and known-bathymetry passes, which start from classes; with
+        either of those on, every photon is tested. The caller adds back any
+        photons whose signal flag the step could change.
+        """
+        if not self.classes or any(c in self.classes for c in may_become):
+            return None
+        if self.known_bathymetry or (self.use_dbscan and HAS_SKLEARN):
+            return None
+        return np.isin(classed, self.classes)
+
+    def classify_offshore_by_landmask(self, df, land_tree):
+        """Turn land classes that sit out in the water into open ocean (44), or
+        nearshore surface (41) when within 5 m of the geoid."""
+
+        classed = df["ph_h_classed"].to_numpy()
+        # Only land classifications can be rogue; photons in valid water
+        # classes (40-Bathy, 42-Inland Lakes, etc.) are left as they are, so
+        # they are not tested. Nor are photons the reader will drop whatever
+        # the test says (see _photons_worth_testing): a rogue photon ends up
+        # as 44 or 41, or as 42 or 7 in a later step. Noise photons (class 0)
+        # are always tested: the steps after this one take a photon's signal
+        # flag from its class being nonzero, so turning a noise photon into
+        # open ocean changes the segment statistics they build.
+        test = ~np.isin(classed, [40, 41, 42, 44])
+        worth = self._photons_worth_testing(classed, (44, 41, 42, 7))
+        if worth is not None:
+            test &= worth | (classed == 0)
+        rogue_offshore_land = np.zeros(len(df), dtype=bool)
+        rogue_offshore_land[test] = ~_points_in_tree(
+            land_tree,
+            df["longitude"].to_numpy()[test],
+            df["latitude"].to_numpy()[test],
+        )
+
+        # Wipe them out and default them to open ocean
+        df.loc[rogue_offshore_land, "ph_h_classed"] = 44
+
+        # Set near-surface offshore returns to serve as nearshore/coastline
+        is_near_surface = rogue_offshore_land & (
+            np.abs(df["photon_height"].to_numpy()) <= 5.0
+        )
+        df.loc[is_near_surface, "ph_h_classed"] = 41
+        return df
+
     def classify_by_mask_tree(self, dataset, tree, classification, except_classes=[]):
         """Uses pyogrio and Shapely STRtree for point-in-polygon classification."""
 
@@ -1526,14 +1581,20 @@ class ATL03Reader(IceSat2Reader):
                 if "y" in dataset.columns
                 else dataset["latitude"].values
             )
-            inside = _points_in_tree(tree, x_vals, y_vals)
+            classed = dataset["ph_h_classed"].to_numpy()
+            # Photons the step could not change are not tested.
+            test = ~np.isin(classed, except_classes)
+            worth = self._photons_worth_testing(classed, (classification,))
+            if worth is not None:
+                test &= worth
+            inside = np.zeros(len(dataset), dtype=bool)
+            inside[test] = _points_in_tree(tree, x_vals[test], y_vals[test])
 
             if np.any(inside):
-                mask = inside & ~dataset["ph_h_classed"].isin(except_classes).to_numpy()
-                dataset.loc[mask, "ph_h_classed"] = classification
+                dataset.loc[inside, "ph_h_classed"] = classification
 
                 logger.debug(
-                    f"External mask classified {np.count_nonzero(mask)} photons."
+                    f"External mask classified {np.count_nonzero(inside)} photons."
                 )
             else:
                 logger.debug("no photons classified by external mask")
@@ -1693,22 +1754,7 @@ class ATL03Reader(IceSat2Reader):
             logger.debug(
                 "Enforcing absolute landmask to eliminate rogue offshore land classes"
             )
-            is_offshore = ~_points_in_tree(
-                land_tree, df["longitude"].values, df["latitude"].values
-            )
-
-            # Identify land classifications sitting out in the water
-            # (Excluding valid water columns like 40-Bathy, 42-Inland Lakes, etc.)
-            rogue_offshore_land = is_offshore & (
-                ~df["ph_h_classed"].isin([40, 41, 42, 44]).to_numpy()
-            )
-
-            # Wipe them out and default them to open ocean
-            df.loc[rogue_offshore_land, "ph_h_classed"] = 44
-
-            # Set near-surface offshore returns to serve as nearshore/coastline
-            is_near_surface = rogue_offshore_land & (df["photon_height"].abs() <= 5.0)
-            df.loc[is_near_surface, "ph_h_classed"] = 41
+            df = self.classify_offshore_by_landmask(df, land_tree)
 
         logger.debug("Apply Near-Shore Classifications")
         df = self.classify_nearshore_roughness(df)
