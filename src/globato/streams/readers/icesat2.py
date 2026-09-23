@@ -15,6 +15,7 @@ import os
 import glob
 import traceback
 import numpy as np
+from numpy.lib.stride_tricks import sliding_window_view
 import h5py as h5
 import pandas as pd
 import logging
@@ -80,29 +81,31 @@ def _as_atl24_time(atl03_dt, epoch):
     return ((np.asarray(atl03_dt) + epoch) * 1e9) / 1e9 - epoch
 
 
-def _read_atl24_block(delta_time, first, last):
-    """Read only the part of an ATL24 ``delta_time`` column that spans a time range.
+def _read_sorted_block(column, first, last):
+    """Read only the part of an ascending h5 column that spans a range of values.
 
-    ATL24 covers the whole granule, and a spatially subsetted ATL03 file
-    overlaps about 1% of it, so reading every column in full is most of the cost
-    of applying ATL24. The photons are stored in time order, which lets the
-    overlap be found by bisection and read as one block.
+    ATL08 and ATL24 cover the whole granule, and a spatially subsetted ATL03
+    file overlaps a small part of it, so reading every column in full is most
+    of the cost of applying them. Their photons are stored in order (ATL24 by
+    ``delta_time``, ATL08 by ``ph_segment_id``), which lets the overlap be
+    found by bisection and read as one block.
 
     Args:
-        delta_time: The beam's ``delta_time`` h5py dataset (not yet read).
-        first: Earliest time wanted, as ATL24 stores it (see `_as_atl24_time`).
-        last: Latest time wanted.
+        column: The beam's h5py dataset (not yet read).
+        first: Smallest value wanted, in the column's units (for ATL24, see
+            `_as_atl24_time`).
+        last: Largest value wanted.
 
     Returns:
-        ``(start, block)``: the row the block starts at and its ``delta_time``
-        values. The block is made of whole storage chunks, so it usually runs a
-        little past the range on both sides. ``None`` if the column turns out
-        not to be in time order, in which case it has to be read in full.
+        ``(start, block)``: the row the block starts at and its values. The
+        block is made of whole storage chunks, so it usually runs a little past
+        the range on both sides. ``None`` if the column turns out not to be in
+        ascending order, in which case it has to be read in full.
     """
-    n = len(delta_time)
+    n = len(column)
     if n == 0:
-        return 0, delta_time[0:0]
-    step = delta_time.chunks[0] if delta_time.chunks else 10_000
+        return 0, column[0:0]
+    step = column.chunks[0] if column.chunks else 10_000
 
     # Bisect on the file itself, a value at a time, remembering what was read.
     probed = {}
@@ -112,23 +115,30 @@ def _read_atl24_block(delta_time, first, last):
         while lo < hi:
             mid = (lo + hi) // 2
             if mid not in probed:
-                probed[mid] = float(delta_time[mid])
+                probed[mid] = float(column[mid])
             lo, hi = (lo, mid) if is_past(probed[mid]) else (mid + 1, hi)
         return lo
 
     begin = first_row_where(lambda t: t >= first)
     end = first_row_where(lambda t: t > last)
 
-    # Bisection is only right if the column is in time order. The values it
-    # read are scattered over the whole file, so they make a cheap spot check.
+    # Bisection is only right if the column is in ascending order. The values
+    # it read are scattered over the whole file, so they make a cheap spot check.
     rows = sorted(probed)
     if any(probed[a] > probed[b] for a, b in zip(rows, rows[1:])):
         return None
 
+    # No photon in the range: the ATL03 file lies in a stretch the file has no
+    # photons for (usually past its last one). There is nothing to read, and
+    # the widening below would index an empty block when the file ends on a
+    # chunk boundary.
+    if begin == end:
+        return begin, column[begin:begin]
+
     # Read whole chunks: part of a chunk costs as much to read as all of it.
     start = (begin // step) * step
     stop = min(n, -(-max(end, begin + 1) // step) * step)
-    block = delta_time[start:stop]
+    block = column[start:stop]
 
     # The block holds every photon of the range once it begins before the range
     # and ends after it (or reaches an end of the file). Widen it a chunk at a
@@ -140,11 +150,11 @@ def _read_atl24_block(delta_time, first, last):
             break
         if short_before:
             wider = max(0, start - step)
-            block = np.concatenate((delta_time[wider:start], block))
+            block = np.concatenate((column[wider:start], block))
             start = wider
         if short_after:
             wider = min(n, stop + step)
-            block = np.concatenate((block, delta_time[stop:wider]))
+            block = np.concatenate((block, column[stop:wider]))
             stop = wider
 
     if np.any(np.diff(block) < 0):
@@ -287,6 +297,148 @@ def _atl24_release_shift(times, differences, at, window=1.0, min_count=10):
         for name, v in values.items():
             shift[name][i] = np.median(v[a:b])
     return {name: v[which] for name, v in shift.items()}
+
+
+# ==============================================
+# External masks
+# ==============================================
+# Mask trees already built in this process, keyed by everything that went into
+# them. A run over one region reads granule after granule, each through a reader
+# of its own, and building a tree means parsing every building footprint in the
+# region (gigabytes of GeoJSON for a city), so each tree is built once per region.
+# A city's tree is on the order of a gigabyte, so only the most recent few regions
+# are kept: enough for the readers of one run, small enough for a laptop.
+_MASK_TREE_CACHE = {}
+_MASK_TREE_CACHE_SIZE = 4
+
+
+def _cached_mask_tree(key, build):
+    """The tree for ``key``, built with ``build()`` the first time it is asked for."""
+    if key not in _MASK_TREE_CACHE:
+        tree = build()
+        while len(_MASK_TREE_CACHE) >= _MASK_TREE_CACHE_SIZE:
+            _MASK_TREE_CACHE.pop(next(iter(_MASK_TREE_CACHE)))
+        _MASK_TREE_CACHE[key] = tree
+    return _MASK_TREE_CACHE[key]
+
+
+def _read_mask_geometries(path, region_geom):
+    """The geometries of a vector file that intersect ``region_geom``.
+
+    Only the geometry column is parsed, GDAL drops features outside the region's
+    box while reading, and the exact test runs over all of them at once rather
+    than one Python call per feature.
+    """
+    _, _, geometry_wkb, _ = read(
+        path, columns=[], read_geometry=True, bbox=region_geom.bounds
+    )
+    geoms = shapely.from_wkb(geometry_wkb)
+    return geoms[shapely.intersects(geoms, region_geom)]
+
+
+def _points_in_tree(tree, x, y):
+    """Flag the points (x, y) that fall inside any geometry of ``tree``.
+
+    ``STRtree.query(points, predicate="intersects")`` runs the predicate with
+    the points prepared and the tree's geometries not, so a coastline polygon of
+    tens of thousands of vertices is walked in full for every photon, which
+    takes minutes over a granule. Here the tree supplies bounding-box candidates
+    only, and the exact test runs once per candidate polygon over all of its
+    points with ``intersects_xy``, which uses the polygon's prepared index when
+    it has one. Same answers, hundreds of times faster on big polygons.
+    """
+    x = np.asarray(x, dtype=float)
+    y = np.asarray(y, dtype=float)
+    hit = np.zeros(len(x), dtype=bool)
+    if tree is None or len(x) == 0:
+        return hit
+    points, polys = tree.query(shapely.points(x, y))
+    if len(polys) == 0:
+        return hit
+    order = np.argsort(polys, kind="stable")
+    points, polys = points[order], polys[order]
+    starts = np.flatnonzero(np.r_[True, polys[1:] != polys[:-1]])
+    for a, b in zip(starts, np.r_[starts[1:], len(polys)]):
+        sel = points[a:b]
+        hit[sel] |= shapely.intersects_xy(tree.geometries[polys[a]], x[sel], y[sel])
+    return hit
+
+
+def _per_photon(per_segment, seg_ph_cnt, n_photons):
+    """Spread one value per geolocation segment over that segment's photons.
+
+    The photons of a beam are stored segment after segment, ``seg_ph_cnt[i]`` of
+    them for segment ``i``, so this is a repeat cut to the photons the file has.
+    """
+    return np.repeat(per_segment, seg_ph_cnt)[:n_photons]
+
+
+def _rolling_stats(values, window, min_periods, quantiles=(), extremes=False):
+    """Centred rolling-window quantiles (and extremes) of a 1-D array.
+
+    The same numbers as pandas' ``Series.rolling(window, center=True,
+    min_periods).quantile(q)`` (and ``.max()``, ``.min()``), window bounds,
+    edge handling and interpolation included, but from one sort of each
+    window instead of one pass over the array per statistic, which comes out
+    two to three times faster on a beam of photons. pandas is used as is when
+    the array holds NaN, whose skipping is not worth reproducing.
+
+    Returns:
+        A list of float64 arrays: one per quantile, in order, then the window
+        maximum and minimum if ``extremes``.
+    """
+    x = np.asarray(values)
+    if not np.issubdtype(x.dtype, np.floating):
+        x = x.astype(np.float64)
+    n = len(x)
+    n_out = len(quantiles) + (2 if extremes else 0)
+    if n and np.isnan(x).any():
+        roll = pd.Series(x).rolling(window=window, center=True, min_periods=min_periods)
+        out = [roll.quantile(q).to_numpy() for q in quantiles]
+        if extremes:
+            out += [roll.max().to_numpy(), roll.min().to_numpy()]
+        return out
+    out = [np.full(n, np.nan) for _ in range(n_out)]
+
+    def fill(rows, sorted_windows):
+        """Statistics of whole windows, sorted along their last axis."""
+        nobs = sorted_windows.shape[-1]
+        for k, q in enumerate(quantiles):
+            at = q * (nobs - 1)
+            low = int(at)
+            if at == low:
+                out[k][rows] = sorted_windows[..., low]
+            else:
+                lower = sorted_windows[..., low].astype(np.float64)
+                upper = sorted_windows[..., low + 1].astype(np.float64)
+                out[k][rows] = lower + (upper - lower) * (at - low)
+        if extremes:
+            out[len(quantiles)][rows] = sorted_windows[..., -1]
+            out[len(quantiles) + 1][rows] = sorted_windows[..., 0]
+
+    # pandas centres the window for row i on [i - before, i - before + window).
+    before = window // 2
+    first_full, last_full = before, n - (window - before)
+    if last_full >= first_full:
+        windows = sliding_window_view(x, window)  # row j is x[j : j + window]
+        chunk = 1 << 14
+        for a in range(0, last_full - first_full + 1, chunk):
+            b = min(a + chunk, last_full - first_full + 1)
+            fill(slice(first_full + a, first_full + b), np.sort(windows[a:b], axis=1))
+    for i in [i for i in range(n) if i < first_full or i > last_full]:
+        window_i = np.sort(x[max(0, i - before) : min(n, i - before + window)])
+        if len(window_i) >= min_periods:
+            fill(i, window_i)
+    return out
+
+
+def _photon_index_within_segment(seg_ph_cnt, n_photons):
+    """Each photon's ordinal within its segment, counting from 1."""
+    seg_starts = np.concatenate(([0], np.cumsum(seg_ph_cnt)[:-1]))
+    total = int(np.sum(seg_ph_cnt))
+    return np.arange(1, total + 1)[:n_photons] - _per_photon(
+        seg_starts, seg_ph_cnt, n_photons
+    )
 
 
 # ==============================================
@@ -467,10 +619,18 @@ class ATL03Reader(IceSat2Reader):
         dbscan_eps=1.5,
         dbscan_min_samples=10,
         atl_version=None,
+        bldg_tree=None,
+        land_tree=None,
         **kwargs,
     ):
 
         super().__init__(path, **kwargs)
+
+        # Mask trees a caller has already built (see _get_bldg_tree and
+        # _get_land_tree); with use_external_masks, any left as None is looked
+        # up or built when the file is read.
+        self.bldg_tree = bldg_tree
+        self.land_tree = land_tree
 
         # The ATL03 release this reader is allowed to process (e.g. "007").
         # None accepts whatever release the file happens to be.
@@ -686,7 +846,9 @@ class ATL03Reader(IceSat2Reader):
                 df["reflectance"] = np.nan
                 return df
 
-            segment_counts = df.loc[signal_mask].groupby("ph_segment_id").size()
+            segment_counts = (
+                df.loc[signal_mask, ["ph_segment_id"]].groupby("ph_segment_id").size()
+            )
             if min_photons > 0:
                 segment_counts = segment_counts.where(
                     segment_counts >= min_photons, np.nan
@@ -700,26 +862,51 @@ class ATL03Reader(IceSat2Reader):
             logger.warning(f"Pseudo-reflectance calculation failed: {e}")
         return df
 
-    def apply_atl08_classifications(self, df, atl08_fn, laser, segment_index_dict):
+    def apply_atl08_classifications(self, df, atl08_fn, laser, seg_id, seg_starts):
+        """Copy ATL08's photon classes onto the ATL03 photons of one beam.
+
+        ATL08 names a photon by its geolocation segment and its ordinal within
+        it; the photon's row in ``df`` is the segment's first row (``seg_starts``,
+        aligned with ``seg_id``) plus that ordinal.
+        """
         try:
             with h5.File(atl08_fn, "r") as f:
                 if laser not in f:
                     return df
                 sig = f[f"/{laser}/signal_photons"]
-                atl08_flag = sig["classed_pc_flag"][...]
-                atl08_seg = sig["ph_segment_id"][...]
-                atl08_idx = sig["classed_pc_indx"][...]
+                ph_seg = df["ph_segment_id"].to_numpy()
+                if len(ph_seg) == 0:
+                    return df
+                # The segments of this file's photons: one entry per run of
+                # equal ids is enough for a membership test, and costs no hashing.
+                relevant_segments = ph_seg[np.r_[True, ph_seg[1:] != ph_seg[:-1]]]
 
-                relevant_segments = df["ph_segment_id"].unique()
+                # ATL08 covers the whole granule, in segment order, so only
+                # the stretch this file's segments span is read.
+                found = _read_sorted_block(
+                    sig["ph_segment_id"],
+                    relevant_segments.min(),
+                    relevant_segments.max(),
+                )
+                if found is None:
+                    block, atl08_seg = slice(None), sig["ph_segment_id"][...]
+                else:
+                    block = slice(found[0], found[0] + len(found[1]))
+                    atl08_seg = found[1]
                 mask = np.isin(atl08_seg, relevant_segments)
                 if not np.any(mask):
                     return df
+                atl08_flag = sig["classed_pc_flag"][block]
+                atl08_idx = sig["classed_pc_indx"][block]
 
-                seg_starts = np.array(
-                    [segment_index_dict.get(s, -1) for s in atl08_seg[mask]]
-                )
-                valid_seg_mask = seg_starts != -1
-                atl03_indices = seg_starts[valid_seg_mask] + (
+                # Look each ATL08 segment up in seg_id by bisection.
+                wanted = atl08_seg[mask]
+                order = np.argsort(seg_id, kind="stable")
+                at = order[
+                    np.clip(np.searchsorted(seg_id[order], wanted), 0, len(seg_id) - 1)
+                ]
+                valid_seg_mask = seg_id[at] == wanted
+                atl03_indices = seg_starts[at[valid_seg_mask]] + (
                     atl08_idx[mask][valid_seg_mask] - 1
                 )
 
@@ -780,7 +967,7 @@ class ATL03Reader(IceSat2Reader):
                     # Read only the stretch of ATL24 that overlaps this ATL03
                     # file, or all of it if it is not stored in time order.
                     atl03_time = _as_atl24_time(df["delta_time"].to_numpy(), epoch)
-                    found = _read_atl24_block(
+                    found = _read_sorted_block(
                         grp["delta_time"],
                         atl03_time.min() - ATL24_PULSE_TOLERANCE,
                         atl03_time.max() + ATL24_PULSE_TOLERANCE,
@@ -917,12 +1104,14 @@ class ATL03Reader(IceSat2Reader):
             candidate_mask = (df["confidence"] >= 3) & (df["ph_h_classed"] != 0)
             if not np.any(candidate_mask):
                 return df
-            subset = df[candidate_mask]
-            grouped = subset.groupby("ph_segment_id")["photon_height"]
-            q1 = grouped.quantile(0.25)
-            q3 = grouped.quantile(0.75)
-            mapped_q1 = subset["ph_segment_id"].map(q1)
-            mapped_q3 = subset["ph_segment_id"].map(q3)
+            subset = df.loc[candidate_mask, ["ph_segment_id", "photon_height"]]
+            quartiles = (
+                subset.groupby("ph_segment_id")["photon_height"]
+                .quantile([0.25, 0.75])
+                .unstack()
+            )
+            mapped_q1 = subset["ph_segment_id"].map(quartiles[0.25])
+            mapped_q3 = subset["ph_segment_id"].map(quartiles[0.75])
             iqr = mapped_q3 - mapped_q1
             lower_bound = mapped_q1 - (multiplier * iqr)
             upper_bound = mapped_q3 + (multiplier * iqr)
@@ -1018,87 +1207,90 @@ class ATL03Reader(IceSat2Reader):
         dark_veto_threshold=0.25,
         max_building_length=150,
     ):
+        # Works on arrays, by row position: the frame's index plays no part.
         try:
             logger.debug("Attempting to discover building photons...")
-            signal_mask = (df["confidence"] >= 3) & (df["ph_h_classed"] != 0)
-            if not np.any(signal_mask):
+            height = df["photon_height"].to_numpy()
+            classed = df["ph_h_classed"].to_numpy()
+            is_signal = (df["confidence"].to_numpy() >= 3) & (classed != 0)
+            if not np.any(is_signal):
                 return df
-            _signal_df = df[signal_mask]
 
-            ground_proxy = (
-                df["photon_height"]
-                .rolling(
-                    window=ground_window, center=True, min_periods=ground_window // 3
-                )
-                .quantile(0.05)
+            # A running 5th percentile of every photon's height, noise
+            # included, stands in for the ground.
+            (ground_proxy,) = _rolling_stats(
+                height, ground_window, ground_window // 3, quantiles=(0.05,)
             )
-            ground_proxy = ground_proxy.bfill().ffill()
-            hag = df["photon_height"] - ground_proxy
+            if np.isnan(ground_proxy).any():
+                ground_proxy = pd.Series(ground_proxy).bfill().ffill().to_numpy()
+            hag = height.astype(np.float64) - ground_proxy
 
-            is_elevated = (
-                (hag >= min_height)
-                & (df["confidence"] >= 3)
-                & (df["ph_h_classed"] != 0)
-            )
+            is_elevated = (hag >= min_height) & is_signal
             if not np.any(is_elevated):
                 return df
 
-            elevated_df = df[is_elevated].copy()
-            roller = elevated_df["photon_height"].rolling(
-                window=roughness_window, center=True, min_periods=5
+            elevated = np.flatnonzero(is_elevated)
+            elevated_height = height[elevated]
+            # The standard deviation stays with pandas: its running update
+            # does not round the way a direct one does.
+            local_roughness = (
+                pd.Series(elevated_height)
+                .rolling(window=roughness_window, center=True, min_periods=5)
+                .std()
+                .to_numpy()
             )
-            elevated_df["local_roughness"] = roller.std()
-            elevated_df["local_range"] = roller.max() - roller.min()
-            elevated_df["local_thickness"] = roller.quantile(0.90) - roller.quantile(
-                0.10
+            high, low, top, bottom = _rolling_stats(
+                elevated_height,
+                roughness_window,
+                5,
+                quantiles=(0.90, 0.10),
+                extremes=True,
             )
+            local_range = top - bottom
+            local_thickness = high - low
 
             mask_geo = (
-                (elevated_df["local_roughness"] <= max_roughness)
-                & (elevated_df["local_range"] <= max_range)
-                & (elevated_df["local_thickness"] <= max_thickness)
+                (local_roughness <= max_roughness)
+                & (local_range <= max_range)
+                & (local_thickness <= max_thickness)
             )
+            reflectance = None
             if "reflectance" in df.columns:
-                is_too_dark = elevated_df["reflectance"] < dark_veto_threshold
+                reflectance = df["reflectance"].to_numpy()[elevated]
+                is_too_dark = reflectance < dark_veto_threshold
                 mask_geo = mask_geo & (~is_too_dark)
 
-            mask_rad = np.zeros(len(elevated_df), dtype=bool)
-            if "reflectance" in df.columns and elevated_df["reflectance"].notna().any():
+            mask_rad = np.zeros(len(elevated), dtype=bool)
+            if reflectance is not None and not np.isnan(reflectance).all():
                 mask_rad = (
-                    (elevated_df["local_roughness"] <= 1.5)
-                    & (elevated_df["reflectance"] >= min_reflectance)
-                    & (elevated_df["local_range"] <= 3.0)
-                    & (elevated_df["local_thickness"] <= 1.5)
+                    (local_roughness <= 1.5)
+                    & (reflectance >= min_reflectance)
+                    & (local_range <= 3.0)
+                    & (local_thickness <= 1.5)
                 )
 
-            is_building = mask_geo | mask_rad
-            building_candidates = elevated_df[is_building].copy()
-            if len(building_candidates) == 0:
+            candidates = elevated[mask_geo | mask_rad]
+            if len(candidates) == 0:
                 return df
 
-            idx_series = building_candidates.index.to_series()
-            gap_check = idx_series.diff() > 20
-            group_ids = gap_check.cumsum()
+            # Candidates more than 20 rows apart belong to different groups.
+            breaks = np.flatnonzero(np.diff(candidates) > 20) + 1
+            starts = np.r_[0, breaks]
+            ends = np.r_[breaks, len(candidates)]
             max_photon_span = max_building_length / 0.7
-            groups = idx_series.groupby(group_ids)
-            group_spans = groups.max() - groups.min()
+            group_spans = candidates[ends - 1] - candidates[starts]
 
-            full_diffs = df["photon_height"].diff().abs()
-            is_wall_jump = full_diffs > min_height
-            candidate_has_wall = is_wall_jump.loc[building_candidates.index]
-            group_has_wall = candidate_has_wall.groupby(group_ids).any()
+            is_wall_jump = np.r_[False, np.abs(np.diff(height)) > min_height]
+            group_has_wall = np.logical_or.reduceat(is_wall_jump[candidates], starts)
 
-            valid_group_ids = group_spans.index[
-                (group_spans <= max_photon_span) & (group_has_wall)
-            ]
-            final_mask = group_ids.isin(valid_group_ids)
-            final_indices = building_candidates.index[final_mask]
+            valid_group = (group_spans <= max_photon_span) & group_has_wall
+            final_rows = candidates[np.repeat(valid_group, ends - starts)]
 
-            if len(final_indices) > 0:
+            if len(final_rows) > 0:
                 protected_classes = [40, 41, 42, 44]
-                mask = df.index.isin(final_indices) & (
-                    ~df["ph_h_classed"].isin(protected_classes)
-                )
+                mask = np.zeros(len(df), dtype=bool)
+                mask[final_rows] = True
+                mask &= ~np.isin(classed, protected_classes)
                 df.loc[mask, "ph_h_classed"] = 7
                 logger.debug(
                     f"Classified {np.count_nonzero(mask)} photons as Buildings"
@@ -1121,11 +1313,11 @@ class ATL03Reader(IceSat2Reader):
             signal_mask = (df["confidence"] >= 3) & (df["ph_h_classed"] != 0)
             if not np.any(signal_mask):
                 return df
-            signal_df = df[signal_mask]
 
             aggs = {"photon_height": ["median", "std"]}
             if use_reflectance and "reflectance" in df.columns:
                 aggs["reflectance"] = "median"
+            signal_df = df.loc[signal_mask, ["ph_segment_id", *aggs]]
             grouped = signal_df.groupby("ph_segment_id")
             seg_stats = grouped.agg(aggs)
             seg_stats.columns = [
@@ -1176,7 +1368,9 @@ class ATL03Reader(IceSat2Reader):
             signal_mask = (df["confidence"] >= 3) & (df["ph_h_classed"] != 0)
             if not np.any(signal_mask):
                 return df
-            signal_df = df[signal_mask].copy()
+            signal_df = df.loc[
+                signal_mask, ["ph_segment_id", "photon_height", "reflectance"]
+            ]
 
             grouped = signal_df.groupby("ph_segment_id")
             seg_stats = grouped.agg(
@@ -1294,12 +1488,22 @@ class ATL03Reader(IceSat2Reader):
 
         return df
 
+    def _mask_cache_key(self, source):
+        cache_dir = os.path.abspath(self.cache_dir) if self.cache_dir else None
+        region = tuple(round(float(v), 6) for v in self.region.to_list())
+        return (source, region, cache_dir)
+
     def _get_land_tree(self):
-        """Fetches the OSM coastline landmask for the region and builds an STRtree."""
+        """The OSM coastline landmask of the region as an STRtree, built once per process."""
 
         if not self.region:
             return None
 
+        return _cached_mask_tree(
+            self._mask_cache_key("osm_landmask"), self._build_land_tree
+        )
+
+    def _build_land_tree(self):
         region_geom = self.region.to_shapely()
         geoms = []
 
@@ -1316,10 +1520,12 @@ class ATL03Reader(IceSat2Reader):
             for res in land_results:
                 path = res if isinstance(res, str) else res.get("dst_fn")
                 if path and os.path.exists(path):
-                    meta, fids, geometry_wkb, fields = read(path)
-                    raw_geoms = shapely.from_wkb(geometry_wkb)
-                    geoms = [g for g in raw_geoms if region_geom.intersects(g)]
+                    geoms.extend(_read_mask_geometries(path, region_geom))
             if geoms:
+                # A coastline polygon runs to tens of thousands of vertices.
+                # Prepared, a point-in-polygon test on it walks an index of its
+                # edges instead of all of them (see _points_in_tree).
+                shapely.prepare(geoms)
                 return STRtree(geoms)
         except Exception as e:
             logger.warning(f"Failed to build external landmask tree: {e}")
@@ -1328,8 +1534,19 @@ class ATL03Reader(IceSat2Reader):
         return None
 
     def _get_bldg_tree(self, source="bing"):
+        """The building footprints of the region as an STRtree, built once per process."""
+
+        if not self.region:
+            return None
+
+        return _cached_mask_tree(
+            self._mask_cache_key(source.lower()), lambda: self._build_bldg_tree(source)
+        )
+
+    def _build_bldg_tree(self, source="bing"):
         region_geom = self.region.to_shapely()
         geoms = []
+        bldg_results = None
         if source.lower() == "bing":
             # Bing Buildings -> Class 7 (Buildings/Noise)
             bldg_results = fetchez.get(
@@ -1352,15 +1569,69 @@ class ATL03Reader(IceSat2Reader):
             return None
 
         for res in bldg_results:
-            meta, fids, geometry_wkb, fields = read(res)
-            raw_geoms = shapely.from_wkb(geometry_wkb)
-            geoms = [g for g in raw_geoms if region_geom.intersects(g)]
-            # and region_geom.intersets(g).area
+            geoms.extend(_read_mask_geometries(res, region_geom))
         if not geoms:
             return None
 
-        tree = STRtree(geoms)
-        return tree
+        # Not prepared: footprints are small, so the exact test on one is cheap,
+        # and a prepared index on each of a city's million footprints would
+        # multiply the tree's memory.
+        return STRtree(geoms)
+
+    def _photons_worth_testing(self, classed, may_become):
+        """Rows a mask step has to test, or None for all of them.
+
+        A mask step leaves a photon's class alone or turns it into one of
+        ``may_become`` (directly, or through the per-photon steps after it).
+        When the reader is filtering by class and none of those is wanted, a
+        photon whose class is not wanted either is dropped whichever way the
+        test goes, so it is not tested. The steps after the landmask decide
+        each photon from its own height, reflectance, position and signal
+        flag (a nonzero class), and from segment statistics of the same,
+        never from which nonzero class the landmask assigns, except the
+        DBSCAN and known-bathymetry passes, which start from classes; with
+        either of those on, every photon is tested. The caller adds back any
+        photons whose signal flag the step could change.
+        """
+        if not self.classes or any(c in self.classes for c in may_become):
+            return None
+        if self.known_bathymetry or (self.use_dbscan and HAS_SKLEARN):
+            return None
+        return np.isin(classed, self.classes)
+
+    def classify_offshore_by_landmask(self, df, land_tree):
+        """Turn land classes that sit out in the water into open ocean (44), or
+        nearshore surface (41) when within 5 m of the geoid."""
+
+        classed = df["ph_h_classed"].to_numpy()
+        # Only land classifications can be rogue; photons in valid water
+        # classes (40-Bathy, 42-Inland Lakes, etc.) are left as they are, so
+        # they are not tested. Nor are photons the reader will drop whatever
+        # the test says (see _photons_worth_testing): a rogue photon ends up
+        # as 44 or 41, or as 42 or 7 in a later step. Noise photons (class 0)
+        # are always tested: the steps after this one take a photon's signal
+        # flag from its class being nonzero, so turning a noise photon into
+        # open ocean changes the segment statistics they build.
+        test = ~np.isin(classed, [40, 41, 42, 44])
+        worth = self._photons_worth_testing(classed, (44, 41, 42, 7))
+        if worth is not None:
+            test &= worth | (classed == 0)
+        rogue_offshore_land = np.zeros(len(df), dtype=bool)
+        rogue_offshore_land[test] = ~_points_in_tree(
+            land_tree,
+            df["longitude"].to_numpy()[test],
+            df["latitude"].to_numpy()[test],
+        )
+
+        # Wipe them out and default them to open ocean
+        df.loc[rogue_offshore_land, "ph_h_classed"] = 44
+
+        # Set near-surface offshore returns to serve as nearshore/coastline
+        is_near_surface = rogue_offshore_land & (
+            np.abs(df["photon_height"].to_numpy()) <= 5.0
+        )
+        df.loc[is_near_surface, "ph_h_classed"] = 41
+        return df
 
     def classify_by_mask_tree(self, dataset, tree, classification, except_classes=[]):
         """Uses pyogrio and Shapely STRtree for point-in-polygon classification."""
@@ -1379,20 +1650,20 @@ class ATL03Reader(IceSat2Reader):
                 if "y" in dataset.columns
                 else dataset["latitude"].values
             )
-            points = shapely.points(x_vals, y_vals)
-            pt_idx = tree.query(points, predicate="intersects")
-            # slogger.info(pt_idx)
-            intersecting_indices = np.unique(pt_idx)
+            classed = dataset["ph_h_classed"].to_numpy()
+            # Photons the step could not change are not tested.
+            test = ~np.isin(classed, except_classes)
+            worth = self._photons_worth_testing(classed, (classification,))
+            if worth is not None:
+                test &= worth
+            inside = np.zeros(len(dataset), dtype=bool)
+            inside[test] = _points_in_tree(tree, x_vals[test], y_vals[test])
 
-            if len(intersecting_indices) > 0:
-                # real_indices = dataset.iloc[intersecting_indices].index
-                mask = dataset.index.isin(intersecting_indices) & (
-                    ~dataset["ph_h_classed"].isin(except_classes)
-                )
-                dataset.loc[mask, "ph_h_classed"] = classification
+            if np.any(inside):
+                dataset.loc[inside, "ph_h_classed"] = classification
 
                 logger.debug(
-                    f"External mask classified {np.count_nonzero(mask)} photons."
+                    f"External mask classified {np.count_nonzero(inside)} photons."
                 )
             else:
                 logger.debug("no photons classified by external mask")
@@ -1470,28 +1741,13 @@ class ATL03Reader(IceSat2Reader):
         conf = conf[:min_len]
         dt = dt[:min_len]
 
-        if len(ph_seg_ids) < np.sum(seg_ph_cnt):
-            unique, counts = np.unique(ph_seg_ids, return_counts=True)
-            ph_index_counters = np.concatenate([np.arange(1, c + 1) for c in counts])
-        else:
-            ph_index_counters = np.concatenate(
-                [np.arange(1, c + 1) for c in seg_ph_cnt]
-            )
-            ph_index_counters = ph_index_counters[:min_len]
+        ph_index_counters = _photon_index_within_segment(seg_ph_cnt, min_len)
 
-        h_geoid_map = dict(zip(seg_id, geoid))
-        h_f2m_map = dict(zip(seg_id, geoid_f2m))
-        h_dem_map = dict(zip(seg_id, dem_h))
-        p_geoid = np.array([h_geoid_map.get(s, 0) for s in ph_seg_ids])
-        p_f2m = np.array([h_f2m_map.get(s, 0) for s in ph_seg_ids])
-        p_dem = np.array([h_dem_map.get(s, 0) for s in ph_seg_ids])
-
-        def map_geophys(array):
-            array[array > 1e30] = 0.0
-            _map = dict(zip(seg_id, array))
-            return np.array([_map.get(s, 0) for s in ph_seg_ids])
-
-        p_tide_earth_f2m = map_geophys(tide_earth_f2m)
+        p_geoid = _per_photon(geoid, seg_ph_cnt, min_len)
+        p_f2m = _per_photon(geoid_f2m, seg_ph_cnt, min_len)
+        p_dem = _per_photon(dem_h, seg_ph_cnt, min_len)
+        tide_earth_f2m[tide_earth_f2m > 1e30] = 0.0
+        p_tide_earth_f2m = _per_photon(tide_earth_f2m, seg_ph_cnt, min_len)
 
         h_ellipsoid = h_ph + p_tide_earth_f2m  # mean-tide wgs84 ellipsoid
         h_ortho = h_ph - p_geoid  # tide-free egm2008
@@ -1533,11 +1789,12 @@ class ATL03Reader(IceSat2Reader):
         df["laser"] = df["laser"].astype("|S4")
 
         seg_starts = np.concatenate(([0], np.cumsum(seg_ph_cnt)[:-1]))
-        seg_idx_dict = dict(zip(seg_id, seg_starts))
 
         if atl08_fn:
             logger.debug("Apply ATL08 Classifications")
-            df = self.apply_atl08_classifications(df, atl08_fn, laser, seg_idx_dict)
+            df = self.apply_atl08_classifications(
+                df, atl08_fn, laser, seg_id, seg_starts
+            )
         if atl09_fn:
             logger.debug("Apply ATL09 Classifications")
             df = self.apply_atl09_data(df, atl09_fn, laser)
@@ -1566,26 +1823,7 @@ class ATL03Reader(IceSat2Reader):
             logger.debug(
                 "Enforcing absolute landmask to eliminate rogue offshore land classes"
             )
-            x_vals = df["longitude"].values
-            y_vals = df["latitude"].values
-            points = shapely.points(x_vals, y_vals)
-
-            land_idx = land_tree.query(points, predicate="intersects")
-            intersecting_indices = np.unique(land_idx)
-            is_offshore = ~df.index.isin(intersecting_indices)
-
-            # Identify land classifications sitting out in the water
-            # (Excluding valid water columns like 40-Bathy, 42-Inland Lakes, etc.)
-            rogue_offshore_land = is_offshore & (
-                ~df["ph_h_classed"].isin([40, 41, 42, 44])
-            )
-
-            # Wipe them out and default them to open ocean
-            df.loc[rogue_offshore_land, "ph_h_classed"] = 44
-
-            # Set near-surface offshore returns to serve as nearshore/coastline
-            is_near_surface = rogue_offshore_land & (df["photon_height"].abs() <= 5.0)
-            df.loc[is_near_surface, "ph_h_classed"] = 41
+            df = self.classify_offshore_by_landmask(df, land_tree)
 
         logger.debug("Apply Near-Shore Classifications")
         df = self.classify_nearshore_roughness(df)
@@ -1637,12 +1875,14 @@ class ATL03Reader(IceSat2Reader):
                 )
                 return
 
-        bldg_tree = None
-        land_tree = None
+        bldg_tree = self.bldg_tree
+        land_tree = self.land_tree
         if self.use_external_masks:
             # bldg_tree = self._get_bldg_tree(source="gba")
-            bldg_tree = self._get_bldg_tree(source="bing")
-            land_tree = self._get_land_tree()
+            if bldg_tree is None:
+                bldg_tree = self._get_bldg_tree(source="bing")
+            if land_tree is None:
+                land_tree = self._get_land_tree()
 
         # Fetch Aux ATLXX Data
         atl08_fn = self.fetch_atlxx(self.fn, "ATL08") if self.classes else None
