@@ -12,6 +12,7 @@ Generate bitmap data mask
 """
 
 import os
+import hashlib
 import logging
 import threading
 import rasterio
@@ -20,6 +21,7 @@ from rasterio.windows import Window
 from fetchez.hooks import FetchHook
 from fetchez.utils import str2inc, inc2str
 from ..transforms.point_pixels import PointPixels
+from globato.source_mask_grouping import group_source_mask_files, parse_group_fields
 
 logger = logging.getLogger(__name__)
 
@@ -208,6 +210,7 @@ class SourceMasks(FetchHook):
 
         self._initialized = False
         self.tifs = []
+        self.group_requests = {}
         self.lock = threading.Lock()
 
     def _init_grid(self, region):
@@ -218,8 +221,11 @@ class SourceMasks(FetchHook):
         self.xcount, self.ycount, self.dst_gt = region.geo_transform(
             x_inc=x_inc, y_inc=y_inc, node="pixel"
         )
-        self.transform = rasterio.transform.from_origin(
-            region.xmin, region.ymax, x_inc, y_inc
+        # PointPixels bins on the extent/count grid, which can differ from
+        # nominal res when the processing extent needs rounded dimensions.
+        # The written mask must represent those exact cells.
+        self.transform = rasterio.Affine.from_gdal(
+            *region.geo_transform_from_count(x_count=self.xcount, y_count=self.ycount)
         )
 
         if not os.path.exists(self.output_dir):
@@ -325,7 +331,21 @@ class SourceMasks(FetchHook):
                 src_name = os.path.basename(entry.get("dst_fn", f"unknown_{id(entry)}"))
                 base = os.path.splitext(src_name)[0]
                 res_str = inc2str(self.res)
+                if entry.get("tnm_product"):
+                    # SourceMasks executes before multi_stack: preserve each
+                    # authoritative TNM input rather than merging distinct
+                    # files with an identical basename and mislabeling pixels.
+                    source_path = os.path.abspath(
+                        entry.get("src_fn") or entry["dst_fn"]
+                    )
+                    identity = f"{entry.get('url') or ''}\0{source_path}"
+                    token = hashlib.sha256(identity.encode("utf-8")).hexdigest()[:16]
+                    base = f"{base}_{token}"
                 tif_path = os.path.join(self.output_dir, f"{base}_{res_str}_mask.tif")
+                if entry.get("tnm_product") and tif_path in self.tifs:
+                    raise RuntimeError(
+                        f"source-masks would overwrite another source: {tif_path}"
+                    )
 
                 meta_tags = {
                     "MODULE": getattr(mod, "name", "Unknown"),
@@ -356,6 +376,9 @@ class SourceMasks(FetchHook):
 
                 with self.lock:
                     self.tifs.append(tif_path)
+                    group_by = entry.get("source_mask_group_by")
+                    if group_by:
+                        self.group_requests[tif_path] = group_by
 
                 entry["stream"] = self._intercept(stream, tif_path, mod.region)
                 entry.setdefault("artifacts", {})[self.name] = tif_path
@@ -419,6 +442,7 @@ class SourceMasks(FetchHook):
                 f"  <GeoTransform>{gt}</GeoTransform>",
             ]
 
+            removed_tifs = set()
             for i, tif in enumerate(self.tifs, start=1):
                 # remove the mask if no valid data
                 if not os.path.exists(tif):
@@ -430,6 +454,7 @@ class SourceMasks(FetchHook):
 
                 if tif_stats[0].max == 0.0:
                     os.remove(tif)
+                    removed_tifs.add(tif)
                     continue
 
                 rel_path = os.path.relpath(tif, os.path.dirname(self.output))
@@ -484,6 +509,23 @@ class SourceMasks(FetchHook):
                 f.write("\n".join(xml_lines))
 
             logger.debug(f"VRT {self.output} built successfully.")
+
+            # Optional logical-dataset raster masks are requested per entry.
+            # Existing workflows never set source_mask_group_by, so they keep
+            # their prior artifact inventory.
+            if self.group_requests:
+                requests = {}
+                for tif, group_by in self.group_requests.items():
+                    if tif not in removed_tifs:
+                        requests.setdefault(str(group_by), []).append(tif)
+                for group_by, tifs in requests.items():
+                    fields = parse_group_fields(group_by)
+                    label = "_".join(field.lower() for field in fields) or "grouped"
+                    group_source_mask_files(
+                        tifs,
+                        group_by=group_by,
+                        output_dir=os.path.join(self.output_dir, "grouped", label),
+                    )
 
             # --- Generate Vector Spatial Metadata, if requested ---
             if self.vector_output:

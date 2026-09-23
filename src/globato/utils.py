@@ -30,6 +30,7 @@ from fetchez.recipe import Recipe
 # from fetchez.utils import parse_source_string as fetchez_parse_source
 
 from transformez.utils import cmd_exists
+from globato.bundle_products import expand_parameterized_bundles
 
 logger = logging.getLogger(__name__)
 
@@ -156,6 +157,8 @@ def globatize_modules(modules, shared_cache=None, crs=None, res=None):
 
     ModuleRegistry.load_all()
     BundleRegistry.load_all()
+
+    modules = expand_parameterized_bundles(modules)
 
     # Expand the Modules & Bundles
     modules = Recipe({})._expand_modules(modules)
