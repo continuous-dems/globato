@@ -15,6 +15,7 @@ import os
 import glob
 import traceback
 import numpy as np
+from numpy.lib.stride_tricks import sliding_window_view
 import h5py as h5
 import pandas as pd
 import logging
@@ -370,6 +371,65 @@ def _per_photon(per_segment, seg_ph_cnt, n_photons):
     them for segment ``i``, so this is a repeat cut to the photons the file has.
     """
     return np.repeat(per_segment, seg_ph_cnt)[:n_photons]
+
+
+def _rolling_stats(values, window, min_periods, quantiles=(), extremes=False):
+    """Centred rolling-window quantiles (and extremes) of a 1-D array.
+
+    The same numbers as pandas' ``Series.rolling(window, center=True,
+    min_periods).quantile(q)`` (and ``.max()``, ``.min()``), window bounds,
+    edge handling and interpolation included, but from one sort of each
+    window instead of one pass over the array per statistic, which comes out
+    two to three times faster on a beam of photons. pandas is used as is when
+    the array holds NaN, whose skipping is not worth reproducing.
+
+    Returns:
+        A list of float64 arrays: one per quantile, in order, then the window
+        maximum and minimum if ``extremes``.
+    """
+    x = np.asarray(values)
+    if not np.issubdtype(x.dtype, np.floating):
+        x = x.astype(np.float64)
+    n = len(x)
+    n_out = len(quantiles) + (2 if extremes else 0)
+    if n and np.isnan(x).any():
+        roll = pd.Series(x).rolling(window=window, center=True, min_periods=min_periods)
+        out = [roll.quantile(q).to_numpy() for q in quantiles]
+        if extremes:
+            out += [roll.max().to_numpy(), roll.min().to_numpy()]
+        return out
+    out = [np.full(n, np.nan) for _ in range(n_out)]
+
+    def fill(rows, sorted_windows):
+        """Statistics of whole windows, sorted along their last axis."""
+        nobs = sorted_windows.shape[-1]
+        for k, q in enumerate(quantiles):
+            at = q * (nobs - 1)
+            low = int(at)
+            if at == low:
+                out[k][rows] = sorted_windows[..., low]
+            else:
+                lower = sorted_windows[..., low].astype(np.float64)
+                upper = sorted_windows[..., low + 1].astype(np.float64)
+                out[k][rows] = lower + (upper - lower) * (at - low)
+        if extremes:
+            out[len(quantiles)][rows] = sorted_windows[..., -1]
+            out[len(quantiles) + 1][rows] = sorted_windows[..., 0]
+
+    # pandas centres the window for row i on [i - before, i - before + window).
+    before = window // 2
+    first_full, last_full = before, n - (window - before)
+    if last_full >= first_full:
+        windows = sliding_window_view(x, window)  # row j is x[j : j + window]
+        chunk = 1 << 14
+        for a in range(0, last_full - first_full + 1, chunk):
+            b = min(a + chunk, last_full - first_full + 1)
+            fill(slice(first_full + a, first_full + b), np.sort(windows[a:b], axis=1))
+    for i in [i for i in range(n) if i < first_full or i > last_full]:
+        window_i = np.sort(x[max(0, i - before) : min(n, i - before + window)])
+        if len(window_i) >= min_periods:
+            fill(i, window_i)
+    return out
 
 
 def _photon_index_within_segment(seg_ph_cnt, n_photons):
@@ -786,7 +846,9 @@ class ATL03Reader(IceSat2Reader):
                 df["reflectance"] = np.nan
                 return df
 
-            segment_counts = df.loc[signal_mask].groupby("ph_segment_id").size()
+            segment_counts = (
+                df.loc[signal_mask, ["ph_segment_id"]].groupby("ph_segment_id").size()
+            )
             if min_photons > 0:
                 segment_counts = segment_counts.where(
                     segment_counts >= min_photons, np.nan
@@ -1042,12 +1104,14 @@ class ATL03Reader(IceSat2Reader):
             candidate_mask = (df["confidence"] >= 3) & (df["ph_h_classed"] != 0)
             if not np.any(candidate_mask):
                 return df
-            subset = df[candidate_mask]
-            grouped = subset.groupby("ph_segment_id")["photon_height"]
-            q1 = grouped.quantile(0.25)
-            q3 = grouped.quantile(0.75)
-            mapped_q1 = subset["ph_segment_id"].map(q1)
-            mapped_q3 = subset["ph_segment_id"].map(q3)
+            subset = df.loc[candidate_mask, ["ph_segment_id", "photon_height"]]
+            quartiles = (
+                subset.groupby("ph_segment_id")["photon_height"]
+                .quantile([0.25, 0.75])
+                .unstack()
+            )
+            mapped_q1 = subset["ph_segment_id"].map(quartiles[0.25])
+            mapped_q3 = subset["ph_segment_id"].map(quartiles[0.75])
             iqr = mapped_q3 - mapped_q1
             lower_bound = mapped_q1 - (multiplier * iqr)
             upper_bound = mapped_q3 + (multiplier * iqr)
@@ -1143,87 +1207,90 @@ class ATL03Reader(IceSat2Reader):
         dark_veto_threshold=0.25,
         max_building_length=150,
     ):
+        # Works on arrays, by row position: the frame's index plays no part.
         try:
             logger.debug("Attempting to discover building photons...")
-            signal_mask = (df["confidence"] >= 3) & (df["ph_h_classed"] != 0)
-            if not np.any(signal_mask):
+            height = df["photon_height"].to_numpy()
+            classed = df["ph_h_classed"].to_numpy()
+            is_signal = (df["confidence"].to_numpy() >= 3) & (classed != 0)
+            if not np.any(is_signal):
                 return df
-            _signal_df = df[signal_mask]
 
-            ground_proxy = (
-                df["photon_height"]
-                .rolling(
-                    window=ground_window, center=True, min_periods=ground_window // 3
-                )
-                .quantile(0.05)
+            # A running 5th percentile of every photon's height, noise
+            # included, stands in for the ground.
+            (ground_proxy,) = _rolling_stats(
+                height, ground_window, ground_window // 3, quantiles=(0.05,)
             )
-            ground_proxy = ground_proxy.bfill().ffill()
-            hag = df["photon_height"] - ground_proxy
+            if np.isnan(ground_proxy).any():
+                ground_proxy = pd.Series(ground_proxy).bfill().ffill().to_numpy()
+            hag = height.astype(np.float64) - ground_proxy
 
-            is_elevated = (
-                (hag >= min_height)
-                & (df["confidence"] >= 3)
-                & (df["ph_h_classed"] != 0)
-            )
+            is_elevated = (hag >= min_height) & is_signal
             if not np.any(is_elevated):
                 return df
 
-            elevated_df = df[is_elevated].copy()
-            roller = elevated_df["photon_height"].rolling(
-                window=roughness_window, center=True, min_periods=5
+            elevated = np.flatnonzero(is_elevated)
+            elevated_height = height[elevated]
+            # The standard deviation stays with pandas: its running update
+            # does not round the way a direct one does.
+            local_roughness = (
+                pd.Series(elevated_height)
+                .rolling(window=roughness_window, center=True, min_periods=5)
+                .std()
+                .to_numpy()
             )
-            elevated_df["local_roughness"] = roller.std()
-            elevated_df["local_range"] = roller.max() - roller.min()
-            elevated_df["local_thickness"] = roller.quantile(0.90) - roller.quantile(
-                0.10
+            high, low, top, bottom = _rolling_stats(
+                elevated_height,
+                roughness_window,
+                5,
+                quantiles=(0.90, 0.10),
+                extremes=True,
             )
+            local_range = top - bottom
+            local_thickness = high - low
 
             mask_geo = (
-                (elevated_df["local_roughness"] <= max_roughness)
-                & (elevated_df["local_range"] <= max_range)
-                & (elevated_df["local_thickness"] <= max_thickness)
+                (local_roughness <= max_roughness)
+                & (local_range <= max_range)
+                & (local_thickness <= max_thickness)
             )
+            reflectance = None
             if "reflectance" in df.columns:
-                is_too_dark = elevated_df["reflectance"] < dark_veto_threshold
+                reflectance = df["reflectance"].to_numpy()[elevated]
+                is_too_dark = reflectance < dark_veto_threshold
                 mask_geo = mask_geo & (~is_too_dark)
 
-            mask_rad = np.zeros(len(elevated_df), dtype=bool)
-            if "reflectance" in df.columns and elevated_df["reflectance"].notna().any():
+            mask_rad = np.zeros(len(elevated), dtype=bool)
+            if reflectance is not None and not np.isnan(reflectance).all():
                 mask_rad = (
-                    (elevated_df["local_roughness"] <= 1.5)
-                    & (elevated_df["reflectance"] >= min_reflectance)
-                    & (elevated_df["local_range"] <= 3.0)
-                    & (elevated_df["local_thickness"] <= 1.5)
+                    (local_roughness <= 1.5)
+                    & (reflectance >= min_reflectance)
+                    & (local_range <= 3.0)
+                    & (local_thickness <= 1.5)
                 )
 
-            is_building = mask_geo | mask_rad
-            building_candidates = elevated_df[is_building].copy()
-            if len(building_candidates) == 0:
+            candidates = elevated[mask_geo | mask_rad]
+            if len(candidates) == 0:
                 return df
 
-            idx_series = building_candidates.index.to_series()
-            gap_check = idx_series.diff() > 20
-            group_ids = gap_check.cumsum()
+            # Candidates more than 20 rows apart belong to different groups.
+            breaks = np.flatnonzero(np.diff(candidates) > 20) + 1
+            starts = np.r_[0, breaks]
+            ends = np.r_[breaks, len(candidates)]
             max_photon_span = max_building_length / 0.7
-            groups = idx_series.groupby(group_ids)
-            group_spans = groups.max() - groups.min()
+            group_spans = candidates[ends - 1] - candidates[starts]
 
-            full_diffs = df["photon_height"].diff().abs()
-            is_wall_jump = full_diffs > min_height
-            candidate_has_wall = is_wall_jump.loc[building_candidates.index]
-            group_has_wall = candidate_has_wall.groupby(group_ids).any()
+            is_wall_jump = np.r_[False, np.abs(np.diff(height)) > min_height]
+            group_has_wall = np.logical_or.reduceat(is_wall_jump[candidates], starts)
 
-            valid_group_ids = group_spans.index[
-                (group_spans <= max_photon_span) & (group_has_wall)
-            ]
-            final_mask = group_ids.isin(valid_group_ids)
-            final_indices = building_candidates.index[final_mask]
+            valid_group = (group_spans <= max_photon_span) & group_has_wall
+            final_rows = candidates[np.repeat(valid_group, ends - starts)]
 
-            if len(final_indices) > 0:
+            if len(final_rows) > 0:
                 protected_classes = [40, 41, 42, 44]
-                mask = df.index.isin(final_indices) & (
-                    ~df["ph_h_classed"].isin(protected_classes)
-                )
+                mask = np.zeros(len(df), dtype=bool)
+                mask[final_rows] = True
+                mask &= ~np.isin(classed, protected_classes)
                 df.loc[mask, "ph_h_classed"] = 7
                 logger.debug(
                     f"Classified {np.count_nonzero(mask)} photons as Buildings"
@@ -1246,11 +1313,11 @@ class ATL03Reader(IceSat2Reader):
             signal_mask = (df["confidence"] >= 3) & (df["ph_h_classed"] != 0)
             if not np.any(signal_mask):
                 return df
-            signal_df = df[signal_mask]
 
             aggs = {"photon_height": ["median", "std"]}
             if use_reflectance and "reflectance" in df.columns:
                 aggs["reflectance"] = "median"
+            signal_df = df.loc[signal_mask, ["ph_segment_id", *aggs]]
             grouped = signal_df.groupby("ph_segment_id")
             seg_stats = grouped.agg(aggs)
             seg_stats.columns = [
@@ -1301,7 +1368,9 @@ class ATL03Reader(IceSat2Reader):
             signal_mask = (df["confidence"] >= 3) & (df["ph_h_classed"] != 0)
             if not np.any(signal_mask):
                 return df
-            signal_df = df[signal_mask].copy()
+            signal_df = df.loc[
+                signal_mask, ["ph_segment_id", "photon_height", "reflectance"]
+            ]
 
             grouped = signal_df.groupby("ph_segment_id")
             seg_stats = grouped.agg(

@@ -27,6 +27,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 * `ATL03Reader` spreads per-segment values (geoid, tides, DEM height, photon ordinal) over photons with array operations rather than a Python lookup per photon, and looks ATL08 segments up by bisection.
 * `ATL03Reader` reads only the stretch of an ATL08 granule whose segments the ATL03 file spans, found by bisection as for ATL24, instead of every classed photon of the beam.
 * `ATL03Reader` tests a photon against the landmask and building masks only when the test could change what the reader yields: photons already in a water class are not tested against the landmask, photons in a water class are not tested against the building mask, and when reading with a class filter that wants none of the classes a mask (or a step after it) can assign, photons of classes the filter drops are not tested either (noise photons always are, since the steps after the landmask read a photon's signal flag from its class). Output-identical; on a granule over a city this was about a third of the time to read it.
+* `ATL03Reader`'s building classifier takes its running ground level, range and thickness from one sort of each window instead of a pandas rolling pass per statistic, and groups its candidates with array operations; its outlier, nearshore, inland-water and reflectance steps work on the columns they use instead of copies of the whole frame. Output-identical.
 
 ### BUGFIX
 
