@@ -40,3 +40,8 @@ modules:
           res: 1s
           skip_entry: "is_bathy"
           hard_clip_below: 1.1
+          max_roughness: 0.95
+          max_height_above_water: 1.75
+          # min_seed_points: 100
+          # seed_neighbors: 22
+          # max_seed_distance: 12.0

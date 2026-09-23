@@ -39,7 +39,7 @@ hooks:
       # weight_threshold: 0.25/.1
       weight_threshold: 3/2/1/.75/.5/.4/.3/.2/.1
       output: "%name%_%batch_name%_stack.tif"
-      state: "%name%_%batch_name%_state.tif"
+      # state: "%name%_%batch_name%_state.tif"
 
   - name: focus_sink
     args:

@@ -72,6 +72,9 @@ modules:
       - name: filename_filter
         args:
           exclude: "._Bathymetry"
+      - name: raster_warp
+        args:
+          res: 1s
       - name: set-srs
         srs: "EPSG:32611+5703"
       - name: stream_reproject
@@ -89,6 +92,9 @@ modules:
       - name: set_datatype
         args:
           data_type: "rio"
+      - name: raster_warp
+        args:
+          res: 1s
       - name: set-srs
         srs: "EPSG:32611+5703"
       - name: stream_reproject
@@ -107,6 +113,9 @@ modules:
       - name: set_datatype
         args:
           data_type: "rio"
+      - name: raster_warp
+        args:
+          res: 1s
       - name: set-srs
         srs: "EPSG:32611+5703"
       - name: stream_reproject
@@ -114,6 +123,51 @@ modules:
           dst_srs: "EPSG:4326+3855"
           cache_dir: "%shared_cache%"
 
+
+  - module: usgs_sim3324
+    args:
+      data_type: "ascii"
+    hooks:
+      - name: unzip
+      - name: filename_filter
+        args:
+          stage: "file"
+          match: ".asc"
+      - name: set_datatype
+        args:
+          data_type: "rio"
+      - name: raster_warp
+        args:
+          res: 1s
+      - name: set-srs
+        srs: "EPSG:32611+5703"
+      - name: stream_reproject
+        args:
+          dst_srs: "EPSG:4326+3855"
+          cache_dir: "%shared_cache%"
+
+
+  - module: usgs_of2014_1094
+    args:
+      data_type: "bathymetry"
+    hooks:
+      - name: unzip
+      - name: filename_filter
+        args:
+          stage: "file"
+          match: ".asc"
+      - name: set_datatype
+        args:
+          data_type: "rio"
+      - name: raster_warp
+        args:
+          res: 1s
+      - name: set-srs
+        srs: "EPSG:32611+5703"
+      - name: stream_reproject
+        args:
+          dst_srs: "EPSG:4326+3855"
+          cache_dir: "%shared_cache%"
 
   # - module: usgs_of2005_1170
   #   args:
