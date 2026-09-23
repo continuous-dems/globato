@@ -25,6 +25,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 * `ATL03Reader` builds the Bing-building and OSM-landmask trees once per region per process and reuses them for every granule read over that region, instead of re-parsing every footprint file on each read; prebuilt trees can also be passed in (`bldg_tree=`, `land_tree=`). Over a city, the rebuild took minutes per granule.
 * `ATL03Reader` tests photons against the landmask with prepared polygons. A coastline polygon of tens of thousands of vertices was walked in full for every photon, which took minutes per granule; it now takes well under a second, with the same result.
 * `ATL03Reader` spreads per-segment values (geoid, tides, DEM height, photon ordinal) over photons with array operations rather than a Python lookup per photon, and looks ATL08 segments up by bisection.
+* `ATL03Reader` reads only the stretch of an ATL08 granule whose segments the ATL03 file spans, found by bisection as for ATL24, instead of every classed photon of the beam.
 
 ### BUGFIX
 

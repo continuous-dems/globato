@@ -22,7 +22,7 @@ from globato.streams.readers.icesat2 import (
     _per_photon,
     _photon_index_within_segment,
     _points_in_tree,
-    _read_atl24_block,
+    _read_sorted_block,
 )
 
 ATL03 = "ATL03_20241107234251_08052501_007_01_subsetted.h5"
@@ -462,7 +462,7 @@ def test_atl24_block_covers_the_atl03_span(tmp_path):
 
     with h5py.File(atl24_fn) as f:
         everything = f["gt1l/delta_time"][...]
-        start, block = _read_atl24_block(f["gt1l/delta_time"], first, last)
+        start, block = _read_sorted_block(f["gt1l/delta_time"], first, last)
 
     wanted = np.flatnonzero((everything >= first) & (everything <= last))
     assert start <= wanted[0] and wanted[-1] < start + len(block)
@@ -479,7 +479,7 @@ def test_atl24_block_is_widened_until_both_ends_pass(tmp_path):
     first, last = _span(atl03_dt)
 
     with h5py.File(atl24_fn) as f:
-        start, block = _read_atl24_block(f["gt1l/delta_time"], first, last)
+        start, block = _read_sorted_block(f["gt1l/delta_time"], first, last)
 
     assert start == 992 - CHUNK
     assert block[0] < first and block[-1] > last
@@ -500,7 +500,7 @@ def test_atl24_block_is_empty_when_the_atl03_span_is_off_the_file(tmp_path, side
 
     with h5py.File(tmp_path / "atl24.h5", "w") as f:
         f.create_dataset("gt1l/delta_time", data=delta_time, chunks=(CHUNK,))
-        found = _read_atl24_block(f["gt1l/delta_time"], first, last)
+        found = _read_sorted_block(f["gt1l/delta_time"], first, last)
 
     assert found[0] == start
     assert len(found[1]) == 0
@@ -513,7 +513,7 @@ def test_atl24_block_is_refused_when_not_in_time_order(tmp_path):
     _write_atl24(atl24_fn, atl03_dt, outside=1000, order=np.arange(n)[::-1])
 
     with h5py.File(atl24_fn) as f:
-        assert _read_atl24_block(f["gt1l/delta_time"], *_span(atl03_dt)) is None
+        assert _read_sorted_block(f["gt1l/delta_time"], *_span(atl03_dt)) is None
 
 
 @pytest.mark.parametrize("in_time_order", [True, False])
@@ -590,6 +590,58 @@ def test_atl08_classes_land_on_their_photons(tmp_path):
     expected[5 + 3] = 1  # segment 503, 4th photon
     expected[9 + 0] = 3  # segment 504, 1st photon
     assert np.array_equal(out["ph_h_classed"].to_numpy(), expected)
+
+
+def test_atl08_in_a_long_file_labels_the_same_photons(tmp_path, monkeypatch):
+    """A subsetted ATL03 spans a few of the segments a whole-granule ATL08
+    lists; only their stretch of the file is read, with the same result."""
+    seg_id = np.arange(5000, 5020)
+    seg_ph_cnt = np.full(len(seg_id), 3)
+    seg_starts = np.concatenate(([0], np.cumsum(seg_ph_cnt)[:-1]))
+    df = _atl08_frame(seg_id, seg_ph_cnt)
+
+    # Two classed photons (the 1st and 3rd) in each of 20,000 segments.
+    atl08_seg = np.repeat(np.arange(1, 20001, dtype=np.int32), 2)
+    atl08 = tmp_path / "ATL08_long.h5"
+    with h5py.File(atl08, "w") as f:
+        g = f.create_group("gt1l/signal_photons")
+        g.create_dataset("ph_segment_id", data=atl08_seg, chunks=(1000,))
+        g.create_dataset(
+            "classed_pc_indx",
+            data=np.tile([1, 3], 20000).astype(np.int32),
+            chunks=(1000,),
+        )
+        g.create_dataset(
+            "classed_pc_flag", data=(atl08_seg % 4).astype(np.int8), chunks=(1000,)
+        )
+
+    reader = ATL03Reader(str(tmp_path / ATL03), cache_dir=str(tmp_path))
+    read = []
+    original = h5py.Dataset.__getitem__
+
+    def counting(self, key):
+        out = original(self, key)
+        if self.name == "/gt1l/signal_photons/classed_pc_flag":
+            read.append(len(out))
+        return out
+
+    monkeypatch.setattr(h5py.Dataset, "__getitem__", counting)
+    out = reader.apply_atl08_classifications(
+        df.copy(), str(atl08), "gt1l", seg_id, seg_starts
+    )
+
+    expected = np.full(len(df), -1)
+    expected[0::3] = seg_id % 4  # 1st photon of each segment
+    expected[2::3] = seg_id % 4  # 3rd photon of each segment
+    assert np.array_equal(out["ph_h_classed"].to_numpy(), expected)
+    assert read == [2000]  # two chunks of the 40,000-row column
+
+    # The same labels as reading the whole file.
+    monkeypatch.setattr(icesat2, "_read_sorted_block", lambda *a: None)
+    whole = reader.apply_atl08_classifications(
+        df.copy(), str(atl08), "gt1l", seg_id, seg_starts
+    )
+    assert whole["ph_h_classed"].equals(out["ph_h_classed"])
 
 
 # ---------------------------------------------------------------------------

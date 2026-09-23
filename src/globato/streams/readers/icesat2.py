@@ -80,29 +80,31 @@ def _as_atl24_time(atl03_dt, epoch):
     return ((np.asarray(atl03_dt) + epoch) * 1e9) / 1e9 - epoch
 
 
-def _read_atl24_block(delta_time, first, last):
-    """Read only the part of an ATL24 ``delta_time`` column that spans a time range.
+def _read_sorted_block(column, first, last):
+    """Read only the part of an ascending h5 column that spans a range of values.
 
-    ATL24 covers the whole granule, and a spatially subsetted ATL03 file
-    overlaps about 1% of it, so reading every column in full is most of the cost
-    of applying ATL24. The photons are stored in time order, which lets the
-    overlap be found by bisection and read as one block.
+    ATL08 and ATL24 cover the whole granule, and a spatially subsetted ATL03
+    file overlaps a small part of it, so reading every column in full is most
+    of the cost of applying them. Their photons are stored in order (ATL24 by
+    ``delta_time``, ATL08 by ``ph_segment_id``), which lets the overlap be
+    found by bisection and read as one block.
 
     Args:
-        delta_time: The beam's ``delta_time`` h5py dataset (not yet read).
-        first: Earliest time wanted, as ATL24 stores it (see `_as_atl24_time`).
-        last: Latest time wanted.
+        column: The beam's h5py dataset (not yet read).
+        first: Smallest value wanted, in the column's units (for ATL24, see
+            `_as_atl24_time`).
+        last: Largest value wanted.
 
     Returns:
-        ``(start, block)``: the row the block starts at and its ``delta_time``
-        values. The block is made of whole storage chunks, so it usually runs a
-        little past the range on both sides. ``None`` if the column turns out
-        not to be in time order, in which case it has to be read in full.
+        ``(start, block)``: the row the block starts at and its values. The
+        block is made of whole storage chunks, so it usually runs a little past
+        the range on both sides. ``None`` if the column turns out not to be in
+        ascending order, in which case it has to be read in full.
     """
-    n = len(delta_time)
+    n = len(column)
     if n == 0:
-        return 0, delta_time[0:0]
-    step = delta_time.chunks[0] if delta_time.chunks else 10_000
+        return 0, column[0:0]
+    step = column.chunks[0] if column.chunks else 10_000
 
     # Bisect on the file itself, a value at a time, remembering what was read.
     probed = {}
@@ -112,30 +114,30 @@ def _read_atl24_block(delta_time, first, last):
         while lo < hi:
             mid = (lo + hi) // 2
             if mid not in probed:
-                probed[mid] = float(delta_time[mid])
+                probed[mid] = float(column[mid])
             lo, hi = (lo, mid) if is_past(probed[mid]) else (mid + 1, hi)
         return lo
 
     begin = first_row_where(lambda t: t >= first)
     end = first_row_where(lambda t: t > last)
 
-    # Bisection is only right if the column is in time order. The values it
-    # read are scattered over the whole file, so they make a cheap spot check.
+    # Bisection is only right if the column is in ascending order. The values
+    # it read are scattered over the whole file, so they make a cheap spot check.
     rows = sorted(probed)
     if any(probed[a] > probed[b] for a, b in zip(rows, rows[1:])):
         return None
 
-    # No photon in the range: the ATL03 file lies in a stretch ATL24 has no
+    # No photon in the range: the ATL03 file lies in a stretch the file has no
     # photons for (usually past its last one). There is nothing to read, and
     # the widening below would index an empty block when the file ends on a
     # chunk boundary.
     if begin == end:
-        return begin, delta_time[begin:begin]
+        return begin, column[begin:begin]
 
     # Read whole chunks: part of a chunk costs as much to read as all of it.
     start = (begin // step) * step
     stop = min(n, -(-max(end, begin + 1) // step) * step)
-    block = delta_time[start:stop]
+    block = column[start:stop]
 
     # The block holds every photon of the range once it begins before the range
     # and ends after it (or reaches an end of the file). Widen it a chunk at a
@@ -147,11 +149,11 @@ def _read_atl24_block(delta_time, first, last):
             break
         if short_before:
             wider = max(0, start - step)
-            block = np.concatenate((delta_time[wider:start], block))
+            block = np.concatenate((column[wider:start], block))
             start = wider
         if short_after:
             wider = min(n, stop + step)
-            block = np.concatenate((block, delta_time[stop:wider]))
+            block = np.concatenate((block, column[stop:wider]))
             stop = wider
 
     if np.any(np.diff(block) < 0):
@@ -810,14 +812,30 @@ class ATL03Reader(IceSat2Reader):
                 if laser not in f:
                     return df
                 sig = f[f"/{laser}/signal_photons"]
-                atl08_flag = sig["classed_pc_flag"][...]
-                atl08_seg = sig["ph_segment_id"][...]
-                atl08_idx = sig["classed_pc_indx"][...]
+                ph_seg = df["ph_segment_id"].to_numpy()
+                if len(ph_seg) == 0:
+                    return df
+                # The segments of this file's photons: one entry per run of
+                # equal ids is enough for a membership test, and costs no hashing.
+                relevant_segments = ph_seg[np.r_[True, ph_seg[1:] != ph_seg[:-1]]]
 
-                relevant_segments = df["ph_segment_id"].unique()
+                # ATL08 covers the whole granule, in segment order, so only
+                # the stretch this file's segments span is read.
+                found = _read_sorted_block(
+                    sig["ph_segment_id"],
+                    relevant_segments.min(),
+                    relevant_segments.max(),
+                )
+                if found is None:
+                    block, atl08_seg = slice(None), sig["ph_segment_id"][...]
+                else:
+                    block = slice(found[0], found[0] + len(found[1]))
+                    atl08_seg = found[1]
                 mask = np.isin(atl08_seg, relevant_segments)
                 if not np.any(mask):
                     return df
+                atl08_flag = sig["classed_pc_flag"][block]
+                atl08_idx = sig["classed_pc_indx"][block]
 
                 # Look each ATL08 segment up in seg_id by bisection.
                 wanted = atl08_seg[mask]
@@ -887,7 +905,7 @@ class ATL03Reader(IceSat2Reader):
                     # Read only the stretch of ATL24 that overlaps this ATL03
                     # file, or all of it if it is not stored in time order.
                     atl03_time = _as_atl24_time(df["delta_time"].to_numpy(), epoch)
-                    found = _read_atl24_block(
+                    found = _read_sorted_block(
                         grp["delta_time"],
                         atl03_time.min() - ATL24_PULSE_TOLERANCE,
                         atl03_time.max() + ATL24_PULSE_TOLERANCE,
