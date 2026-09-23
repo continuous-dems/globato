@@ -22,9 +22,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 * Updated DEM-generation documentation and added detailed documentation for the PointPixels/FusionState architecture.
 * Reverted the global-bato.yaml bundle's multibeam reference to use the rq hook's 'percent' mode instead of 'iho_2' which was removing too much data in deep water.
 * `ATL03Reader` reads only the part of an ATL24 granule that overlaps the ATL03 file, rather than every photon of the beam. ATL24 granules are never subsetted, so with a spatially subsetted ATL03 file this was most of the cost of applying ATL24; reading such a granule now takes roughly 20-55% less time. An ATL24 file that is not stored in time order is still read in full.
+* `ATL03Reader` builds the Bing-building and OSM-landmask trees once per region per process and reuses them for every granule read over that region, instead of re-parsing every footprint file on each read; prebuilt trees can also be passed in (`bldg_tree=`, `land_tree=`). Over a city, the rebuild took minutes per granule.
+* `ATL03Reader` tests photons against the landmask with prepared polygons. A coastline polygon of tens of thousands of vertices was walked in full for every photon, which took minutes per granule; it now takes well under a second, with the same result.
+* `ATL03Reader` spreads per-segment values (geoid, tides, DEM height, photon ordinal) over photons with array operations rather than a Python lookup per photon, and looks ATL08 segments up by bisection.
 
 ### BUGFIX
 
+* `ATL03Reader` used only the last Bing tile's footprints for the building mask when a region spanned several tiles; footprints from every tile are now used.
+* `ATL03Reader` flagged the wrong photons as inside a building or on land. The hits of an `STRtree` query pair a photon index with a polygon index, and both were read as photon indices, so for every photon that hit a polygon, the photon whose row number matched the polygon's index was flagged too.
 * Fixed bug in binary_cudem that would wipe background data in the fine tier with a large `blend_dist`
 * `ATL03Reader` now picks the newest cached ATL24 granule when several versions of one track are in the cache, matching how search results were already ranked. Before, whichever file the directory listing returned first was used.
 * `ATL03Reader` no longer pairs an ATL03 granule with an ATL08 granule of a different release. ATL08 indexes photons by their position in one specific ATL03 release, so a mismatched pair can misclassify photons without any error. ATL24 may still come from another release: its join checks every photon against `delta_time`, which is the same in every release.

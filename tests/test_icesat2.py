@@ -2,17 +2,26 @@
 
 import logging
 
+import json
+
 import h5py
 import numpy as np
 import pandas as pd
 import pytest
+import shapely
+from shapely.strtree import STRtree
 
+import fetchez
 from fetchez.modules import earthdata
+from globato.streams.readers import icesat2
 from globato.streams.readers.icesat2 import (
     ATL03Reader,
     _as_atl24_time,
     _atl24_release_shift,
     _atl24_rows_in_atl03,
+    _per_photon,
+    _photon_index_within_segment,
+    _points_in_tree,
     _read_atl24_block,
 )
 
@@ -500,3 +509,212 @@ def test_atl24_in_a_long_file_labels_the_same_photons(tmp_path, offline, in_time
     )
 
     assert np.flatnonzero(df["ph_h_classed"] == 40).tolist() == SEAFLOOR_ROWS
+
+
+# ---------------------------------------------------------------------------
+# Per-segment values spread over photons
+# ---------------------------------------------------------------------------
+@pytest.mark.parametrize("short_by", [0, 7])
+def test_per_photon_values_and_ordinals_follow_the_segment_counts(short_by):
+    # Segment photon counts including empty segments; the file may hold fewer
+    # photons than the counts add up to.
+    rng = np.random.default_rng(1)
+    seg_ph_cnt = rng.integers(0, 6, size=40).astype(np.int32)
+    seg_id = 1_000_000 + np.arange(len(seg_ph_cnt))
+    values = rng.normal(size=len(seg_ph_cnt)).astype(np.float32)
+    n = int(seg_ph_cnt.sum()) - short_by
+
+    # The definitions these replace: a dict lookup per photon, an arange per segment.
+    ph_seg_ids = np.repeat(seg_id, seg_ph_cnt)[:n]
+    by_segment = dict(zip(seg_id, values))
+    expected_values = np.array([by_segment[s] for s in ph_seg_ids])
+    expected_ordinals = np.concatenate([np.arange(1, c + 1) for c in seg_ph_cnt])[:n]
+
+    got = _per_photon(values, seg_ph_cnt, n)
+    assert np.array_equal(got, expected_values) and got.dtype == np.float32
+    ordinals = _photon_index_within_segment(seg_ph_cnt, n)
+    assert np.array_equal(ordinals, expected_ordinals)
+
+
+def _atl08_frame(seg_id, seg_ph_cnt):
+    return pd.DataFrame(
+        {
+            "ph_segment_id": np.repeat(seg_id, seg_ph_cnt),
+            "ph_h_classed": -1,
+        }
+    )
+
+
+def test_atl08_classes_land_on_their_photons(tmp_path):
+    seg_id = np.array([500, 501, 503, 504])  # ATL03 has no segment 502
+    seg_ph_cnt = np.array([3, 2, 4, 1])
+    seg_starts = np.concatenate(([0], np.cumsum(seg_ph_cnt)[:-1]))
+    df = _atl08_frame(seg_id, seg_ph_cnt)
+
+    # (segment, ordinal within it, class): segment 502 is not in the file.
+    rows = [(500, 2, 1), (501, 1, 2), (502, 1, 3), (503, 4, 1), (504, 1, 3)]
+    atl08 = tmp_path / "ATL08_test.h5"
+    with h5py.File(atl08, "w") as f:
+        g = f.create_group("gt1l/signal_photons")
+        g["ph_segment_id"] = np.array([r[0] for r in rows])
+        g["classed_pc_indx"] = np.array([r[1] for r in rows], dtype=np.int32)
+        g["classed_pc_flag"] = np.array([r[2] for r in rows], dtype=np.int8)
+
+    reader = ATL03Reader(str(tmp_path / ATL03), cache_dir=str(tmp_path))
+    out = reader.apply_atl08_classifications(df, str(atl08), "gt1l", seg_id, seg_starts)
+
+    expected = np.full(len(df), -1)
+    expected[0 + 1] = 1  # segment 500, 2nd photon
+    expected[3 + 0] = 2  # segment 501, 1st photon
+    expected[5 + 3] = 1  # segment 503, 4th photon
+    expected[9 + 0] = 3  # segment 504, 1st photon
+    assert np.array_equal(out["ph_h_classed"].to_numpy(), expected)
+
+
+# ---------------------------------------------------------------------------
+# External masks
+# ---------------------------------------------------------------------------
+@pytest.fixture
+def mask_cache():
+    icesat2._MASK_TREE_CACHE.clear()
+    yield icesat2._MASK_TREE_CACHE
+    icesat2._MASK_TREE_CACHE.clear()
+
+
+def _polygons(rng, n, big=False):
+    """Random polygons: big ones are jagged with many vertices, like a coastline."""
+    polys = []
+    for _ in range(n):
+        cx, cy = rng.uniform(-79.9, -79.1), rng.uniform(25.1, 25.9)
+        k = 400 if big else 6
+        angles = np.sort(rng.uniform(0, 2 * np.pi, k))
+        radius = (0.15 if big else 0.02) * (1 + 0.6 * rng.uniform(-1, 1, k))
+        polys.append(
+            shapely.polygons(
+                np.column_stack(
+                    (cx + radius * np.cos(angles), cy + radius * np.sin(angles))
+                )
+            )
+        )
+    return polys
+
+
+@pytest.mark.parametrize("prepared", [False, True])
+def test_points_in_tree_agrees_with_the_predicate_query(prepared):
+    rng = np.random.default_rng(3)
+    geoms = _polygons(rng, 5, big=True) + _polygons(rng, 30)
+    if prepared:
+        shapely.prepare(geoms)
+    tree = STRtree(geoms)
+    x = rng.uniform(-80.0, -79.0, 20_000)
+    y = rng.uniform(25.0, 26.0, 20_000)
+
+    expected = np.zeros(len(x), dtype=bool)
+    expected[tree.query(shapely.points(x, y), predicate="intersects")[0]] = True
+
+    assert np.array_equal(_points_in_tree(tree, x, y), expected)
+    assert expected.any() and not expected.all()
+
+
+def test_points_in_tree_with_nothing_to_hit():
+    tree = STRtree([shapely.box(0, 0, 1, 1)])
+    assert not _points_in_tree(tree, [5.0, 6.0], [5.0, 6.0]).any()
+    assert len(_points_in_tree(tree, [], [])) == 0
+    assert len(_points_in_tree(None, [0.5], [0.5])) == 1
+
+
+def _write_geojson(path, boxes):
+    features = [
+        {
+            "type": "Feature",
+            "properties": {"height": 3.0},
+            "geometry": json.loads(shapely.to_geojson(shapely.box(*b))),
+        }
+        for b in boxes
+    ]
+    path.write_text(json.dumps({"type": "FeatureCollection", "features": features}))
+    return str(path)
+
+
+REGION = "-80.0/-79.0/25.0/26.0"
+
+
+def test_building_tree_holds_the_footprints_of_every_file(tmp_path, monkeypatch):
+    # Two files, as two Bing quadkey tiles; one footprint lies outside the region.
+    first = _write_geojson(tmp_path / "a.geojson", [(-79.9, 25.1, -79.8, 25.2)])
+    second = _write_geojson(
+        tmp_path / "b.geojson",
+        [(-79.5, 25.5, -79.4, 25.6), (-78.5, 25.5, -78.4, 25.6)],
+    )
+    monkeypatch.setattr(fetchez, "get", lambda *a, **k: [first, second])
+
+    tree = _reader(tmp_path, region=REGION)._build_bldg_tree("bing")
+
+    assert len(tree.geometries) == 2
+    assert not shapely.is_prepared(tree.geometries).any()
+
+
+def test_land_tree_is_prepared(tmp_path, monkeypatch):
+    path = _write_geojson(tmp_path / "land.geojson", [(-79.9, 25.1, -79.5, 25.9)])
+    monkeypatch.setattr(fetchez, "get", lambda *a, **k: [path])
+
+    tree = _reader(tmp_path, region=REGION)._build_land_tree()
+
+    assert shapely.is_prepared(tree.geometries).all()
+    assert _points_in_tree(tree, [-79.7, -79.2], [25.5, 25.5]).tolist() == [True, False]
+
+
+def test_mask_trees_are_built_once_per_region(tmp_path, monkeypatch, mask_cache):
+    path = _write_geojson(tmp_path / "land.geojson", [(-79.9, 25.1, -79.5, 25.9)])
+    calls = []
+
+    def fake_get(module, **kwargs):
+        calls.append((module, tuple(kwargs["region"])))
+        return [path]
+
+    monkeypatch.setattr(fetchez, "get", fake_get)
+
+    one = _reader(tmp_path, region=REGION)
+    two = _reader(tmp_path, "ATL03_other_subsetted.h5", region=REGION)
+    assert one._get_land_tree() is two._get_land_tree()
+    assert one._get_bldg_tree("bing") is two._get_bldg_tree("bing")
+    assert len(calls) == 2  # one landmask fetch, one building fetch
+
+    elsewhere = _reader(tmp_path, region="-81.0/-80.0/25.0/26.0")
+    assert elsewhere._get_land_tree() is not one._get_land_tree()
+    assert len(calls) == 3
+
+
+def test_only_the_most_recent_mask_trees_are_kept(tmp_path, monkeypatch, mask_cache):
+    path = _write_geojson(tmp_path / "land.geojson", [(-79.9, 25.1, -79.5, 25.9)])
+    monkeypatch.setattr(fetchez, "get", lambda *a, **k: [path])
+    monkeypatch.setattr(icesat2, "_MASK_TREE_CACHE_SIZE", 2)
+
+    first = _reader(tmp_path, region="-80.0/-79.0/25.0/26.0")._get_land_tree()
+    for w in (-81.0, -82.0):
+        _reader(tmp_path, region=f"{w}/{w + 1}/25.0/26.0")._get_land_tree()
+
+    assert len(mask_cache) == 2
+    assert (
+        _reader(tmp_path, region="-80.0/-79.0/25.0/26.0")._get_land_tree() is not first
+    )
+
+
+def test_prebuilt_trees_are_used_as_given(tmp_path, monkeypatch, offline):
+    def no_fetch(*args, **kwargs):
+        raise AssertionError("a tree was rebuilt")
+
+    monkeypatch.setattr(fetchez, "get", no_fetch)
+    tree = STRtree([shapely.box(-79.9, 25.1, -79.5, 25.9)])
+    reader = _reader(
+        tmp_path,
+        region=REGION,
+        classes="1",
+        use_external_masks=True,
+        bldg_tree=tree,
+        land_tree=tree,
+    )
+
+    # Past the masks, the empty file fails to open as HDF5.
+    with pytest.raises(OSError):
+        list(reader.yield_chunks())
