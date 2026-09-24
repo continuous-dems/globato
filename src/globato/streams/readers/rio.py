@@ -15,9 +15,10 @@ import logging
 import numpy as np
 
 import rasterio
+from rasterio.crs import CRS
 from rasterio.windows import Window, from_bounds
 from rasterio.warp import transform_bounds
-from rasterio.errors import WindowError
+from rasterio.errors import CRSError, WindowError
 
 from fetchez.utils import int_or, float_or
 
@@ -90,6 +91,27 @@ class RasterioReader(BaseGlobatoReader):
         except Exception:
             return "EPSG:4326"
 
+    def _crop_crs(self, src):
+        """Horizontal CRS used to crop the raster to the region.
+
+        src_srs can carry a vertical datum that only transformez understands
+        (e.g. 'EPSG:32611+vdatum:mllw'); the crop needs just the horizontal part.
+        """
+
+        srs = str(self.src_srs).strip() if getattr(self, "src_srs", None) else None
+        if srs:
+            if "+" in srs and not srs.startswith("+") and "[" not in srs:
+                srs = srs.split("+")[0]
+            try:
+                return CRS.from_user_input(srs)
+            except CRSError:
+                logger.warning(
+                    f"Unrecognized src_srs '{self.src_srs}' for {self.src_fn}; "
+                    "using the file's own CRS to crop."
+                )
+
+        return src.crs or CRS.from_epsg(4326)
+
     def _yield_raw_chunks(self):
         yield from self._process_rio_dataset()
         return
@@ -117,16 +139,12 @@ class RasterioReader(BaseGlobatoReader):
             # Dynamically grab the SRS from the Region object, fallback to WGS84
             region_srs = getattr(self.region, "srs", None) or "EPSG:4326"
 
-            src_crs_str = (
-                self.src_srs
-                if getattr(self, "src_srs", None)
-                else (src.crs.to_string() if src.crs else "EPSG:4326")
-            )
+            src_crs = self._crop_crs(src)
 
-            if src_crs_str != region_srs:
+            if src_crs != CRS.from_user_input(region_srs):
                 try:
                     west, south, east, north = transform_bounds(
-                        region_srs, src_crs_str, west, south, east, north
+                        region_srs, src_crs, west, south, east, north
                     )
                 except Exception as err:
                     logger.error(f"Failed to transform bounds for {self.src_fn}: {err}")
