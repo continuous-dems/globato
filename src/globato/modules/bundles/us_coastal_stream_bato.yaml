@@ -5,107 +5,244 @@ description: >
   backed by dense US bathymetry (NOS Hydro, eHydro). Sets data up for
   global streaming hooks.
 modules:
-    # --- HIGH RES TOPOGRAPHY ---
-  - module: coned
-    args: {weight: 5.0}
+  - bundle: global-bathy-topo
     hooks:
-      - name: filename_filter
-        args: {exclude: "Southern_California_Topobathy_DEM_1m_B_01.tif"}
-      - name: filename_filter
-        args: {exclude: "Southern_California_Topobathy_DEM_1m_B_02.tif"}
-      - name: range_z
-        args: {min_z: -11000, max_z: 9000}  # Trench to Peak range to remove extreme artifacts.
+      - name: raster_warp
+        args:
+          res: 1s
+      - name: point_raster_mask
+        args:
+          res: 1s
       - name: stream_reproject
-        args: {dst_srs: "EPSG:4326+3855"}
-      - name: spatial_crop
+        args:
+          dst_srs: "EPSG:4326+3855"
+          cache_dir: "%shared_cache%"
 
+  # --- TOPOGRAPHY ---
+
+  # TNM NED 1
   - module: tnm
-    args: {weight: 3.0, formats: "GeoTIFF", datasets: "3/4"}
+    args: {weight: 0.5, formats: "GeoTIFF", datasets: "1"}
     hooks:
+      - name: spatial_cull
+        args:
+          sort_by: "date"
+          min_coverage: 0.98
       - name: raster_flats
-        args: {stage: "file"}
+        args:
+          stage: "file"
+      - name: raster_warp
+        args: {res: 1s}
+      - name: set-srs
+        args:
+          srs: "EPSG:4269+5703"
       - name: stream_data
       - name: stream_reproject
-        args: {dst_srs: "EPSG:4326+3855"}
+        args:
+          dst_srs: "EPSG:4326+3855"
+          cache_dir: "%shared_cache%"
+      - name: point_raster_mask
+        args:
+          barrier: "coastline"
+          invert: False
+          res: 1s
       - name: spatial_crop
+      - name: range_z
+        args: {min_z: 0.01}
 
-  # --- HIGH RES BATHYMETRY ---
+
+  # TNM NED 1/3
+  - module: tnm
+    args: {weight: 1.0, formats: "GeoTIFF", datasets: "3"}
+    hooks:
+      - name: spatial_cull
+        args:
+          sort_by: "date"
+          min_coverage: 0.98
+      - name: raster_flats
+        args:
+          stage: "file"
+      - name: set-srs
+        args:
+          srs: "EPSG:4269+5703"
+      - name: raster_warp
+        args: {res: 1s}
+      - name: stream_reproject
+        args:
+          dst_srs: "EPSG:4326+3855"
+          cache_dir: "%shared_cache%"
+      - name: point_raster_mask
+        args:
+          barrier: "coastline"
+          invert: False
+          res: 1s
+      - name: spatial_crop
+      - name: range_z
+        args: {min_z: 0.01}
+
+
+  # TNM NED 1m
+  - module: tnm
+    args: {weight: 5.0, datasets: "4"}
+    hooks:
+      - name: spatial_cull
+        args:
+          sort_by: "date"
+          min_coverage: 0.98
+      - name: unzip
+      - name: filename_filter
+        args: {match: ".img"}
+      - name: filename_filter
+        args: {exclude: ".xml"}
+      - name: raster_flats
+        args:
+          stage: "file"
+      - name: stream_reproject
+        args:
+          dst_srs: "EPSG:4269+5703"
+          cache_dir: "%shared_cache%"
+      - name: point_raster_mask
+        args:
+          barrier: "coastline"
+          invert: false
+          res: .11111111s
+      - name: range_z
+        args:
+          min_z: 0.01
+
+
+  # TNM NED 1/9
+  - module: tnm
+    args: {weight: 3.0, formats: "GeoTIFF", datasets: "2"}
+    hooks:
+      - name: spatial_cull
+        args:
+          sort_by: "date"
+          min_coverage: 0.98
+      - name: raster_flats
+        args:
+          stage: "file"
+      - name: stream_reproject
+        args:
+          dst_srs: "EPSG:4269+5703"
+          cache_dir: "%shared_cache%"
+      - name: point_raster_mask
+        args:
+          barrier: "coastline"
+          invert: false
+          res: .11111111s
+      - name: range_z
+        args:
+          min_z: 0.01
+
+  # --- BATHYMETRY ---
+
+  # NOS Hydro BAG surveys
   - module: nos_hydro
     args:
-      datatype: "bag"
-      weight: 3.0
+      datatype: bag
+      weight: 1.0
     hooks:
-      - name: filename_filter
-        args:
-          exclude: "_Ellipsoid_"
-          stage: "pre"
-      - name: stream_data
-      - name: stream_reproject
-        args:
-          dst_srs: "EPSG:4326+3855"
-      - name: spatial_crop
+    - name: filename_filter
+      args:
+        exclude: Ellipsoid
+        stage: pre
+    - name: set_datatype
+      args:
+        data_type: bag
+    - name: stream_reproject
+      args:
+        dst_srs: "EPSG:4326+3855"
+        cache_dir: "%shared_cache%"
+    - name: spatial_crop
 
-  - module: mbdb
-    args: {weight: 3.0, want_inf: False}
-    hooks:
-      - name: stream_data
-      - name: stream_reproject
-        args: {src_srs: "EPSG:4326+9003", dst_srs: "EPSG:4326+3855"}
-      - name: rq
-        args:
-          reference: "gmrt"
-          threshold: 10
-          mode: "percent"
-          builder: "grid"
-          res: 0.000277777
 
-  - module: ehydro
-    args: {weight: 2.0}
-    hooks:
-      - name: set_datatype
-        args:
-          data_type: "ehydro_gdb"
-      - name: stream_data
-      - name: stream_reproject
-        args:
-          dst_srs: "EPSG:4326+3855"
-
-  # --- BACKGROUND BATHYMETRY ---
-  - module: margrav
-    args:
-      weight: .01
-    hooks:
-      - name: stream_data
-      - name: stream_reproject
-        args: {src_srs: "EPSG:4326+9003", dst_srs: "EPSG:4269+3855"}
-      - name: range_z
-        args:
-          max_z: -0.1
-
-    # NOS Hydro surveys
+  # NOS Hydro soundings
   - module: nos_hydro
     args:
       datatype: "xyz"
-      weight: .35
+      weight: .5
     hooks:
       - name: unzip
       - name: set_datatype
         args:
-          data_type: "nos_xyz"
-      - name: stream_data
+          data_type: "nos-xyz"
+      - name: set-srs
         args:
-          chunk_size: 100000
+          srs: "EPSG:4326+vdatum:mllw"
+      - name: dynamic-weight
+        args:
+          source_field: "date"
+          method: "chronological"
+          seed: 2000
+          offset: .1
+          scale: 5
+          cap: .5
+          on_entry: true
+          stage: manifest
       - name: stream_reproject
         args:
-          src_srs: "EPSG:4326+5866"
           dst_srs: "EPSG:4326+3855"
+          cache_dir: "%shared_cache%"
       - name: spatial_crop
       - name: outlierz
+      - name: range_z
+        args: {max_z: -0.01}
+
+
+  # NOS Hydro Gridded_Data surveys
+  - module: nos_hydro
+    args:
+      datatype: "grid"
+      weight: 1
+    hooks:
+      - name: unzip
+      - name: set_datatype
+        args:
+          data_type: "nos-grid"
+      - name: set-srs
+        args:
+          horz_srs: "auto-utm"
+          vert_srs: "vdatum:mllw"
+      - name: dynamic-weight
+        args:
+          source_field: "date"
+          method: "chronological"
+          seed: 2010
+          offset: .01
+          scale: 5
+          cap: 1
+          on_entry: true
+          stage: manifest
+      - name: stream_reproject
+        args:
+          dst_srs: "EPSG:4326+3855"
+          cache_dir: "%shared_cache%"
+      - name: spatial_crop
+      - name: outlierz
+      - name: range_z
+        args: {max_z: -0.01}
+
+
+  # USACE eHydro.
+  - module: ehydro
+    args:
+      weight: 1.25
+    hooks:
+      - name: set_datatype
+        args:
+          data_type: "ehydro-xyz"
+      - name: stream_reproject
+        args:
+          dst_srs: "EPSG:4269+5703"
+          cache_dir: "%shared_cache%"
+      - name: outlierz
+
 
   # NOAA Electronic Nautical Charts
   - module: charts
     args:
-      weight: .15
+      weight: .085
     hooks:
       - name: unzip
       - name: filename_filter
@@ -114,34 +251,22 @@ modules:
           stage: "file"
       - name: set_datatype
         args:
-          data_type: "charts_000"
+          data_type: "charts-xyz"
+      - name: set-srs
+        args:
+          srs: "EPSG:4326+vdatum:mllw"
       - name: stream_data
         args:
           chunk_size: 100000
       - name: stream_reproject
         args:
-          src_srs: "EPSG:4326+5866"
           dst_srs: "EPSG:4326+3855"
+          cache_dir: "%shared_cache%"
       - name: spatial_crop
 
-  # Crowd-Sourced Bathymetry (Fills the gaps)
-  - module: csb
-    args:
-      min_year: "2024"
-      max_year: "2025"
-      weight: 0.2
-    hooks:
-      - name: stream_reproject
-        args:
-          src_srs: "EPSG:4326+5866"
-          dst_srs: "EPSG:4326+3855"
-      - name: outlierz
 
-  # - module: gebco_cog
-  #   args: {weight: 0.1}
-  #   hooks:
-  #     - name: stream_data
-  #     - name: stream_reproject
-  #       args: {src_srs: "EPSG:4326+9003", dst_srs: "EPSG:4326+3855"}
-  #     - name: range_z
-  #       args: {max_z: -0.1}
+  # --- TOPOGRAPHY/BATHYMETRY ---
+
+
+  # DAV topo-bathy lidar
+  - bundle: glob-dav  # -bathy
