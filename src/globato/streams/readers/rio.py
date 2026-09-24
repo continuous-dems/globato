@@ -76,7 +76,10 @@ class RasterioReader(BaseGlobatoReader):
         self.kwargs = kwargs
 
     def get_srs(self):
-        """Get SRS as WKT."""
+        """Get source SRS."""
+        if self.src_srs:
+            return self.src_srs
+
         if getattr(self, "srs", None):
             return self.srs
 
@@ -123,7 +126,7 @@ class RasterioReader(BaseGlobatoReader):
             if src_crs_str != region_srs:
                 try:
                     west, south, east, north = transform_bounds(
-                        region_srs, src.crs, west, south, east, north
+                        region_srs, src_crs_str, west, south, east, north
                     )
                 except Exception as err:
                     logger.error(f"Failed to transform bounds for {self.src_fn}: {err}")
