@@ -22,6 +22,62 @@ from .rio import RasterioReader
 
 logger = logging.getLogger(__name__)
 
+# Vertical datum names found in BAGs whose CRS has no authority code, mapped to
+# SRS strings transformez resolves. Checked in order, so longer names go first.
+VERTICAL_DATUM_NAMES = (
+    ("mean lower low water", "vdatum:mllw"),
+    ("mllw", "vdatum:mllw"),
+    ("mean low water", "vdatum:mlw"),
+    ("mlw", "vdatum:mlw"),
+    ("mean high water", "vdatum:mhw"),
+    ("mhw", "vdatum:mhw"),
+    ("mean sea level", "vdatum:msl"),
+    ("msl", "vdatum:msl"),
+    ("navd88", "5703"),
+    ("navd 88", "5703"),
+    ("north american vertical datum 1988", "5703"),
+)
+
+
+def identify_unregistered_vertical(crs_wkt):
+    """'EPSG:<horizontal>+<vertical>' for a compound CRS whose vertical part has no
+    EPSG code but a recognizable datum name; None otherwise.
+
+    Some NOS BAGs declare e.g. VERT_DATUM["MLLW depth"] with no authority, which
+    transformez resolves to 'proj:unknown' and cannot shift.
+    """
+
+    from pyproj import CRS as ProjCRS
+
+    try:
+        crs = ProjCRS.from_wkt(crs_wkt)
+    except Exception:
+        return None
+    if not crs.is_compound or len(crs.sub_crs_list) != 2:
+        return None
+
+    horizontal, vertical = crs.sub_crs_list
+    # Declared authority codes only: to_epsg() also guesses from the name.
+    vertical_id = vertical.to_json_dict().get("id")
+    datum_id = vertical.datum.to_json_dict().get("id") if vertical.datum else None
+    if vertical_id or datum_id:
+        return None
+    if horizontal.is_bound:  # GDAL wraps it in a BOUNDCRS with TOWGS84
+        horizontal = horizontal.source_crs
+    epsg = horizontal.to_epsg()
+    if not epsg:
+        return None
+
+    names = " ".join(
+        n.lower()
+        for n in (vertical.name, vertical.datum.name if vertical.datum else "")
+        if n
+    )
+    for key, srs in VERTICAL_DATUM_NAMES:
+        if key in names:
+            return f"EPSG:{epsg}+{srs}"
+    return None
+
 
 class BAGReader(RasterioReader):
     """Specialized Reader for BAG files.
@@ -58,6 +114,22 @@ class BAGReader(RasterioReader):
             "AUTO",
         ]
         self.mode = mode if mode.upper() in self.modes else "AUTO"
+
+    def get_srs(self):
+        """Source SRS, with an unregistered vertical datum replaced by one
+        transformez knows (see identify_unregistered_vertical)."""
+
+        if self.src_srs:
+            return self.src_srs
+
+        srs = super().get_srs()
+        identified = identify_unregistered_vertical(srs)
+        if identified:
+            logger.debug(
+                f"{self.src_fn}: vertical datum has no EPSG code; using {identified}"
+            )
+            return identified
+        return srs
 
     def _calculate_bag_weight(self, transform):
         """Weight scales directly with physical resolution.
