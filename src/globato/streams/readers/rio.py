@@ -51,6 +51,7 @@ class RasterioReader(BaseGlobatoReader):
         auto_weight=False,
         min_weight=None,
         uncertainty_scale=1.0,
+        src_srs=None,
         **kwargs,
     ):
         super().__init__(path, **kwargs)
@@ -71,10 +72,13 @@ class RasterioReader(BaseGlobatoReader):
         self.auto_weight = auto_weight
         self.min_weight = float_or(min_weight)
         self.uncertainty_scale = float_or(uncertainty_scale, 1.0)
+        self.src_srs = src_srs
         self.kwargs = kwargs
 
     def get_srs(self):
         """Get SRS as WKT."""
+        if getattr(self, "srs", None):
+            return self.srs
 
         try:
             with rasterio.Env(CPL_MIN_LOG_LEVEL=rasterio.logging.ERROR):
@@ -110,7 +114,13 @@ class RasterioReader(BaseGlobatoReader):
             # Dynamically grab the SRS from the Region object, fallback to WGS84
             region_srs = getattr(self.region, "srs", None) or "EPSG:4326"
 
-            if src.crs and src.crs.to_string() != region_srs:
+            src_crs_str = (
+                self.src_srs
+                if getattr(self, "src_srs", None)
+                else (src.crs.to_string() if src.crs else "EPSG:4326")
+            )
+
+            if src_crs_str != region_srs:
                 try:
                     west, south, east, north = transform_bounds(
                         region_srs, src.crs, west, south, east, north
