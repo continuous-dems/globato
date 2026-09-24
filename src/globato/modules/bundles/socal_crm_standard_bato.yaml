@@ -41,6 +41,16 @@ modules:
   #       args: {dst_srs: "EPSG:4326+3855"}
   #     - name: spatial_crop
 
+  - module: cudem
+    args: {weight: 3.0}
+    hooks:
+      - name: set-srs
+        args:
+          srs: "EPSG:4269+5703"
+      - name: stream_reproject
+        args: {dst_srs: "EPSG:4326+3855"}
+      - name: spatial_crop
+
   - module: dav
     args:
       survey_id: '2616'
