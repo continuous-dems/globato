@@ -24,6 +24,10 @@ modifiers:
       # Must match the DEM written by the global_hooks preset.
       outname: "%name%_%batch_name%"
 
+  - name: exclude_module
+    args:
+      modules: mar_grav/sysu
+
 modules:
   - bundle: socal-crm-bathy-topo
 
