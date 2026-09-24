@@ -48,7 +48,7 @@ modules:
         args:
           srs: "EPSG:4269+5703"
       - name: stream_reproject
-        args: {dst_srs: "EPSG:4326+3855"}
+        args: {dst_srs: "EPSG:4326+3855", cache_dir: "%shared_cache%"}
       - name: spatial_crop
 
   - module: dav
@@ -67,11 +67,11 @@ modules:
       - name: filename_filter
         args:
           match: "Bathymetry"
-          stage: manifset
+          stage: manifest
       - name: filename_filter
         args:
           exclude: "BathymetryHS"
-          stage: manifset
+          stage: manifest
       - name: unzip
       - name: filename_filter
         args:
@@ -84,9 +84,11 @@ modules:
           exclude: "._Bathymetry"
       - name: raster_warp
         args:
+          dst_crs: "EPSG:4326"
           res: 1s
       - name: set-srs
-        srs: "EPSG:32611+5703"
+        args:
+          srs: "EPSG:4326+5703"
       - name: stream_reproject
         args:
           dst_srs: "EPSG:4326+3855"
@@ -102,11 +104,14 @@ modules:
       - name: set_datatype
         args:
           data_type: "rio"
-      - name: raster_warp
-        args:
-          res: 1s
+      # No .prj in the DS 487 grids.
       - name: set-srs
-        srs: "EPSG:32611+5703"
+        args:
+          srs: "EPSG:26911+5703"
+      # Bathymetry only; land comes from the lidar and NED sources.
+      - name: range_z
+        args:
+          max_z: 0
       - name: stream_reproject
         args:
           dst_srs: "EPSG:4326+3855"
@@ -123,11 +128,9 @@ modules:
       - name: set_datatype
         args:
           data_type: "rio"
-      - name: raster_warp
-        args:
-          res: 1s
       - name: set-srs
-        srs: "EPSG:32611+5703"
+        args:
+          srs: "EPSG:26911+5703"
       - name: stream_reproject
         args:
           dst_srs: "EPSG:4326+3855"
@@ -136,7 +139,7 @@ modules:
 
   - module: usgs_sim3324
     args:
-      data_type: "ascii"
+      datatype: "ascii"
     hooks:
       - name: unzip
       - name: filename_filter
@@ -146,11 +149,11 @@ modules:
       - name: set_datatype
         args:
           data_type: "rio"
-      - name: raster_warp
-        args:
-          res: 1s
       - name: set-srs
-        srs: "EPSG:32611+5703"
+        args:
+          rules:
+            mv1316_25mbathy: "EPSG:32611+vdatum:mllw"
+            s_ca_25mbathy: "EPSG:26911+5703"
       - name: stream_reproject
         args:
           dst_srs: "EPSG:4326+3855"
@@ -159,8 +162,16 @@ modules:
 
   - module: usgs_of2014_1094
     args:
-      data_type: "bathymetry"
+      datatype: "bathymetry"
     hooks:
+      - name: filename_filter
+        args:
+          exclude: "STDDEV"
+          stage: manifest
+      - name: filename_filter
+        args:
+          exclude: "_SHD"
+          stage: manifest
       - name: unzip
       - name: filename_filter
         args:
@@ -169,11 +180,9 @@ modules:
       - name: set_datatype
         args:
           data_type: "rio"
-      - name: raster_warp
-        args:
-          res: 1s
       - name: set-srs
-        srs: "EPSG:32611+5703"
+        args:
+          srs: "EPSG:26911+5703"
       - name: stream_reproject
         args:
           dst_srs: "EPSG:4326+3855"
