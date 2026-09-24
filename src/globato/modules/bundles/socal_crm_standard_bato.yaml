@@ -108,6 +108,10 @@ modules:
       - name: set-srs
         args:
           srs: "EPSG:26911+5703"
+      # Bathymetry only; land comes from the lidar and NED sources.
+      - name: range_z
+        args:
+          max_z: 0
       - name: stream_reproject
         args:
           dst_srs: "EPSG:4326+3855"
@@ -147,7 +151,9 @@ modules:
           data_type: "rio"
       - name: set-srs
         args:
-          srs: "EPSG:32611+vdatum:mllw"
+          rules:
+            mv1316_25mbathy: "EPSG:32611+vdatum:mllw"
+            s_ca_25mbathy: "EPSG:26911+5703"
       - name: stream_reproject
         args:
           dst_srs: "EPSG:4326+3855"
