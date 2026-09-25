@@ -492,7 +492,7 @@ class Point2PixelStream(FetchHook):
         xcount, ycount, _ = region.geo_transform(
             x_inc=self.x_inc,
             y_inc=self.y_inc,
-            node="pixel",
+            node="grid",
         )
         reducer = PointPixels(src_region=region, x_size=xcount, y_size=ycount)
         return reducer.accumulate(chunk)
@@ -507,7 +507,7 @@ class Point2PixelStream(FetchHook):
         xcount, ycount, gt = region.geo_transform(
             x_inc=self.x_inc,
             y_inc=self.y_inc,
-            node="pixel",
+            node="grid",
         )
         transform = rasterio.transform.from_origin(gt[0], gt[3], gt[1], abs(gt[5]))
 
