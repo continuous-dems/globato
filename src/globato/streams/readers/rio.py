@@ -37,6 +37,11 @@ class RasterioReader(BaseGlobatoReader):
     meta_desc = "Read raster data through rasterio into a point stream"
     meta_extensions = ["tif", "tiff", "vrt", "dt0", "dt1", "dt2", "img"]
 
+    # Rasters stored in thin full-width strips (ASCII grids, untiled GeoTIFFs) would
+    # stream one strip at a time, i.e. thousands of tiny chunks. Read those in bands
+    # of whole strips holding about this many cells instead.
+    STRIP_CHUNK_CELLS = 500_000
+
     def __init__(
         self,
         path,
@@ -170,14 +175,21 @@ class RasterioReader(BaseGlobatoReader):
         else:
             master_window = Window(0, 0, src.width, src.height)
 
-        block_h, block_w = src.block_shapes[0]
-        h_chunk = self.chunk_size or block_h
-        w_chunk = self.chunk_size or block_w
-
         y_start = int(master_window.row_off)
         y_end = int(master_window.row_off + master_window.height)
         x_start = int(master_window.col_off)
         x_end = int(master_window.col_off + master_window.width)
+
+        # If blocks span the full width, the file is stored in strips of block_h
+        # rows. Each strip gives block_h * (cropped width) cells; take the number of
+        # whole strips needed to reach STRIP_CHUNK_CELLS (-(-a // b) rounds a / b
+        # up), and at least one.
+        block_h, block_w = src.block_shapes[0]
+        if not self.chunk_size and block_w >= src.width:
+            strips = -(-self.STRIP_CHUNK_CELLS // (block_h * (x_end - x_start)))
+            block_h *= max(strips, 1)
+        h_chunk = self.chunk_size or block_h
+        w_chunk = self.chunk_size or block_w
 
         for y in range(y_start, y_end, h_chunk):
             rows = min(h_chunk, y_end - y)
