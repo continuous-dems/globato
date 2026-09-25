@@ -201,6 +201,8 @@ class DiskStackTierState(StackTierStateBase):
         if self.compress:
             self.profile["compress"] = "lzw"
 
+        self._discover_existing()
+
     def _path(self, dataset_id):
         return os.path.join(
             self.output_dir,
@@ -210,7 +212,18 @@ class DiskStackTierState(StackTierStateBase):
     def _valid_existing(self, path, dataset_id):
         if not os.path.exists(path):
             return False
+
         with rasterio.open(path) as src:
+            tags = src.tags()
+
+            try:
+                stored_tiers = np.asarray(
+                    json.loads(tags.get("GLOBATO_WEIGHT_TIERS", "[]")),
+                    dtype=np.float64,
+                )
+            except (TypeError, ValueError, json.JSONDecodeError):
+                return False
+
             return (
                 src.width == self.width
                 and src.height == self.height
@@ -218,9 +231,37 @@ class DiskStackTierState(StackTierStateBase):
                 and src.crs == self.crs
                 and src.count == 1
                 and src.dtypes[0] == "uint8"
-                and src.tags().get(self.TYPE_TAG) == self.STATE_TYPE
-                and src.tags().get(self.SOURCE_TAG) == dataset_id
+                and tags.get(self.TYPE_TAG) == self.STATE_TYPE
+                and tags.get(self.SOURCE_TAG) == dataset_id
+                and tags.get("GLOBATO_STACK_STRATEGY", "").lower() == self.strategy
+                and tags.get("GLOBATO_STORAGE") == "disk"
+                and np.array_equal(stored_tiers, self.weight_tiers)
             )
+
+    def _discover_existing(self):
+        if not self.resume:
+            return
+
+        for name in os.listdir(self.output_dir):
+            if not name.endswith("_stack_state.tif"):
+                continue
+
+            path = os.path.join(self.output_dir, name)
+
+            try:
+                with rasterio.open(path) as src:
+                    tags = src.tags()
+                    dataset_id = tags.get(self.SOURCE_TAG)
+
+                if dataset_id and self._valid_existing(path, dataset_id):
+                    self.states[dataset_id] = path
+
+            except Exception as exc:
+                logger.debug(
+                    "[stack_provenance] ignoring invalid state %s: %s",
+                    path,
+                    exc,
+                )
 
     def register(self, dataset_id, *, description=None, tags=None):
         path = self._path(dataset_id)
