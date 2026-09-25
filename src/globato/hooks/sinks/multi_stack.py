@@ -143,7 +143,7 @@ class MultiStackAccumulator:
         self.xcount, self.ycount, self.dst_gt = self.region.geo_transform(
             x_inc=self.x_inc,
             y_inc=self.y_inc,
-            node="pixel",
+            node="grid",
         )
         self.transform = rasterio.transform.from_origin(
             self.dst_gt[0],
