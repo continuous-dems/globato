@@ -25,6 +25,7 @@ import os
 import tempfile
 import threading
 from typing import Mapping
+from dataclasses import dataclass
 
 import numpy as np
 import rasterio
@@ -67,8 +68,13 @@ MULTISTACK_BANDS = (
     "y",
 )
 MULTISTACK_BAND_MAP = {name: index + 1 for index, name in enumerate(MULTISTACK_BANDS)}
-
 VALID_STRATEGIES = {"mean", "weighted_mean", "mixed", "supercede"}
+
+
+@dataclass(frozen=True)
+class StackUpdate:
+    accepted: np.ndarray
+    replaced: np.ndarray
 
 
 class MultiStackAccumulator:
@@ -112,7 +118,6 @@ class MultiStackAccumulator:
         strategy="mean",
         weight_threshold="1",
         crs="EPSG:4326",
-        reset_masks=False,
         compress_state=True,
         verbose=False,
         state_fn=None,
@@ -132,12 +137,10 @@ class MultiStackAccumulator:
         self.strategy = strategy
         self.crs = crs
         self.verbose = verbose
-        self.reset_masks = reset_masks
         self.compress_state = str2bool(compress_state)
         self.resume = bool(resume)
 
         self.lock = threading.Lock()
-        self.mask_registry = {}
         self.wts = np.sort([float(x) for x in str(weight_threshold).split("/")])
 
         self.xcount, self.ycount, self.dst_gt = self.region.geo_transform(
@@ -282,6 +285,8 @@ class MultiStackAccumulator:
                     self.STATE_TAG: self.STATE_TYPE,
                     "GLOBATO_FUSION_VERSION": str(FUSION_STATE_VERSION),
                     "GLOBATO_VERSION": __version__,
+                    "GLOBATO_STACK_STRATEGY": self.strategy,
+                    "GLOBATO_WEIGHT_TIERS": json.dumps(self.wts.tolist()),
                     self.PROVENANCE_TAG: "[]",
                 }
             )
@@ -334,11 +339,14 @@ class MultiStackAccumulator:
             return
 
         col_off, row_off, width, height = sub_win
-        self.update_state(
+
+        result = self.update_state(
             state,
             Window(col_off, row_off, width, height),
             dataset_id=dataset_id,
         )
+
+        return result
 
     def update_raster_state(self, chunk, dataset_id=None):
         """Reduce one FusionState raster-stream chunk without re-pixelizing it."""
@@ -358,7 +366,8 @@ class MultiStackAccumulator:
             name: np.asarray(data[index], dtype=np.float64)
             for index, name in enumerate(FUSION_BANDS)
         }
-        self.update_state(state, window, dataset_id=dataset_id)
+        result = self.update_state(state, window, dataset_id=dataset_id)
+        return result
 
     @staticmethod
     def _state_to_array(state: Mapping[str, np.ndarray]) -> np.ndarray:
@@ -378,77 +387,73 @@ class MultiStackAccumulator:
             return np.where(count > 0, weight_sum / count, 0.0)
 
     def update_state(self, state, window, dataset_id=None):
-        """Reduce an already-binned FusionState into the global state.
-
-        This is the core cache/resume API. Side-stack should call this method
-        directly with deserialized FusionState rather than round-tripping the
-        state through representative point records.
-        """
-
         incoming = self._state_to_array(state)
         incoming_count = incoming[FUSION_BAND_MAP["count"] - 1]
         valid_new = incoming_count > 0
+
+        empty = np.zeros_like(valid_new, dtype=bool)
+
         if not np.any(valid_new):
-            return
+            return StackUpdate(
+                accepted=empty,
+                replaced=empty,
+            )
 
         with self.lock:
             current = self.dataset.read(window=window).astype(np.float64, copy=False)
 
             if self.strategy in {"mean", "weighted_mean"}:
-                # Every FusionState band is additive by contract.
                 current[:, valid_new] += incoming[:, valid_new]
+
+                accepted = valid_new
+                replaced = empty
 
             else:
                 incoming_mean_weight = self._mean_weight(incoming)
                 current_mean_weight = self._mean_weight(current)
+
                 current_count = current[FUSION_BAND_MAP["count"] - 1]
 
                 if self.strategy == "supercede":
-                    replace = valid_new & (
+                    replaced = valid_new & (
                         (current_count == 0)
-                        | (incoming_mean_weight > current_mean_weight)
+                        | (incoming_mean_weight >= current_mean_weight)
                     )
-                    merge = np.zeros_like(replace, dtype=bool)
+
+                    accepted = replaced
+
+                    if np.any(replaced):
+                        current[:, replaced] = incoming[:, replaced]
+
                 else:  # mixed
-                    incoming_tier = np.digitize(incoming_mean_weight, self.wts)
-                    current_tier = np.digitize(current_mean_weight, self.wts)
+                    incoming_tier = np.digitize(
+                        incoming_mean_weight,
+                        self.wts,
+                    )
+                    current_tier = np.digitize(
+                        current_mean_weight,
+                        self.wts,
+                    )
+
                     current_tier[current_count == 0] = -1
 
-                    replace = valid_new & (incoming_tier > current_tier)
-                    merge = valid_new & (incoming_tier == current_tier)
+                    replaced = valid_new & (incoming_tier > current_tier)
+                    merged = valid_new & (incoming_tier == current_tier)
 
-                if np.any(replace):
-                    current[:, replace] = incoming[:, replace]
-                    if self.reset_masks and dataset_id:
-                        self._reset_older_masks(dataset_id, window, replace)
+                    if np.any(replaced):
+                        current[:, replaced] = incoming[:, replaced]
 
-                if np.any(merge):
-                    current[:, merge] += incoming[:, merge]
+                    if np.any(merged):
+                        current[:, merged] += incoming[:, merged]
+
+                    accepted = replaced | merged
 
             self.dataset.write(current, window=window)
 
-    # ------------------------------------------------------------------
-    # Source-mask bookkeeping
-    # ------------------------------------------------------------------
-
-    def _reset_older_masks(self, current_dataset_id, window, superseded):
-        if not np.any(superseded):
-            return
-
-        for old_id, old_tif in self.mask_registry.items():
-            if (
-                old_id == current_dataset_id
-                or not old_tif
-                or not os.path.exists(old_tif)
-            ):
-                continue
-
-            with rasterio.open(old_tif, "r+") as mask_ds:
-                mask_data = mask_ds.read(1, window=window)
-                overlap = (mask_data == 1) & superseded
-                if np.any(overlap):
-                    mask_data[overlap] = 0
-                    mask_ds.write(mask_data, 1, window=window)
+        return StackUpdate(
+            accepted=accepted,
+            replaced=replaced,
+        )
 
     # ------------------------------------------------------------------
     # Finalization
@@ -568,7 +573,6 @@ class MultiStackHook(FetchHook):
         weight_threshold="1",
         crs=None,
         drop_classes=None,
-        reset_masks=True,
         state=None,
         resume=True,
         compress_state=True,
@@ -592,7 +596,6 @@ class MultiStackHook(FetchHook):
         self.drop_classes = (
             [int(x) for x in str(drop_classes).split("/")] if drop_classes else []
         )
-        self.reset_masks = str2bool(reset_masks)
         self.state = state
         self.resume = str2bool(resume)
         self.compress_state = str2bool(compress_state)
@@ -628,7 +631,6 @@ class MultiStackHook(FetchHook):
                 strategy=self.strategy,
                 weight_threshold=self.weight_threshold,
                 crs=self.crs,
-                reset_masks=self.reset_masks,
                 compress_state=self.compress_state,
                 verbose=True,
                 state_fn=self.state,
@@ -678,17 +680,20 @@ class MultiStackHook(FetchHook):
 
         for mod, entry in entries:
             dataset_id = self._dataset_id(entry)
-            mask_path = entry.get("artifacts", {}).get("source-masks")
 
             if self._accumulator and self._accumulator.is_registered(dataset_id):
-                logger.debug("Dataset %r already inside stack. Skipping.", dataset_id)
+                logger.debug(
+                    "Dataset %r already inside stack. Skipping.",
+                    dataset_id,
+                )
+
                 entry.pop("stream", None)
                 entry.pop("raster_stream", None)
+
             elif self.has_stream(entry):
                 entry["stream"] = self._intercept(
                     entry.get("stream"),
                     dataset_id,
-                    mask_path,
                 )
 
             entry.setdefault("artifacts", {})[self.name] = self.output
@@ -697,7 +702,7 @@ class MultiStackHook(FetchHook):
 
         return entries
 
-    def _intercept(self, stream, dataset_id, mask_path):
+    def _intercept(self, stream, dataset_id):
         """Feed point or FusionState chunks into the accumulator and pass through."""
 
         count = 0
@@ -707,9 +712,6 @@ class MultiStackHook(FetchHook):
         w_max = float("-inf")
         u_min = float("inf")
         u_max = float("-inf")
-
-        if self._accumulator and mask_path:
-            self._accumulator.mask_registry[dataset_id] = mask_path
 
         dataset_str = format_dataset_id(dataset_id)
         logger.debug("Streaming data from: %s", dataset_str)
@@ -816,7 +818,10 @@ class MultiStackHook(FetchHook):
             self._accumulator.mark_registered(dataset_id)
 
     def teardown(self):
-        if self._accumulator:
-            logger.debug("Streams finished. Finalizing MultiStack...")
-            self._accumulator.finalize()
-            self._accumulator = None
+        if not self._accumulator:
+            return
+
+        logger.debug("Streams finished. Finalizing MultiStack...")
+
+        self._accumulator.finalize()
+        self._accumulator = None
