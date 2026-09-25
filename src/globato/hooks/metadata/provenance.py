@@ -716,7 +716,6 @@ class MaskSet:
             logger.warning("Failed to write QGIS style %s: %s", qml_path, exc)
 
     def build_vector(self):
-        logger.info(f"building vector output: {self.vector_output}")
         if not self.vector_output:
             return
 
@@ -724,6 +723,7 @@ class MaskSet:
 
         records = []
 
+        logger.info(f"building vector output: {self.vector_output}")
         for dataset_id, path in self._valid_masks():
             geom = self._footprint(path)
             if geom is None or geom.is_empty:
