@@ -417,7 +417,7 @@ class MultiStackAccumulator:
                 if self.strategy == "supercede":
                     replaced = valid_new & (
                         (current_count == 0)
-                        | (incoming_mean_weight >= current_mean_weight)
+                        | (incoming_mean_weight > current_mean_weight)
                     )
 
                     accepted = replaced
