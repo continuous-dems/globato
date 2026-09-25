@@ -50,7 +50,15 @@ logger = logging.getLogger(__name__)
 
 
 class StackTierStateBase:
-    """Common stack-provenance tier semantics aligned to a FusionState grid."""
+    """Common stack-provenance tier semantics aligned to a FusionState grid.
+
+    Disk storage uses one uint8 provenance-state raster per source.
+    Pixel values encode the source’s highest stack weight tier at that location;
+    they do not encode source identity. 0 means the source is absent,
+    and positive values encode weight tiers. Because the state uses uint8,
+    mixed stack provenance supports at most 254 configured weight thresholds
+    (255 tier codes including the base tier).
+    """
 
     TYPE_TAG = "GLOBATO_DATATYPE"
     STATE_TYPE = "STACK_PROVENANCE_STATE"
@@ -75,7 +83,10 @@ class StackTierStateBase:
             self.weight_tiers = np.asarray([], dtype=np.float64)
 
         if self.strategy == "mixed" and self.weight_tiers.size >= 255:
-            raise ValueError("stack_provenance supports at most 254 mixed weight tiers")
+            raise ValueError(
+                "stack_provenance supports at most 254 mixed weight thresholds "
+                "when using uint8 tier state"
+            )
 
     def encode(self, count, weight_sum):
         """Return UInt8 source-state codes for one local FusionState window."""
