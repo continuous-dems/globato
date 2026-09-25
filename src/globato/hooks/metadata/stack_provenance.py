@@ -3,8 +3,6 @@
 
 """Post-stack source provenance with interchangeable tier-state storage.
 
-This hook is intentionally separate from ``multi_stack`` and ``source_masks``:
-
 * ``source_masks`` records where a source produced valid parsed observations.
 * ``multi_stack`` performs numerical FusionState reduction only.
 * ``stack_provenance`` records enough per-source state to determine which
@@ -19,8 +17,8 @@ and tier N is stored as N+1.
 
 Two storage backends are available:
 
-* ``disk`` (default) persists one compact UInt8 tier raster per source. Memory
-  usage stays bounded, at the cost of temporary raster I/O.
+* ``disk`` (default) persists one compact UInt8 tier raster per source dataset.
+  Memory usage stays bounded, at the cost of temporary raster I/O.
 * ``memory`` keeps one dense UInt8 tier grid per source in RAM. It avoids state
   raster I/O and is intended for high-throughput systems with ample memory.
 
