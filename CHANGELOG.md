@@ -37,6 +37,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 * Provenance VRT bands, grouped vector features, and aggregated metadata are emitted deterministically regardless of source processing order.
 * Final provenance products now expose consistent semantic metadata across disk and memory state backends while keeping temporary storage details internal.
 
+* `RasterioReader` reads rasters stored in thin full-width strips (ASCII grids, untiled GeoTIFFs) in bands of whole strips holding about 500k cells (`STRIP_CHUNK_CELLS`), instead of one chunk per strip; a `usgs_ds702` ASCII grid came through as 1,400-3,000 chunks. Tiled files, strips that already hold that many cells, and an explicit `chunk_size` are unchanged. Same points, in fewer chunks.
 
 ### BUGFIX
 
