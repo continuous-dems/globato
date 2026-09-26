@@ -10,6 +10,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### ADDED
 * Add a Changelog
 * `ATL03Reader` takes an `atl_version` option (e.g. `"007"`) and skips any ATL03 granule of a different release.
+* Add `stack_provenance` metadata hook to resolve the participating sources in a resulting `source_masks` output.
+* Added resumable per-source stack provenance state with bounded-memory disk storage and an optional in-memory backend.
+* Added grouped provenance vector output and QGIS styling, including configurable metadata-based grouping such as module and source weight.
+* Added regression coverage for stack/source provenance alignment, boundary-pixel behavior, resume state, storage-backend parity, and deterministic derived outputs.
 
 ### CHANGED
 
@@ -28,6 +32,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 * `ATL03Reader` reads only the stretch of an ATL08 granule whose segments the ATL03 file spans, found by bisection as for ATL24, instead of every classed photon of the beam.
 * `ATL03Reader` tests a photon against the landmask and building masks only when the test could change what the reader yields: photons already in a water class are not tested against the landmask, photons in a water class are not tested against the building mask, and when reading with a class filter that wants none of the classes a mask (or a step after it) can assign, photons of classes the filter drops are not tested either (noise photons always are, since the steps after the landmask read a photon's signal flag from its class). Output-identical; on a granule over a city this was about a third of the time to read it.
 * `ATL03Reader`'s building classifier takes its running ground level, range and thickness from one sort of each window instead of a pandas rolling pass per statistic, and groups its candidates with array operations; its outlier, nearshore, inland-water and reflectance steps work on the columns they use instead of copies of the whole frame. Output-identical.
+* Provenance and source-mask generation now use the exact authoritative raster transform for point-to-pixel binning, avoiding downstream reconstruction of grid geometry from bounds and resolution.
+* Stack provenance now derives final source masks from completed FusionState tier information, separating numerical stacking decisions from provenance bookkeeping.
+* Provenance VRT bands, grouped vector features, and aggregated metadata are emitted deterministically regardless of source processing order.
+* Final provenance products now expose consistent semantic metadata across disk and memory state backends while keeping temporary storage details internal.
+
 * `RasterioReader` reads rasters stored in thin full-width strips (ASCII grids, untiled GeoTIFFs) in bands of whole strips holding about 500k cells (`STRIP_CHUNK_CELLS`), instead of one chunk per strip; a `usgs_ds702` ASCII grid came through as 1,400-3,000 chunks. Tiled files, strips that already hold that many cells, and an explicit `chunk_size` are unchanged. Same points, in fewer chunks.
 
 ### BUGFIX
@@ -39,3 +48,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 * `ATL03Reader` no longer pairs an ATL03 granule with an ATL08 granule of a different release. ATL08 indexes photons by their position in one specific ATL03 release, so a mismatched pair can misclassify photons without any error. ATL24 may still come from another release: its join checks every photon against `delta_time`, which is the same in every release.
 * `ATL03Reader` now finds the ATL03 photon behind each ATL24 seafloor photon instead of matching on `delta_time` alone. ATL24 stores `delta_time` with less precision than ATL03, so the two were bit-equal for only about 1 photon in 10 and the other 90% of ATL24's bathymetry was dropped without a message. `delta_time` is also shared by every photon of a transmit pulse, so each match labelled the whole pulse as seafloor and gave all of its photons the same position and height. Photons are now located through ATL24's `index_ph`, which works on spatially subsetted ATL03 files too; the transmit pulse is matched to within 5 µs, so a last-bit difference in `delta_time` between ATL03 releases does not lose a photon; and a beam whose photons do not line up is left unclassified with a warning.
 * `ATL03Reader` no longer places ATL24 bathymetry at ATL24's own latitude, longitude and height as they stand. ATL24 takes its geolocation from the ATL03 release it was built from (006 for ATL24 V002), and against ATL03 release 007 that puts every photon of a granule 0.05 to 1.7 m away horizontally and up to 3 cm vertically, by an amount that differs from granule to granule. Bathymetry photons therefore sat that far from the rest of the photons they were read with. The offset is now measured from the photons ATL24 does not refract, over a window of track centred on each bathymetry photon and widened until it holds enough of them, and removed, so a bathymetry photon keeps ATL24's refraction correction and is otherwise where its own ATL03 file has it. Only a beam with fewer than ten such photons in the whole file keeps ATL24's values as before.
+* `MultiStack` no longer iterates or even knows about the `source_masks` hook or output.
+* Fixed stack-provenance pixel misalignment at raster cell boundaries that could leave valid MultiStack cells uncredited or assign provenance to an adjacent cell.
+* Fixed resumed stack provenance omitting sources whose persistent provenance state was created in an earlier run.
+* Fixed temporary provenance-state/backend metadata leaking into finalized source-mask products.
+* Fixed source masks retaining contributions that had been superseded by higher-priority data in mixed stacking.

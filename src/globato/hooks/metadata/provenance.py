@@ -11,14 +11,24 @@ Generate bitmap data mask
 :license: MIT, see LICENSE for more details.
 """
 
+from __future__ import annotations
+
 import os
 import logging
 import threading
+import hashlib
+import tempfile
+from urllib.parse import urlparse
+
+import numpy as np
 import rasterio
+from rasterio.enums import Resampling
+from rasterio.warp import reproject
+from rasterio.features import shapes
 from rasterio.windows import Window
 
 from fetchez.hooks import FetchHook
-from fetchez.utils import str2inc, inc2str
+from fetchez.utils import str2inc, str2bool, int_or
 from ..transforms.point_pixels import PointPixels
 
 logger = logging.getLogger(__name__)
@@ -63,7 +73,10 @@ class ProvenanceHook(FetchHook):
         )
 
         self.pixel_binner = PointPixels(
-            src_region=region, x_size=self.xcount, y_size=self.ycount
+            src_region=region,
+            x_size=self.xcount,
+            y_size=self.ycount,
+            dst_gt=self.dst_gt,
         )
 
         crs_val = getattr(region, "srs", "EPSG:4326") or "EPSG:4326"
@@ -175,19 +188,615 @@ class ProvenanceHook(FetchHook):
             logger.debug("Finalized Provenance Mask.")
 
 
-class SourceMasks(FetchHook):
-    """Generates detailed, per-file source masks.
-    Creates a directory of single-band GeoTIFFs (one per file) and builds a
-    multi-band VRT for easy debugging in GIS software.
+def source_id(entry):
+    """Return the same stable source identity used by persistent stack state."""
 
-    Usage:
-      --hook source_masks:res=1s,output_dir=debug_masks
+    checksum = entry.get("checksum")
+    if checksum:
+        return str(checksum)
+
+    url = entry.get("url", "")
+    dst_fn = entry.get("dst_fn")
+
+    if url and not url.startswith("file://"):
+        return url
+
+    if dst_fn and os.path.exists(dst_fn):
+        size = os.path.getsize(dst_fn)
+        return f"{os.path.basename(dst_fn)}|{size}B"
+
+    return os.path.basename(dst_fn or url or "unknown_dataset")
+
+
+def source_token(dataset_id, length=12):
+    """Filesystem-safe stable token without encoding an entire URL/path."""
+    return hashlib.sha256(dataset_id.encode("utf-8")).hexdigest()[:length]
+
+
+class MaskSet:
+    """Persistent collection of single-source coverage masks.
+
+    The individual GeoTIFFs are the persistent state. The VRT and vector
+    products are derived indexes that may be rebuilt cheaply.
     """
+
+    TYPE_TAG = "GLOBATO_DATATYPE"
+    SOURCE_TAG = "GLOBATO_SOURCE_ID"
+
+    def __init__(
+        self,
+        region,
+        res,
+        output,
+        output_dir=None,
+        vector_output=None,
+        *,
+        mask_type="SOURCE_MASK",
+        resume=True,
+        vector_max_size=2048,
+        vector_simplify=0.0,
+        qgis_style=True,
+        qgis_style_field="SOURCE_ID",
+        group_by=None,
+        dst_gt=None,
+        xcount=None,
+        ycount=None,
+    ):
+        self.region = region
+        self.res = float(res)
+        self.output = output
+        self.vector_output = vector_output
+        self.mask_type = mask_type
+        self.resume = bool(resume)
+        self.vector_max_size = int(vector_max_size)
+        self.vector_simplify = max(0.0, float(vector_simplify))
+        self.qgis_style = bool(qgis_style)
+        self.qgis_style_field = str(qgis_style_field)
+        self.group_by = self._parse_group_by(group_by)
+        self.dst_gt = dst_gt
+        self.xcount = int_or(xcount)
+        self.ycount = int_or(ycount)
+
+        base = os.path.splitext(output)[0]
+        self.output_dir = output_dir or f"{base}_temp_masks"
+
+        os.makedirs(self.output_dir, exist_ok=True)
+
+        if self.dst_gt is None:
+            if not self.xcount or not self.ycount:
+                self.xcount, self.ycount, self.dst_gt = region.geo_transform(
+                    x_inc=self.res,
+                    y_inc=self.res,
+                    node="grid",
+                )
+            else:
+                self.dst_gt = region.geo_transform_from_count(
+                    x_count=self.xcount,
+                    y_count=self.ycount,
+                )
+        else:
+            if not self.xcount or not self.ycount:
+                raise ValueError(
+                    "MaskSet requires xcount/ycount when dst_gt is supplied"
+                )
+
+        self.transform = rasterio.Affine.from_gdal(*self.dst_gt)
+
+        crs = getattr(region, "srs", "EPSG:4326") or "EPSG:4326"
+
+        self.profile = {
+            "driver": "GTiff",
+            "dtype": "uint8",
+            "count": 1,
+            "width": self.xcount,
+            "height": self.ycount,
+            "crs": crs,
+            "transform": self.transform,
+            "compress": "lzw",
+            "nodata": 0,
+            "tiled": True,
+        }
+
+        # dataset_id -> tif path
+        self.masks = {}
+
+    def _path(self, dataset_id):
+        token = source_token(dataset_id)
+        return os.path.join(self.output_dir, f"{token}_mask.tif")
+
+    def _validate(self, path, dataset_id):
+        with rasterio.open(path) as src:
+            if src.width != self.xcount or src.height != self.ycount:
+                return False
+
+            if src.transform != self.transform:
+                return False
+
+            if src.count != 1 or src.dtypes[0] != "uint8":
+                return False
+
+            tags = src.tags()
+            if tags.get(self.TYPE_TAG) != self.mask_type:
+                return False
+
+            if tags.get(self.SOURCE_TAG) != dataset_id:
+                return False
+
+        return True
+
+    def register(self, dataset_id, *, description=None, tags=None):
+        """Create or resume a source mask and return its path."""
+
+        path = self._path(dataset_id)
+
+        reuse = (
+            self.resume and os.path.exists(path) and self._validate(path, dataset_id)
+        )
+
+        if not reuse:
+            with rasterio.open(path, "w", **self.profile) as dst:
+                if description:
+                    dst.set_band_description(1, description)
+
+                metadata = {}
+                if tags:
+                    metadata.update(
+                        {
+                            str(k): str(v)
+                            for k, v in tags.items()
+                            if v not in (None, "", "None", "Unknown")
+                        }
+                    )
+                metadata[self.TYPE_TAG] = self.mask_type
+                metadata[self.SOURCE_TAG] = dataset_id
+
+                dst.update_tags(**metadata)
+
+        self.masks[dataset_id] = path
+        return path
+
+    @staticmethod
+    def update(path, window, mask):
+        if mask is None or not np.any(mask):
+            return
+
+        with rasterio.open(path, "r+") as dst:
+            data = dst.read(1, window=window)
+            data[mask] = 1
+            dst.write(data, 1, window=window)
+
+    def clear_others(self, current_id, window, mask):
+        """Clear pixels replaced by current_id from previously accepted masks."""
+
+        if mask is None or not np.any(mask):
+            return
+
+        for dataset_id, path in self.masks.items():
+            if dataset_id == current_id or not os.path.exists(path):
+                continue
+
+            with rasterio.open(path, "r+") as dst:
+                data = dst.read(1, window=window)
+                changed = (data != 0) & mask
+
+                if np.any(changed):
+                    data[changed] = 0
+                    dst.write(data, 1, window=window)
+
+    def _valid_masks(self):
+        valid = []
+
+        for dataset_id, path in sorted(self.masks.items()):
+            if not os.path.exists(path):
+                continue
+
+            with rasterio.open(path) as src:
+                stats = src.stats()
+
+            if stats[0].max == 0:
+                # Empty accepted masks are common and harmless.
+                continue
+
+            valid.append((dataset_id, path))
+
+        return valid
+
+    def build_vrt(self):
+        valid = self._valid_masks()
+
+        if not valid:
+            return
+
+        with rasterio.open(valid[0][1]) as src:
+            width = src.width
+            height = src.height
+            transform = src.transform
+            crs = src.crs.to_wkt() if src.crs else ""
+
+        gt = (
+            f"{transform.c}, {transform.a}, {transform.b}, "
+            f"{transform.f}, {transform.d}, {transform.e}"
+        )
+
+        xml = [
+            f'<VRTDataset rasterXSize="{width}" rasterYSize="{height}">',
+            f"  <SRS>{crs}</SRS>",
+            f"  <GeoTransform>{gt}</GeoTransform>",
+        ]
+
+        import xml.sax.saxutils as saxutils
+
+        for band, (_, path) in enumerate(valid, start=1):
+            with rasterio.open(path) as src:
+                tags = src.tags()
+                description = src.descriptions[0] or os.path.basename(path)
+
+            rel_path = os.path.relpath(path, os.path.dirname(self.output) or ".")
+
+            xml.extend(
+                [
+                    f'  <VRTRasterBand dataType="Byte" band="{band}">',
+                    f"    <Description>{saxutils.escape(description)}</Description>",
+                    "    <Metadata>",
+                ]
+            )
+
+            for key, value in tags.items():
+                xml.append(
+                    f'      <MDI key="{saxutils.escape(key)}">'
+                    f"{saxutils.escape(str(value))}</MDI>"
+                )
+
+            xml.extend(
+                [
+                    "    </Metadata>",
+                    "    <SimpleSource>",
+                    f'      <SourceFilename relativeToVRT="1">'
+                    f"{saxutils.escape(rel_path)}</SourceFilename>",
+                    "      <SourceBand>1</SourceBand>",
+                    f'      <SrcRect xOff="0" yOff="0" '
+                    f'xSize="{width}" ySize="{height}"/>',
+                    f'      <DstRect xOff="0" yOff="0" '
+                    f'xSize="{width}" ySize="{height}"/>',
+                    "    </SimpleSource>",
+                    "  </VRTRasterBand>",
+                ]
+            )
+
+        xml.append("</VRTDataset>")
+
+        output_dir = os.path.dirname(os.path.abspath(self.output))
+        os.makedirs(output_dir, exist_ok=True)
+
+        fd, tmp = tempfile.mkstemp(
+            suffix=".vrt.tmp",
+            dir=output_dir,
+        )
+        os.close(fd)
+
+        try:
+            with open(tmp, "w") as dst:
+                dst.write("\n".join(xml))
+            os.replace(tmp, self.output)
+        finally:
+            if os.path.exists(tmp):
+                os.remove(tmp)
+
+    def _footprint(self, path):
+        from shapely.geometry import shape
+        from shapely.ops import unary_union
+
+        with rasterio.open(path) as src:
+            scale = min(
+                1.0,
+                self.vector_max_size / max(src.width, src.height),
+            )
+
+            width = max(1, int(round(src.width * scale)))
+            height = max(1, int(round(src.height * scale)))
+
+            dst_transform = src.transform * src.transform.scale(
+                (src.width / width), (src.height / height)
+            )
+
+            data = np.zeros((height, width), dtype=src.dtypes[0])
+            reproject(
+                source=rasterio.band(src, 1),
+                destination=data,
+                src_transform=src.transform,
+                src_crs=src.crs,
+                dst_transform=dst_transform,
+                dst_crs=src.crs,
+                resampling=Resampling.max,
+            )
+            # transform = src.transform * Affine.scale(
+            #     src.width / width,
+            #     src.height / height,
+            # )
+
+        occupied = data > 0
+        if not np.any(occupied):
+            return None
+
+        geometries = [
+            shape(geom)
+            for geom, value in shapes(
+                occupied.astype("uint8"),
+                mask=occupied,
+                transform=dst_transform,
+            )
+            if value
+        ]
+
+        if not geometries:
+            return None
+
+        geom = unary_union(geometries)
+
+        # Preserve the overview-cell geometry by default and only
+        # simplify when explicitly requested.
+        if self.vector_simplify > 0:
+            tolerance = (
+                max(abs(dst_transform.a), abs(dst_transform.e)) * self.vector_simplify
+            )
+            geom = geom.simplify(tolerance, preserve_topology=True)
+
+        return geom
+
+    @staticmethod
+    def _parse_group_by(group_by):
+        """Normalize a grouping specification to a list of field names."""
+        if group_by in (None, "", False):
+            return []
+
+        if isinstance(group_by, str):
+            # Recipe arguments conventionally use slash-separated values.
+            values = [value.strip() for value in group_by.split("/") if value.strip()]
+        else:
+            values = [str(value).strip() for value in group_by if str(value).strip()]
+
+        return [value.upper() for value in values]
+
+    @staticmethod
+    def _aggregate_values(series, field):
+        """Aggregate metadata conservatively for a dissolved vector group."""
+        values = [
+            value
+            for value in series.dropna().tolist()
+            if str(value) not in ("", "None", "Unknown")
+        ]
+        if not values:
+            return None
+
+        unique = sorted({str(value) for value in values})
+        if len(unique) == 1:
+            return unique[0]
+
+        upper = field.upper()
+
+        if "DATE" in upper or "YEAR" in upper:
+            ordered = sorted(unique)
+            return f"{ordered[0]} - {ordered[-1]}"
+
+        if "URL" in upper:
+            domains = sorted(
+                {
+                    urlparse(value).netloc
+                    if urlparse(value).scheme and urlparse(value).netloc
+                    else value
+                    for value in unique
+                }
+            )
+            return ", ".join(domains)
+
+        return ", ".join(unique)
+
+    def _group_vector_records(self, gdf):
+        """Optionally dissolve vector records while preserving source identity semantics."""
+        # Always provide one stable visualization key.
+        if not self.group_by:
+            gdf["GROUP_ID"] = gdf["SOURCE_ID"].astype(str)
+            gdf["SOURCE_COUNT"] = 1
+            return gdf
+
+        work = gdf.copy()
+        group_fields = []
+
+        for field in self.group_by:
+            if field not in work.columns:
+                logger.warning(
+                    "Vector group_by field %r is unavailable; falling back to SOURCE_ID",
+                    field,
+                )
+                work[field] = None
+
+            # Missing grouping metadata must remain source-specific rather than all
+            # dissolving together into a single NULL group.
+            fallback = work["SOURCE_ID"].astype(str)
+            values = work[field].astype("object")
+            missing = values.isna() | values.astype(str).isin(["", "None", "Unknown"])
+            work[field] = values.where(~missing, fallback)
+            group_fields.append(field)
+
+        work["GROUP_ID"] = work[group_fields].astype(str).agg(" | ".join, axis=1)
+
+        rows = []
+        for group_id, frame in work.groupby("GROUP_ID", sort=True, dropna=False):
+            geometry = frame.geometry.union_all()
+            record = {
+                "GROUP_ID": str(group_id),
+                "SOURCE_COUNT": int(len(frame)),
+                "geometry": geometry,
+            }
+
+            # Preserve explicit grouping fields as first-class metadata.
+            for field in group_fields:
+                record[field] = self._aggregate_values(frame[field], field)
+
+            # Aggregate all remaining metadata. SOURCE_ID is intentionally not
+            # expanded into a potentially enormous comma-separated list.
+            for field in frame.columns:
+                if field in {"geometry", "GROUP_ID", "SOURCE_ID", *group_fields}:
+                    continue
+                record[field] = self._aggregate_values(frame[field], field)
+
+            rows.append(record)
+
+        import geopandas as gpd
+
+        return gpd.GeoDataFrame(rows, geometry="geometry", crs=gdf.crs)
+
+    def _write_qml_style(self, gdf):
+        """Write a sibling QGIS categorized style for the vector output."""
+        if not self.vector_output or not self.qgis_style:
+            return
+
+        field = self.qgis_style_field
+        if self.group_by and field == "SOURCE_ID":
+            field = "GROUP_ID"
+
+        if field not in gdf.columns:
+            logger.warning(
+                "Cannot build QGIS style for %s: field %r is missing",
+                self.vector_output,
+                field,
+            )
+            return
+
+        import xml.sax.saxutils as saxutils
+
+        palette = [
+            "228,26,28,150",
+            "55,126,184,150",
+            "77,175,74,150",
+            "152,78,163,150",
+            "255,127,0,150",
+            "255,255,51,150",
+            "166,86,40,150",
+            "247,129,191,150",
+            "153,153,153,150",
+            "102,194,165,150",
+            "252,141,98,150",
+            "141,160,203,150",
+        ]
+
+        values = sorted(
+            {str(value) for value in gdf[field].dropna().tolist() if str(value)}
+        )
+
+        categories = []
+        symbols = []
+
+        for index, value in enumerate(values):
+            escaped = saxutils.escape(value, {'"': "&quot;"})
+            color = palette[index % len(palette)]
+            categories.append(
+                f'    <category value="{escaped}" symbol="{index}" '
+                f'label="{escaped}" render="true"/>'
+            )
+            symbols.append(
+                f"""      <symbol type="fill" name="{index}" alpha="1">
+        <layer pass="0" class="SimpleFill" locked="0">
+          <prop k="color" v="{color}"/>
+          <prop k="outline_color" v="40,40,40,190"/>
+          <prop k="outline_width" v="0.2"/>
+          <prop k="style" v="solid"/>
+        </layer>
+      </symbol>"""
+            )
+
+        escaped_field = saxutils.escape(field, {'"': "&quot;"})
+        qml = f"""<!DOCTYPE qgis PUBLIC 'http://mrcc.com/qgis.dtd' 'SYSTEM'>
+<qgis version="3.34.0" styleCategories="Symbology">
+  <previewExpression>"{escaped_field}"</previewExpression>
+  <renderer-v2 type="categorizedSymbol" attr="{escaped_field}">
+    <categories>
+{chr(10).join(categories)}
+    </categories>
+    <symbols>
+{chr(10).join(symbols)}
+    </symbols>
+  </renderer-v2>
+</qgis>
+"""
+
+        qml_path = os.path.splitext(self.vector_output)[0] + ".qml"
+        try:
+            with open(qml_path, "w") as dst:
+                dst.write(qml)
+            logger.info(
+                "QGIS categorized style saved to %s (field=%s)",
+                qml_path,
+                field,
+            )
+        except Exception as exc:
+            logger.warning("Failed to write QGIS style %s: %s", qml_path, exc)
+
+    def build_vector(self):
+        if not self.vector_output:
+            return
+
+        import geopandas as gpd
+
+        records = []
+
+        logger.info(f"building vector output: {self.vector_output}")
+        for dataset_id, path in self._valid_masks():
+            geom = self._footprint(path)
+            if geom is None or geom.is_empty:
+                continue
+
+            with rasterio.open(path) as src:
+                tags = src.tags()
+
+            record = {
+                "SOURCE_ID": dataset_id,
+                "geometry": geom,
+            }
+            record.update(tags)
+            records.append(record)
+
+        if not records:
+            return
+
+        crs = self.profile["crs"]
+        gdf = gpd.GeoDataFrame(records, geometry="geometry", crs=crs)
+        gdf = self._group_vector_records(gdf)
+
+        # Keep the canonical identifiers first for convenient GIS inspection.
+        ordered = [
+            name
+            for name in ("GROUP_ID", "SOURCE_ID", "SOURCE_COUNT")
+            if name in gdf.columns
+        ]
+        ordered += [
+            name for name in gdf.columns if name not in ordered and name != "geometry"
+        ]
+        if "geometry" in gdf.columns:
+            ordered.append("geometry")
+        gdf = gdf[ordered]
+        gdf = gdf.sort_values("GROUP_ID", kind="stable").reset_index(drop=True)
+
+        gdf.to_file(
+            self.vector_output,
+            driver="GPKG",
+            engine="pyogrio",
+        )
+
+        self._write_qml_style(gdf)
+
+    def finalize(self):
+        self.build_vrt()
+        self.build_vector()
+
+
+class SourceMasks(FetchHook):
+    """Record all valid source coverage observed before stack reduction."""
 
     name = "source-masks"
     meta_stage = "stream"
     meta_category = "metadata"
-    meta_desc = "Generate source masks for all dataset and build a combined VRT/GPKG."
+    meta_desc = "Record observed source coverage."
     meta_aliases = ["source_masks"]
 
     def __init__(
@@ -196,468 +805,123 @@ class SourceMasks(FetchHook):
         output_dir=None,
         output="source_masks.vrt",
         vector_output=None,
+        resume=True,
+        vector_max_size=2048,
+        vector_simplify=0.0,
+        qgis_style=True,
+        qgis_style_field="SOURCE_ID",
+        group_by=None,
         **kwargs,
     ):
         super().__init__(**kwargs)
+
         self.res = str2inc(res)
         self.output = output
+        self.output_dir = output_dir
         self.vector_output = vector_output
+        self.resume = str2bool(resume)
+        self.vector_max_size = int(vector_max_size)
+        self.vector_simplify = max(0.0, float(vector_simplify))
+        self.qgis_style = str2bool(qgis_style)
+        self.qgis_style_field = str(qgis_style_field)
+        self.group_by = group_by
 
-        base_name = os.path.splitext(self.output)[0]
-        self.output_dir = output_dir or f"{base_name}_temp_masks"
+        self._masks = None
 
-        self._initialized = False
-        self.tifs = []
-        self.lock = threading.Lock()
-
-    def _init_grid(self, region):
-        if self._initialized:
+    def _init_masks(self, region):
+        if self._masks:
             return
 
-        x_inc, y_inc = self.res, self.res
-        self.xcount, self.ycount, self.dst_gt = region.geo_transform(
-            x_inc=x_inc, y_inc=y_inc, node="grid"
+        self._masks = MaskSet(
+            region,
+            self.res,
+            self.output,
+            output_dir=self.output_dir,
+            vector_output=self.vector_output,
+            mask_type="SOURCE_MASK",
+            resume=self.resume,
+            vector_max_size=self.vector_max_size,
+            vector_simplify=self.vector_simplify,
+            qgis_style=self.qgis_style,
+            qgis_style_field=self.qgis_style_field,
+            group_by=self.group_by,
         )
-        self.transform = rasterio.transform.from_origin(
-            region.xmin, region.ymax, x_inc, y_inc
-        )
-
-        if not os.path.exists(self.output_dir):
-            os.makedirs(self.output_dir)
-
-        crs_val = getattr(region, "srs", "EPSG:4326") or "EPSG:4326"
-        self.profile = {
-            "driver": "GTiff",
-            "dtype": "uint8",
-            "count": 1,
-            "width": self.xcount,
-            "height": self.ycount,
-            "crs": crs_val,
-            "transform": self.transform,
-            "compress": "lzw",
-            "nodata": 0,
-        }
-
-        self._initialized = True
-        logger.debug(f"Initialized Detailed Source Masks in ./{self.output_dir}")
-
-    def _write_qml_style(self, qml_path, unique_groups):
-        """Generates a dynamic Categorized QGIS styling file."""
-
-        palette = [
-            "228,26,28,150",  # Red
-            "55,126,184,150",  # Blue
-            "77,175,74,150",  # Green
-            "152,78,163,150",  # Purple
-            "255,127,0,150",  # Orange
-            "255,255,51,150",  # Yellow
-            "166,86,40,150",  # Brown
-        ]
-
-        categories_xml = ""
-        symbols_xml = ""
-
-        for i, group in enumerate(unique_groups):
-            # Loop back to start if we have more groups than colors
-            color = palette[i % len(palette)]
-
-            # The legend entry
-            categories_xml += (
-                f'    <category value="{group}" symbol="{i}" label="{group}"/>\n'
-            )
-
-            # The symbology definition
-            symbols_xml += f"""
-      <symbol type="fill" name="{i}" alpha="1">
-        <layer pass="0" class="SimpleFill" locked="0">
-          <prop k="color" v="{color}"/>
-          <prop k="outline_color" v="0,0,0,255"/>
-          <prop k="outline_width" v="0.3"/>
-          <prop k="style" v="solid"/>
-        </layer>
-      </symbol>"""
-
-        # The master QML template
-        qml_content = f"""<!DOCTYPE qgis PUBLIC 'http://mrcc.com/qgis.dtd' 'SYSTEM'>
-<qgis version="3.10.0" styleCategories="Symbology|Labeling">
-
-  <previewExpression>"GROUP_ID"</previewExpression>
-  <!-- Categorized Renderer based on the GROUP_ID field -->
-  <renderer-v2 type="categorizedSymbol" attr="GROUP_ID">
-    <categories>
-{categories_xml}
-    </categories>
-    <symbols>
-{symbols_xml}
-    </symbols>
-  </renderer-v2>
-
-  <!-- Labeling: Automatically label using the GROUP_ID field -->
-  <labeling type="simple">
-    <settings>
-      <text-style fontFamily="sans-serif" fontSize="9" textColor="0,0,0,255">
-        <text-buffer bufferSize="1" bufferColor="255,255,255,255" bufferDraw="1"/>
-      </text-style>
-      <fieldName>"GROUP_ID"</fieldName>
-      <placement dist="0" quadOffset="4" placement="0"/>
-    </settings>
-  </labeling>
-</qgis>
-"""
-        try:
-            with open(qml_path, "w") as f:
-                f.write(qml_content)
-            logger.debug(f"Generated dynamic Categorized QML style file: {qml_path}")
-        except Exception as e:
-            logger.error(f"Failed to write QML file: {e}")
 
     def run(self, entries):
-        if not self._initialized and entries:
+        if not self._masks and entries:
             region = next(
-                (mod.region for mod, _ in entries if getattr(mod, "region", None)), None
+                (mod.region for mod, _ in entries if getattr(mod, "region", None)),
+                None,
             )
+
             if region:
-                self._init_grid(region)
+                self._init_masks(region)
+
+        if not self._masks:
+            return entries
 
         for mod, entry in entries:
-            if self.is_point_stream(entry) and self._initialized:
-                stream = entry.get("stream")
-                src_name = os.path.basename(entry.get("dst_fn", f"unknown_{id(entry)}"))
-                base = os.path.splitext(src_name)[0]
-                res_str = inc2str(self.res)
-                tif_path = os.path.join(self.output_dir, f"{base}_{res_str}_mask.tif")
+            if not self.is_point_stream(entry):
+                continue
 
-                meta_tags = {
-                    "MODULE": getattr(mod, "name", "Unknown"),
-                    "DATASET": getattr(mod, "title", getattr(mod, "name", "Unknown")),
-                    "CATEGORY": getattr(mod, "meta_category", "Unknown"),
-                    "AGENCY": getattr(mod, "meta_agency", "Unknown"),
-                    "DATATYPE": entry.get("data_type", "Unknown"),
-                    "RESOLUTION": getattr(mod, "meta_resolution", "Varies"),
-                    "URL": entry.get("url", "Unknown"),
-                    "WEIGHT": str(getattr(mod, "weight", 1.0)),
-                }
+            dataset_id = source_id(entry)
+            src_name = os.path.basename(entry.get("dst_fn", dataset_id))
+            base = os.path.splitext(src_name)[0]
 
-                if "metadata" in entry and isinstance(entry["metadata"], dict):
-                    for k, v in entry["metadata"].items():
-                        meta_tags[str(k).upper()] = str(v)
+            tags = {
+                "MODULE": getattr(mod, "name", None),
+                "DATASET": getattr(
+                    mod,
+                    "title",
+                    getattr(mod, "name", None),
+                ),
+                "CATEGORY": getattr(mod, "meta_category", None),
+                "AGENCY": getattr(mod, "meta_agency", None),
+                "DATATYPE": entry.get("data_type"),
+                "RESOLUTION": getattr(mod, "meta_resolution", None),
+                "URL": entry.get("url"),
+                "WEIGHT": getattr(mod, "weight", 1.0),
+            }
 
-                clean_tags = {
-                    k: str(v)
-                    for k, v in meta_tags.items()
-                    if v not in ["Unknown", "None", "", None]
-                }
+            if isinstance(entry.get("metadata"), dict):
+                tags.update({str(k).upper(): v for k, v in entry["metadata"].items()})
 
-                with rasterio.open(tif_path, "w", **self.profile) as dst:
-                    dst.set_band_description(1, base)
+            path = self._masks.register(
+                dataset_id,
+                description=base,
+                tags=tags,
+            )
 
-                    if clean_tags:
-                        dst.update_tags(**clean_tags)
+            stream = entry.get("stream")
+            entry["stream"] = self._intercept(
+                stream,
+                path,
+                mod.region,
+            )
 
-                with self.lock:
-                    self.tifs.append(tif_path)
-
-                entry["stream"] = self._intercept(stream, tif_path, mod.region)
-                entry.setdefault("artifacts", {})[self.name] = tif_path
+            entry.setdefault("artifacts", {})[self.name] = path
 
         return entries
 
-    def _intercept(self, stream, tif_path, region):
-        """Pass-through generator that writes to the specific TIF."""
-
+    def _intercept(self, stream, path, region):
         pixel_binner = PointPixels(
-            src_region=region, x_size=self.xcount, y_size=self.ycount
+            src_region=region,
+            x_size=self._masks.xcount,
+            y_size=self._masks.ycount,
+            dst_gt=self._masks.dst_gt,
         )
-        with rasterio.open(tif_path, "r+") as dst:
-            for chunk in stream:
-                has_data, sub_win, _ = pixel_binner.coverage(chunk)
 
-                if has_data is not None:
-                    col_off, row_off, w, h = sub_win
-                    window = Window(col_off, row_off, w, h)
+        for chunk in stream:
+            has_data, sub_win, _ = pixel_binner.coverage(chunk)
 
-                    current_mask = dst.read(1, window=window)
-                    current_mask |= has_data
-                    dst.write(current_mask, 1, window=window)
+            if has_data is not None:
+                col, row, width, height = sub_win
+                window = Window(col, row, width, height)
 
-                yield chunk
+                MaskSet.update(path, window, has_data)
+
+            yield chunk
 
     def teardown(self):
-        """Build the VRT linking all the individual masks together."""
-
-        if not self._initialized or not self.tifs:
-            return
-
-        # vrt_path = os.path.join(self.output_dir, self.vrt_name)
-        logger.info(f"Building master VRT mask: {self.output}")
-
-        try:
-            with rasterio.open(self.tifs[0]) as src:
-                width = src.width
-                height = src.height
-                transform = src.transform
-                crs = src.crs.to_wkt() if src.crs else ""
-                dtype = src.dtypes[0]
-                _stats = src.stats()
-
-            dtype_map = {
-                "uint8": "Byte",
-                "uint16": "UInt16",
-                "int16": "Int16",
-                "uint32": "UInt32",
-                "int32": "Int32",
-                "float32": "Float32",
-                "float64": "Float64",
-            }
-            gdal_dtype = dtype_map.get(dtype, "Float32")
-
-            gt = f"{transform.c}, {transform.a}, {transform.b}, {transform.f}, {transform.d}, {transform.e}"
-
-            xml_lines = [
-                f'<VRTDataset rasterXSize="{width}" rasterYSize="{height}">',
-                f"  <SRS>{crs}</SRS>",
-                f"  <GeoTransform>{gt}</GeoTransform>",
-            ]
-
-            for i, tif in enumerate(self.tifs, start=1):
-                # remove the mask if no valid data
-                if not os.path.exists(tif):
-                    continue
-
-                with rasterio.open(tif) as src:
-                    tif_stats = src.stats()
-                    tif_tags = src.tags()
-
-                if tif_stats[0].max == 0.0:
-                    os.remove(tif)
-                    continue
-
-                rel_path = os.path.relpath(tif, os.path.dirname(self.output))
-                name = os.path.basename(tif).replace("_mask.tif", "")
-
-                xml_lines.extend(
-                    [
-                        f'  <VRTRasterBand dataType="{gdal_dtype}" band="{i}">',
-                        f"    <Description>{name}</Description>",
-                    ]
-                )
-
-                if tif_tags:
-                    import xml.sax.saxutils as saxutils
-
-                    xml_lines.append("    <Metadata>")
-                    for k, v in tif_tags.items():
-                        safe_v = saxutils.escape(
-                            str(v)
-                        )  # Prevents XML breakage from URLs with '&'
-                        xml_lines.append(f'      <MDI key="{k}">{safe_v}</MDI>')
-                    xml_lines.append("    </Metadata>")
-
-                xml_lines.extend(
-                    [
-                        "    <SimpleSource>",
-                        f'      <SourceFilename relativeToVRT="1">{rel_path}</SourceFilename>',
-                        "      <SourceBand>1</SourceBand>",
-                        f'      <SrcRect xOff="0" yOff="0" xSize="{width}" ySize="{height}"/>',
-                        f'      <DstRect xOff="0" yOff="0" xSize="{width}" ySize="{height}"/>',
-                        "    </SimpleSource>",
-                        "  </VRTRasterBand>",
-                    ]
-                )
-                # xml_lines.extend(
-                #     [
-                #         f'  <VRTRasterBand dataType="{gdal_dtype}" band="{i}">',
-                #         f"    <Description>{name}</Description>",
-                #         "    <SimpleSource>",
-                #         f'      <SourceFilename relativeToVRT="1">{rel_path}</SourceFilename>',
-                #         "      <SourceBand>1</SourceBand>",
-                #         f'      <SrcRect xOff="0" yOff="0" xSize="{width}" ySize="{height}"/>',
-                #         f'      <DstRect xOff="0" yOff="0" xSize="{width}" ySize="{height}"/>',
-                #         "    </SimpleSource>",
-                #         "  </VRTRasterBand>",
-                #     ]
-                # )
-
-            xml_lines.append("</VRTDataset>")
-
-            with open(self.output, "w") as f:
-                f.write("\n".join(xml_lines))
-
-            logger.debug(f"VRT {self.output} built successfully.")
-
-            # --- Generate Vector Spatial Metadata, if requested ---
-            if self.vector_output:
-                logger.info(f"Polygonizing VRT to {self.vector_output}...")
-                try:
-                    import geopandas as gpd
-                    from rasterio.features import shapes
-                    from shapely.geometry import shape
-
-                    records = []
-                    with rasterio.open(self.output) as src:
-                        for i in range(1, src.count + 1):
-                            band = src.read(i)
-                            band_name = src.descriptions[i - 1] or f"Band_{i}"
-                            tags = src.tags(i)
-                            # Polygonize where pixel > 0
-                            geom_generator = shapes(
-                                band, mask=(band > 0), transform=src.transform
-                            )
-                            for geom, value in geom_generator:
-                                record = {
-                                    "Filename": band_name,
-                                    "geometry": shape(geom),
-                                }
-                                record.update(tags)
-                                records.append(record)
-
-                    if records:
-                        from urllib.parse import urlparse
-
-                        gdf = gpd.GeoDataFrame(records, crs=src.crs)
-                        agg_funcs = {}
-
-                        for col in gdf.columns:
-                            if col in ["MODULE", "DATASET", "WEIGHT", "geometry"]:
-                                continue
-                            elif "DATE" in col.upper() or "YEAR" in col.upper():
-                                # Create a range: min - max
-                                agg_funcs[col] = lambda x: (
-                                    f"{x.dropna().min()} - {x.dropna().max()}"
-                                    if x.dropna().min() != x.dropna().max()
-                                    else str(x.dropna().min())
-                                )
-                            elif "URL" in col.upper():
-                                # Extract unique base domains instead of keeping massive URLs
-                                agg_funcs[col] = lambda x: ", ".join(
-                                    set(
-                                        urlparse(str(u)).netloc
-                                        if str(u).startswith("http")
-                                        else str(u)
-                                        for u in x.dropna()
-                                        if str(u) != "Unknown"
-                                    )
-                                )
-                            else:
-                                # For all other fields, join unique values into a comma-separated list
-                                agg_funcs[col] = lambda x: ", ".join(
-                                    map(str, set(x.dropna()))
-                                )
-
-                        # Apply the custom aggregation during the dissolve
-                        gdf = gdf.dissolve(
-                            by=["MODULE", "DATASET", "WEIGHT"], aggfunc=agg_funcs
-                        ).reset_index()
-
-                        gdf["GROUP_ID"] = (
-                            gdf["MODULE"]
-                            + " | "
-                            + gdf["DATASET"]
-                            + " (Wt: "
-                            + gdf["WEIGHT"].astype(str)
-                            + ")"
-                        )
-                        if "Filename" in gdf.columns:
-                            gdf = gdf.drop(columns=["Filename"])
-
-                        if "AREA_OR_POINT" in gdf.columns:
-                            gdf = gdf.drop(columns=["AREA_OR_POINT"])
-
-                        if "DATA_TYPE" in gdf.columns and "DATATYPE" in gdf.columns:
-                            gdf = gdf.drop(columns=["DATA_TYPE"])
-
-                        if "NAME" in gdf.columns:
-                            gdf = gdf.drop(columns=["NAME"])
-
-                        cols = gdf.columns.tolist()
-                        cols.insert(0, cols.pop(cols.index("GROUP_ID")))
-
-                        if "geometry" in cols:
-                            cols.append(cols.pop(cols.index("geometry")))
-
-                        gdf = gdf[cols]
-
-                        gdf.to_file(self.vector_output, driver="GPKG", engine="pyogrio")
-                        logger.info(
-                            f"Spatial metadata vector saved to {self.vector_output}"
-                        )
-
-                        unique_groups = gdf["GROUP_ID"].unique().tolist()
-                        qml_path = os.path.splitext(self.vector_output)[0] + ".qml"
-                        self._write_qml_style(qml_path, unique_groups)
-                    else:
-                        logger.debug("No valid geometries found to polygonize.")
-
-                except Exception as e:
-                    logger.exception(f"Failed to generate spatial metadata vector: {e}")
-
-        except Exception as e:
-            logger.error(f"Failed to build VRT with rasterio: {e}")
-
-    # def teardown_(self):
-    #     """Build the VRT linking all the individual masks together."""
-
-    #     if not self._initialized or not self.tifs:
-    #         return
-
-    #     vrt_path = os.path.join(self.output_dir, self.vrt_name)
-    #     logger.info(f"Building master VRT mask: {vrt_path}")
-
-    #     try:
-    #         # Use gdal Python bindings if available
-    #         from osgeo import gdal
-
-    #         vrt_options = gdal.BuildVRTOptions(separate=True)
-    #         vrt_ds = gdal.BuildVRT(vrt_path, self.tifs, options=vrt_options)
-
-    #         if vrt_ds:
-    #             # Name the bands after the files so they show up beautifully in QGIS
-    #             for i, tif in enumerate(self.tifs):
-    #                 band = vrt_ds.GetRasterBand(i + 1)
-    #                 name = os.path.basename(tif).replace("_mask.tif", "")
-    #                 band.SetDescription(name)
-
-    #             vrt_ds.FlushCache()
-    #             vrt_ds = None
-
-    #     except ImportError:
-    #         import subprocess
-
-    #         logger.debug(
-    #             "osgeo Python bindings not found. Falling back to gdalbuildvrt CLI."
-    #         )
-
-    #         cmd = ["gdalbuildvrt", "-separate", vrt_path] + self.tifs
-
-    #         try:
-    #             subprocess.run(
-    #                 cmd,
-    #                 check=True,
-    #                 stdout=subprocess.DEVNULL,
-    #                 stderr=subprocess.DEVNULL,
-    #             )
-    #         except FileNotFoundError:
-    #             logger.error(
-    #                 "gdalbuildvrt command not found on system. Skipping VRT generation."
-    #             )
-    #         except subprocess.CalledProcessError as e:
-    #             logger.error(f"Failed to build VRT via CLI: {e}")
-
-    # def teardown_gdal(self):
-    #     """Build the VRT linking all the individual masks together."""
-
-    #     if self._initialized and self.tifs:
-    #         vrt_path = os.path.join(self.output_dir, self.vrt_name)
-    #         logger.info(f"Building master VRT mask: {vrt_path}")
-
-    #         vrt_options = gdal.BuildVRTOptions(separate=True)
-    #         vrt_ds = gdal.BuildVRT(vrt_path, self.tifs, options=vrt_options)
-
-    #         if vrt_ds:
-    #             for i, tif in enumerate(self.tifs):
-    #                 band = vrt_ds.GetRasterBand(i + 1)
-    #                 name = os.path.basename(tif).replace("_mask.tif", "")
-    #                 band.SetDescription(name)
-
-    #             vrt_ds.FlushCache()
-    #             vrt_ds = None
+        if self._masks:
+            self._masks.finalize()
