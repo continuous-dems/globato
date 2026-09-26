@@ -386,7 +386,7 @@ class MaskSet:
     def _valid_masks(self):
         valid = []
 
-        for dataset_id, path in self.masks.items():
+        for dataset_id, path in sorted(self.masks.items()):
             if not os.path.exists(path):
                 continue
 
@@ -568,7 +568,7 @@ class MaskSet:
         if not values:
             return None
 
-        unique = list(dict.fromkeys(str(value) for value in values))
+        unique = sorted({str(value) for value in values})
         if len(unique) == 1:
             return unique[0]
 
@@ -579,13 +579,15 @@ class MaskSet:
             return f"{ordered[0]} - {ordered[-1]}"
 
         if "URL" in upper:
-            domains = []
-            for value in unique:
-                parsed = urlparse(value)
-                domains.append(
-                    parsed.netloc if parsed.scheme and parsed.netloc else value
-                )
-            return ", ".join(dict.fromkeys(domains))
+            domains = sorted(
+                {
+                    urlparse(value).netloc
+                    if urlparse(value).scheme and urlparse(value).netloc
+                    else value
+                    for value in unique
+                }
+            )
+            return ", ".join(domains)
 
         return ", ".join(unique)
 
@@ -619,8 +621,8 @@ class MaskSet:
         work["GROUP_ID"] = work[group_fields].astype(str).agg(" | ".join, axis=1)
 
         rows = []
-        for group_id, frame in work.groupby("GROUP_ID", sort=False, dropna=False):
-            geometry = frame.geometry.unary_union
+        for group_id, frame in work.groupby("GROUP_ID", sort=True, dropna=False):
+            geometry = frame.geometry.union_all()
             record = {
                 "GROUP_ID": str(group_id),
                 "SOURCE_COUNT": int(len(frame)),
@@ -773,6 +775,7 @@ class MaskSet:
         if "geometry" in gdf.columns:
             ordered.append("geometry")
         gdf = gdf[ordered]
+        gdf = gdf.sort_values("GROUP_ID", kind="stable").reset_index(drop=True)
 
         gdf.to_file(
             self.vector_output,
