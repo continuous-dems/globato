@@ -13,6 +13,7 @@ from globato.hooks.metadata.stack_provenance import (
     StackProvenance,
 )
 from globato.hooks.transforms.point_pixels import FUSION_BAND_MAP, FUSION_BANDS
+from globato.hooks.sinks.multi_stack import MultiStackAccumulator
 
 
 WIDTH = 4
@@ -294,3 +295,301 @@ def test_memory_backend_reports_predictable_dense_state_size(tmp_path):
     state.register("b")
 
     assert state.bytes_used == WIDTH * HEIGHT * 2  # uint8: one byte/cell/source
+
+
+def _point_chunk(xs, ys, *, z=10.0, weight=1.0):
+    xs = np.asarray(xs, dtype=np.float64)
+    ys = np.asarray(ys, dtype=np.float64)
+
+    return np.rec.fromarrays(
+        [
+            xs,
+            ys,
+            np.full(xs.size, z, dtype=np.float64),
+            np.full(xs.size, weight, dtype=np.float64),
+            np.zeros(xs.size, dtype=np.float64),
+        ],
+        names=["x", "y", "z", "w", "u"],
+    )
+
+
+def test_stack_provenance_uses_exact_fusion_state_grid(tmp_path):
+    """multi_stack and stack_provenance must bin boundary points identically."""
+
+    region = [-121.05, -121.025, 35.475, 35.5]
+    res = 1.0 / 3600.0
+
+    state_path = tmp_path / "fusion.tif"
+
+    acc = MultiStackAccumulator(
+        region=region,
+        x_inc=res,
+        y_inc=res,
+        output_fn=str(tmp_path / "stack.tif"),
+        strategy="mixed",
+        weight_threshold="0.25/0.5/1",
+        crs="EPSG:4326",
+        compress_state=False,
+        state_fn=str(state_path),
+        resume=False,
+    )
+
+    try:
+        # Construct points directly from the transform multi_stack actually uses.
+        gt = acc.dst_gt
+
+        # Include:
+        # - exact interior grid intersections,
+        # - values immediately to either side,
+        # - a point near the eastern side of the grid.
+        cells = [
+            (10, 10),
+            (27, 43),
+            (89, 20),
+        ]
+
+        xs = []
+        ys = []
+
+        for col, row in cells:
+            x = gt[0] + col * gt[1]
+            y = gt[3] + row * gt[5]
+
+            xs.extend(
+                [
+                    x,
+                    np.nextafter(x, -np.inf),
+                    np.nextafter(x, np.inf),
+                ]
+            )
+            ys.extend(
+                [
+                    y,
+                    y,
+                    y,
+                ]
+            )
+
+        points = _point_chunk(xs, ys, weight=0.5)
+
+        # What multi_stack says the source occupies.
+        _, stack_window, _ = acc.pixel_binner.accumulate(points)
+
+        assert stack_window is not None
+
+        # Persist the numerical stack.
+        acc.update(points, dataset_id="boundary-source")
+        acc.mark_registered("boundary-source")
+
+    finally:
+        acc.close()
+
+    # Initialize stack_provenance from the exact persisted FusionState.
+    hook = StackProvenance(
+        output=str(tmp_path / "stack_sources.vrt"),
+        output_dir=str(tmp_path / "stack_masks"),
+        state_dir=str(tmp_path / "stack_state"),
+        storage="memory",
+    )
+
+    hook._init(str(state_path))
+
+    # It must be using exactly the transform stored on the FusionState.
+    with rasterio.open(state_path) as src:
+        expected_gt = src.transform.to_gdal()
+
+    assert hook._binner.dst_gt == pytest.approx(expected_gt)
+
+    # And, most importantly, the identical point stream must generate
+    # the identical source window.
+    _, provenance_window, _ = hook._binner.accumulate(points)
+
+    assert provenance_window == stack_window
+
+
+def test_stack_provenance_uses_exact_multistack_grid_for_boundary_points(tmp_path):
+    """Boundary-heavy point streams must occupy identical windows in both hooks."""
+
+    region = [-121.05, -121.025, 35.475, 35.5]
+    res = 1.0 / 3600.0
+
+    state_path = tmp_path / "fusion.tif"
+
+    acc = MultiStackAccumulator(
+        region=region,
+        x_inc=res,
+        y_inc=res,
+        output_fn=str(tmp_path / "stack.tif"),
+        strategy="mixed",
+        weight_threshold="0.25/0.5/1",
+        crs="EPSG:4326",
+        compress_state=False,
+        state_fn=str(state_path),
+        resume=False,
+    )
+
+    try:
+        transform = rasterio.Affine.from_gdal(*acc.dst_gt)
+
+        # Exact interior boundaries, including one adjacent to the east side
+        # of the grid. These are the kind of coordinates that exposed the
+        # original floating-point mismatch.
+        cells = [
+            (10, 10),
+            (27, 43),
+            (89, 20),
+            (30, 89),
+        ]
+
+        xs = []
+        ys = []
+
+        for col, row in cells:
+            x, y = transform * (col, row)
+
+            xs.extend(
+                [
+                    x,
+                    np.nextafter(x, -np.inf),
+                    np.nextafter(x, np.inf),
+                ]
+            )
+            ys.extend(
+                [
+                    y,
+                    y,
+                    y,
+                ]
+            )
+
+        points = _point_chunk(xs, ys)
+
+        _, stack_window, _ = acc.pixel_binner.accumulate(points)
+
+        assert stack_window is not None
+
+        # Put the same points into the real FusionState so stack_provenance
+        # initializes from exactly the grid multi_stack produced.
+        acc.update(points, dataset_id="boundary-source")
+        acc.mark_registered("boundary-source")
+
+    finally:
+        acc.close()
+
+    hook = StackProvenance(
+        output=str(tmp_path / "stack_sources.vrt"),
+        output_dir=str(tmp_path / "stack_masks"),
+        state_dir=str(tmp_path / "stack_state"),
+        storage="memory",
+    )
+    hook._init(str(state_path))
+
+    with rasterio.open(state_path) as src:
+        fusion_gt = src.transform.to_gdal()
+
+    # The provenance binner must use the persisted FusionState transform,
+    # not a transform reconstructed from its bounds.
+    assert hook._binner.dst_gt == pytest.approx(fusion_gt)
+
+    _, provenance_window, _ = hook._binner.accumulate(points)
+
+    assert provenance_window == stack_window
+
+
+@pytest.mark.parametrize("storage", ["disk", "memory"])
+def test_every_stacked_pixel_has_stack_provenance(tmp_path, storage):
+    """Every populated mixed-stack cell must be credited to at least one source."""
+
+    region = [-121.05, -121.025, 35.475, 35.5]
+    res = 1.0 / 3600.0
+
+    state_path = tmp_path / f"fusion_{storage}.tif"
+
+    acc = MultiStackAccumulator(
+        region=region,
+        x_inc=res,
+        y_inc=res,
+        output_fn=str(tmp_path / f"stack_{storage}.tif"),
+        strategy="mixed",
+        weight_threshold="0.25/0.5/1",
+        crs="EPSG:4326",
+        compress_state=False,
+        state_fn=str(state_path),
+        resume=False,
+    )
+
+    try:
+        transform = rasterio.Affine.from_gdal(*acc.dst_gt)
+
+        xs = []
+        ys = []
+
+        # Scatter exact grid-boundary observations throughout the tile.
+        # Include cells close to each side while avoiding the outer boundary,
+        # where coordinates correctly fall outside the raster.
+        for col in (1, 7, 18, 27, 44, 63, 78, 89):
+            for row in (1, 9, 24, 43, 61, 75, 89):
+                x, y = transform * (col, row)
+                xs.append(x)
+                ys.append(y)
+
+        points = _point_chunk(xs, ys, weight=0.5)
+
+        acc.update(points, dataset_id="boundary-source")
+        acc.mark_registered("boundary-source")
+
+    finally:
+        acc.close()
+
+    hook = StackProvenance(
+        output=str(tmp_path / f"stack_sources_{storage}.vrt"),
+        output_dir=str(tmp_path / f"stack_masks_{storage}"),
+        state_dir=str(tmp_path / f"stack_state_{storage}"),
+        storage=storage,
+        compress_state=False,
+    )
+
+    mod = SimpleNamespace(
+        name="boundary-test",
+        title="Boundary Test",
+        meta_category="test",
+        meta_agency="TEST",
+        weight=1.0,
+    )
+
+    entry = {
+        "checksum": "boundary-source",
+        "dst_fn": "boundary.xyz",
+        "data_type": "test",
+        "artifacts": {
+            "fusion-state": str(state_path),
+        },
+        "stream": iter([points]),
+    }
+
+    hook.run([(mod, entry)])
+    _drain(entry)
+    hook.teardown()
+
+    # Cells represented numerically in the completed FusionState.
+    with rasterio.open(state_path) as src:
+        stack_valid = src.read(FUSION_BAND_MAP["count"]) > 0
+
+    assert np.any(stack_valid)
+
+    # Union every source represented by final stack provenance.
+    provenance_valid = np.zeros_like(stack_valid, dtype=bool)
+
+    for path in hook._final_masks.masks.values():
+        if not os.path.exists(path):
+            continue
+
+        with rasterio.open(path) as src:
+            provenance_valid |= src.read(1) > 0
+
+    missing = stack_valid & ~provenance_valid
+
+    assert not np.any(missing), (
+        f"{np.count_nonzero(missing)} populated stack pixels "
+        f"have no stack provenance ({storage=})"
+    )

@@ -234,7 +234,7 @@ class DiskStackTierState(StackTierStateBase):
                 and tags.get(self.TYPE_TAG) == self.STATE_TYPE
                 and tags.get(self.SOURCE_TAG) == dataset_id
                 and tags.get("GLOBATO_STACK_STRATEGY", "").lower() == self.strategy
-                and tags.get("GLOBATO_STORAGE") == "disk"
+                # and tags.get("GLOBATO_STORAGE") == "disk"
                 and np.array_equal(stored_tiers, self.weight_tiers)
             )
 
@@ -457,6 +457,8 @@ class StackProvenance(FetchHook):
                 self._region.srs = src.crs.to_string()
             width, height = src.width, src.height
             res = abs(src.transform.a)
+            transform = src.transform
+            dst_gt = transform.to_gdal()
 
         base = os.path.splitext(self.output)[0]
         state_dir = self.state_dir or f"{base}_state"
@@ -497,12 +499,16 @@ class StackProvenance(FetchHook):
             qgis_style=self.qgis_style,
             qgis_style_field=self.qgis_style_field,
             group_by=self.group_by,
+            dst_gt=dst_gt,
+            xcount=width,
+            ycount=height,
         )
 
         self._binner = PointPixels(
             src_region=self._region,
             x_size=width,
             y_size=height,
+            dst_gt=dst_gt,
         )
 
     def run(self, entries):
@@ -586,10 +592,15 @@ class StackProvenance(FetchHook):
                 tags,
                 source,
             ) in self._tier_state.iter_sources():
+                final_tags = {
+                    key: value
+                    for key, value in tags.items()
+                    if key not in {"GLOBATO_STORAGE"}
+                }
                 final_path = self._final_masks.register(
                     dataset_id,
                     description=description,
-                    tags=tags,
+                    tags=final_tags,
                 )
 
                 any_valid = False

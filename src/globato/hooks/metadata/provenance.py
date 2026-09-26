@@ -28,7 +28,7 @@ from rasterio.features import shapes
 from rasterio.windows import Window
 
 from fetchez.hooks import FetchHook
-from fetchez.utils import str2inc, str2bool
+from fetchez.utils import str2inc, str2bool, int_or
 from ..transforms.point_pixels import PointPixels
 
 logger = logging.getLogger(__name__)
@@ -73,7 +73,10 @@ class ProvenanceHook(FetchHook):
         )
 
         self.pixel_binner = PointPixels(
-            src_region=region, x_size=self.xcount, y_size=self.ycount
+            src_region=region,
+            x_size=self.xcount,
+            y_size=self.ycount,
+            dst_gt=self.dst_gt,
         )
 
         crs_val = getattr(region, "srs", "EPSG:4326") or "EPSG:4326"
@@ -235,6 +238,9 @@ class MaskSet:
         qgis_style=True,
         qgis_style_field="SOURCE_ID",
         group_by=None,
+        dst_gt=None,
+        xcount=None,
+        ycount=None,
     ):
         self.region = region
         self.res = float(res)
@@ -247,24 +253,34 @@ class MaskSet:
         self.qgis_style = bool(qgis_style)
         self.qgis_style_field = str(qgis_style_field)
         self.group_by = self._parse_group_by(group_by)
+        self.dst_gt = dst_gt
+        self.xcount = int_or(xcount)
+        self.ycount = int_or(ycount)
 
         base = os.path.splitext(output)[0]
         self.output_dir = output_dir or f"{base}_temp_masks"
 
         os.makedirs(self.output_dir, exist_ok=True)
 
-        self.xcount, self.ycount, _ = region.geo_transform(
-            x_inc=self.res,
-            y_inc=self.res,
-            node="grid",
-        )
+        if self.dst_gt is None:
+            if not self.xcount or not self.ycount:
+                self.xcount, self.ycount, self.dst_gt = region.geo_transform(
+                    x_inc=self.res,
+                    y_inc=self.res,
+                    node="grid",
+                )
+            else:
+                self.dst_gt = region.geo_transform_from_count(
+                    x_count=self.xcount,
+                    y_count=self.ycount,
+                )
+        else:
+            if not self.xcount or not self.ycount:
+                raise ValueError(
+                    "MaskSet requires xcount/ycount when dst_gt is supplied"
+                )
 
-        self.transform = rasterio.transform.from_origin(
-            region.xmin,
-            region.ymax,
-            self.res,
-            self.res,
-        )
+        self.transform = rasterio.Affine.from_gdal(*self.dst_gt)
 
         crs = getattr(region, "srs", "EPSG:4326") or "EPSG:4326"
 
@@ -322,10 +338,7 @@ class MaskSet:
                 if description:
                     dst.set_band_description(1, description)
 
-                metadata = {
-                    self.TYPE_TAG: self.mask_type,
-                    self.SOURCE_TAG: dataset_id,
-                }
+                metadata = {}
                 if tags:
                     metadata.update(
                         {
@@ -334,6 +347,8 @@ class MaskSet:
                             if v not in (None, "", "None", "Unknown")
                         }
                     )
+                metadata[self.TYPE_TAG] = self.mask_type
+                metadata[self.SOURCE_TAG] = dataset_id
 
                 dst.update_tags(**metadata)
 
@@ -890,6 +905,7 @@ class SourceMasks(FetchHook):
             src_region=region,
             x_size=self._masks.xcount,
             y_size=self._masks.ycount,
+            dst_gt=self._masks.dst_gt,
         )
 
         for chunk in stream:

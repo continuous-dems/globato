@@ -178,6 +178,7 @@ class MultiStackAccumulator:
             src_region=self.region,
             x_size=self.xcount,
             y_size=self.ycount,
+            dst_gt=self.dst_gt,
         )
 
         self._init_state_raster()

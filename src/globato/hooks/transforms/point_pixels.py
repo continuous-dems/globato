@@ -22,6 +22,7 @@ from dataclasses import dataclass
 
 import numpy as np
 import rasterio
+from rasterio import Affine
 from rasterio.windows import Window
 
 from fetchez.hooks import FetchHook
@@ -120,11 +121,13 @@ class PointPixels:
     therefore safe for chunking, caching, and later merging.
     """
 
-    def __init__(self, src_region=None, x_size=None, y_size=None, **kwargs):
+    def __init__(
+        self, src_region=None, x_size=None, y_size=None, dst_gt=None, **kwargs
+    ):
         self.src_region = src_region
         self.x_size = int_or(x_size, 10)
         self.y_size = int_or(y_size, 10)
-        self.dst_gt = None
+        self.dst_gt = dst_gt.to_gdal() if isinstance(dst_gt, Affine) else dst_gt
 
     @staticmethod
     def empty_state():
@@ -153,6 +156,9 @@ class PointPixels:
         self.init_gt()
 
     def init_gt(self):
+        if self.dst_gt is not None:
+            return
+
         if self.src_region is not None:
             self.dst_gt = self.src_region.geo_transform_from_count(
                 x_count=self.x_size,
@@ -213,9 +219,11 @@ class PointPixels:
         w[~np.isfinite(w)] = 1.0
         u[~np.isfinite(u)] = 0.0
 
-        pixel_x = np.floor((x - self.dst_gt[0]) / self.dst_gt[1]).astype(np.int64)
+        inv = ~Affine.from_gdal(*self.dst_gt)
+        pixel_x_f, pixel_y_f = inv * (x, y)
 
-        pixel_y = np.floor((y - self.dst_gt[3]) / self.dst_gt[5]).astype(np.int64)
+        pixel_x = np.floor(pixel_x_f).astype(np.int64)
+        pixel_y = np.floor(pixel_y_f).astype(np.int64)
 
         inside = (
             (pixel_x >= 0)
@@ -485,18 +493,6 @@ class Point2PixelStream(FetchHook):
         self.x_inc = float_or(str2inc(x_inc))
         self.y_inc = float_or(str2inc(y_inc))
 
-    def process_chunk(self, chunk, region=None):
-        if not region:
-            return None, None, None
-
-        xcount, ycount, _ = region.geo_transform(
-            x_inc=self.x_inc,
-            y_inc=self.y_inc,
-            node="grid",
-        )
-        reducer = PointPixels(src_region=region, x_size=xcount, y_size=ycount)
-        return reducer.accumulate(chunk)
-
     def _stream_wrapper(self, input_stream, entry=None, region=None):
         count = 0
         entry = entry or {}
@@ -509,7 +505,15 @@ class Point2PixelStream(FetchHook):
             y_inc=self.y_inc,
             node="grid",
         )
-        transform = rasterio.transform.from_origin(gt[0], gt[3], gt[1], abs(gt[5]))
+
+        transform = Affine.from_gdal(*gt)
+
+        reducer = PointPixels(
+            src_region=region,
+            x_size=xcount,
+            y_size=ycount,
+            dst_gt=gt,
+        )
 
         profile = {
             "driver": "GTiff",
@@ -523,19 +527,21 @@ class Point2PixelStream(FetchHook):
             "GLOBATO_DATATYPE": "FUSION_STATE",
             "GLOBATO_FUSION_VERSION": FUSION_STATE_VERSION,
         }
+
         yield profile
 
         for chunk in input_stream:
             count += chunk.size
-            state, srcwin, chunk_gt = self.process_chunk(chunk, region=region)
+            state, srcwin, chunk_gt = reducer.accumulate(chunk)
             if srcwin is None or state["count"] is None:
                 continue
 
             col_off, row_off, width, height = srcwin
             window = Window(col_off, row_off, width, height)
-            chunk_transform = rasterio.transform.from_origin(
-                chunk_gt[0], chunk_gt[3], chunk_gt[1], abs(chunk_gt[5])
-            )
+            chunk_transform = rasterio.windows.transform(window, transform)
+            # chunk_transform = rasterio.transform.from_origin(
+            #     chunk_gt[0], chunk_gt[3], chunk_gt[1], abs(chunk_gt[5])
+            # )
 
             data = np.stack([state[name] for name in FUSION_BANDS]).astype(
                 np.float64,
