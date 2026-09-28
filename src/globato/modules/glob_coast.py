@@ -24,7 +24,7 @@ from pyogrio.raw import read
 from shapely import from_wkb
 
 from fetchez import core, cli, utils
-from fetchez.hooks.unzip import Unzip
+from fetchez.hooks.extract import Extract
 from fetchez.hooks.fn_filter import FilenameFilter
 from fetchez.registry import ModuleRegistry
 from fetchez.modules import FetchModule
@@ -275,7 +275,7 @@ class GlobCoast(FetchModule):
                     outdir=os.path.join(self._outdir, "sources", mod_name),
                 )
                 mod_instance.add_hook(FilenameFilter(match="GDB", stage="pre"))
-                mod_instance.add_hook(Unzip())
+                mod_instance.add_hook(Extract())
 
                 try:
                     logger.info(
@@ -323,7 +323,7 @@ class GlobCoast(FetchModule):
                     outdir=os.path.join(self._outdir, "sources", mod_name),
                     **extra_kwargs,
                 )
-                mod_instance.add_hook(Unzip())
+                mod_instance.add_hook(Extract())
 
                 # osm_landmask and osm_water print their own [OSM] status lines; skip here.
                 tag = mod_name.upper()

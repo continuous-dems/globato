@@ -639,19 +639,20 @@ class MultiStackHook(FetchHook):
             )
 
     @staticmethod
-    def _dataset_id(entry):
-        dataset_id = entry.get("checksum")
-        if dataset_id:
-            return dataset_id
+    def _dataset_id(entry, module_weight=1.0):
+        checksum = entry.get("checksum")
+        if checksum:
+            return f"{checksum}|w={module_weight}"
 
         url = entry.get("url", "")
         dst_fn = entry.get("dst_fn")
 
         if url and not url.startswith("file://"):
-            return url
+            return f"{url}|w={module_weight}"
+
         if dst_fn and os.path.exists(dst_fn):
             size = os.path.getsize(dst_fn)
-            return f"{os.path.basename(dst_fn)}|{size}B"
+            return f"{os.path.basename(dst_fn)}|{size}B|w={module_weight}"
         return os.path.basename(dst_fn or url or "unknown_dataset")
 
     @staticmethod
@@ -680,7 +681,11 @@ class MultiStackHook(FetchHook):
             self._init_accumulator(region)
 
         for mod, entry in entries:
-            dataset_id = self._dataset_id(entry)
+            dataset_id = self._dataset_id(
+                entry,
+                module_weight=getattr(mod, "weight", 1.0),
+            )
+            # dataset_id = self._dataset_id(entry)
 
             if self._accumulator and self._accumulator.is_registered(dataset_id):
                 logger.debug(
