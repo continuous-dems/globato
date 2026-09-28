@@ -13,7 +13,7 @@ import os
 import logging
 
 from fetchez.hooks import FetchHook
-from fetchez.hooks.unzip import Unzip
+from fetchez.hooks.extract import Extract
 from fetchez.hooks.set_datatype import SetDatatype
 from fetchez.hooks.set_srs import SetSrs
 from fetchez.hooks.fn_filter import FilenameFilter
@@ -58,7 +58,7 @@ class GlobFABDEM(BaseFABDEM):
     """Cleaned FABDEM Module.
 
     - Fetch Zip
-    - Unzip
+    - Extract
     - Stream (Load Points)
     - RQ Filter (Flag Coastal Creep)
     """
@@ -81,7 +81,7 @@ class GlobFABDEM(BaseFABDEM):
         super().__init__(**kwargs)
 
         self.weight = 1
-        self.add_hook(Unzip())
+        self.add_hook(Extract())
 
 
 @cli.cli_opts(
@@ -92,7 +92,7 @@ class GlobCopernicus(BaseCopernicus):
 
     Set `datatype` to 3 for COP-10 or 1 for COP-30
 
-    Unzips, filters for .tif, sets rio datatype,
+    Extracts, filters for .tif, sets rio datatype,
     initiates stream, and drops anomalous 0-valuesx.
     """
 
@@ -116,7 +116,7 @@ class GlobCopernicus(BaseCopernicus):
 
         self.weight = weight
 
-        self.add_hook(Unzip())
+        self.add_hook(Extract())
         self.add_hook(FilenameFilter(match=".tif"))
         self.add_hook(SetDatatype(data_type="rio"))
         self.add_hook(PointRasterMask(barrier="coastline", invert=False, res="3s"))
@@ -239,7 +239,7 @@ class GlobNOSXYZ(BaseHydroNOS):
 
         self.weight = weight
 
-        self.add_hook(Unzip())
+        self.add_hook(Extract())
         self.add_hook(SetDatatype(data_type="nox-xyz"))
         self.add_hook(SetSrs(srs="EPSG:4326+5866"))
         self.add_hook(SpatialCrop)
