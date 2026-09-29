@@ -1,0 +1,174 @@
+name: glob-tnm
+description: >
+  USGS TNM elevation products with source-footprint hierarchy and
+  newest-first project 1-meter selection.
+tags:
+  - globato
+  - topography
+  - lidar
+  - glob-stream
+  - glob-bundle
+products:
+  - s1m
+  - 1m
+  - 5m
+  - 1_9as
+  - 1_3as
+  - 1_as
+  - 2_as
+product_start_hook: tnm-coverage
+modules:
+  - module: tnm
+    args:
+      weight: 10.0
+      formats: GeoTIFF
+      datasets: s1m
+      source_coverage: true
+      strict_datasets: true
+      use_cache: false
+    hooks:
+      - name: tnm-coverage
+        args: {product: s1m}
+      - name: raster_flats
+        args: {stage: file}
+      - name: stream-init
+        args: {vert_srs: EPSG:5703}
+      - name: stream_reproject
+        args:
+          dst_srs: EPSG:4269+5703
+          cache_dir: "%shared_cache%"
+      - name: tnm-coverage-filter
+        args: {res: null}
+
+  - module: tnm
+    args:
+      weight: 5.0
+      formats: GeoTIFF
+      datasets: 1m
+      dedupe: false
+      source_coverage: true
+      strict_datasets: true
+      use_cache: false
+    hooks:
+      - name: tnm-coverage
+        args: {product: 1m}
+      - name: raster_flats
+        args: {stage: file}
+      - name: stream-init
+        args: {vert_srs: EPSG:5703}
+      - name: stream_reproject
+        args:
+          dst_srs: EPSG:4269+5703
+          cache_dir: "%shared_cache%"
+      - name: tnm-coverage-filter
+        args: {res: null}
+
+  - module: tnm
+    args:
+      weight: 4.0
+      datasets: 5m
+      source_coverage: true
+      strict_datasets: true
+      use_cache: false
+    hooks:
+      - name: tnm-coverage
+        args: {product: 5m}
+      - name: raster_flats
+        args: {stage: file}
+      - name: stream-init
+        args: {vert_srs: EPSG:5703}
+      - name: stream_reproject
+        args:
+          dst_srs: EPSG:4269+5703
+          cache_dir: "%shared_cache%"
+      - name: tnm-coverage-filter
+        args: {res: null}
+
+  - module: tnm
+    args:
+      weight: 3.0
+      datasets: 1_9as
+      source_coverage: true
+      strict_datasets: true
+      use_cache: false
+    hooks:
+      - name: tnm-coverage
+        args: {product: 1_9as}
+      - name: unzip
+      - name: filename_filter
+        args: {match: .img}
+      - name: filename_filter
+        args: {exclude: .xml}
+      - name: raster_flats
+        args: {stage: file}
+      - name: stream-init
+        args: {vert_srs: EPSG:5703}
+      - name: stream_reproject
+        args:
+          dst_srs: EPSG:4269+5703
+          cache_dir: "%shared_cache%"
+      - name: tnm-coverage-filter
+        args: {res: null}
+
+  - module: tnm
+    args:
+      weight: 2.0
+      formats: GeoTIFF
+      datasets: 1_3as
+      strict_datasets: true
+      use_cache: false
+    hooks:
+      - name: tnm-coverage
+        args: {product: 1_3as}
+      - name: raster_flats
+        args: {stage: file}
+      - name: stream-init
+        args: {vert_srs: EPSG:5703}
+      - name: stream_reproject
+        args:
+          dst_srs: EPSG:4269+5703
+          cache_dir: "%shared_cache%"
+      - name: tnm-coverage-filter
+        args: {res: null}
+
+  - module: tnm
+    args:
+      weight: 1.0
+      formats: GeoTIFF
+      datasets: 1_as
+      strict_datasets: true
+      use_cache: false
+    hooks:
+      - name: tnm-coverage
+        args: {product: 1_as}
+      - name: raster_flats
+        args: {stage: file}
+      - name: stream-init
+        args: {vert_srs: EPSG:5703}
+      - name: stream_reproject
+        args:
+          dst_srs: EPSG:4269+5703
+          cache_dir: "%shared_cache%"
+      - name: tnm-coverage-filter
+        args: {res: null}
+
+  - module: tnm
+    args:
+      weight: 0.5
+      formats: GeoTIFF
+      datasets: 2_as
+      strict_datasets: true
+      use_cache: false
+    hooks:
+      - name: tnm-coverage
+        args: {product: 2_as}
+      - name: raster_flats
+        args: {stage: file}
+      - name: stream-init
+        args: {vert_srs: EPSG:5703}
+      - name: stream_reproject
+        args:
+          dst_srs: EPSG:4269+5703
+          cache_dir: "%shared_cache%"
+      - name: tnm-coverage-filter
+        args: {res: null}
