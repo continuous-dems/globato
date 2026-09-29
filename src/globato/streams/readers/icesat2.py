@@ -60,6 +60,23 @@ CROSS_RELEASE_AUX = frozenset({"ATL24"})
 # Pulses are 1e-4 s apart, so 5e-6 s is well clear of both.
 ATL24_PULSE_TOLERANCE = 5e-6
 
+# Photon class codes ATL03Reader writes to ``ph_h_classed``, each with a
+# description, in the order its help text lists them. ATL03Reader.meta_desc is
+# built from this, so read this rather than parsing that text.
+PHOTON_CLASSES = {
+    0: "Noise (if enabled)",
+    1: "Ground (ATL08)",
+    2: "Canopy (ATL08)",
+    3: "Top Canopy (ATL08)",
+    6: "Land Ice (ATL06)",
+    7: "Buildings (Dynamic Algo / Bing Mask)",
+    40: "Seafloor (ATL24 / Dynamic Algo)",
+    41: "Nearshore Water Surface (ATL24 / Dynamic Algo)",
+    42: "Inland Water Surface (ATL13 / Dynamic Algo)",
+    44: "Open Ocean Surface (ATL12 / Geoid Fallback)",
+    -1: "Unclassified",
+}
+
 
 def _newest_first(filenames):
     """Sort granule paths so the highest release/version/revision comes first.
@@ -584,22 +601,11 @@ class ATL03Reader(IceSat2Reader):
     name = "atl03-point-reader"
     meta_category = "point-stream"
     meta_dtype = "icesat-atl03"
-    meta_desc = """
-    Read icesat2 ATL03 data into a point stream
-
-    Classes:
-      0: Noise (if enabled)
-      1: Ground (ATL08)
-      2: Canopy (ATL08)
-      3: Top Canopy (ATL08)
-      6: Land Ice (ATL06)
-      7: Buildings (Dynamic Algo / Bing Mask)
-      40: Seafloor (ATL24 / Dynamic Algo)
-      41: Nearshore Water Surface (ATL24 / Dynamic Algo)
-      42: Inland Water Surface (ATL13 / Dynamic Algo)
-      44: Open Ocean Surface (ATL12 / Geoid Fallback)
-      -1: Unclassified
-    """
+    meta_desc = (
+        "\n    Read icesat2 ATL03 data into a point stream\n\n    Classes:\n"
+        + "".join(f"      {code}: {desc}\n" for code, desc in PHOTON_CLASSES.items())
+        + "    "
+    )
     meta_extensions = ["h5"]
 
     def __init__(
