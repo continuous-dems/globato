@@ -14,7 +14,6 @@ Generate bitmap data mask
 from __future__ import annotations
 
 import os
-import hashlib
 import logging
 import threading
 import hashlib
@@ -31,7 +30,6 @@ from rasterio.windows import Window
 from fetchez.hooks import FetchHook
 from fetchez.utils import str2inc, str2bool, int_or
 from ..transforms.point_pixels import PointPixels
-from globato.source_mask_grouping import group_source_mask_files, parse_group_fields
 
 logger = logging.getLogger(__name__)
 
