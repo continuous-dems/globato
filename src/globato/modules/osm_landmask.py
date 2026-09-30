@@ -21,6 +21,7 @@ import numpy as np
 from pyogrio.raw import write
 import shapely
 from shapely.geometry import box, LineString, Point, Polygon
+from shapely.validation import make_valid
 from shapely.ops import linemerge, unary_union, polygonize
 
 from fetchez.modules import FetchModule
@@ -247,7 +248,7 @@ class OSMLandmaskModule(FetchModule):
         url = f"{OSM_API}?{params}"
 
         suffix = self._get_filename_suffix()
-        dest = os.path.join(self._outdir, f"temp_osm_{w}_{s}_{e}_{w}{suffix}.json")
+        dest = os.path.join(self._outdir, f"temp_osm_{w}_{s}_{e}_{n}{suffix}.json")
         f = Fetch(url, headers=HEADERS)
         if f.fetch_file(dest, method="GET", verbose=False) == 0:
             return dest
@@ -599,6 +600,31 @@ class OSMLandmaskModule(FetchModule):
         ]:
             if lines:
                 polys.extend(list(polygonize(linemerge(lines))))
+
+        # OSM ways can self-intersect (e.g. a mapped basin that crosses itself).
+        # Repair them here so the overlays below cannot raise on them.
+        def polygon_parts(geom):
+            if geom.is_empty:
+                return []
+            if geom.geom_type == "Polygon":
+                return [geom]
+            return [p for g in getattr(geom, "geoms", []) for p in polygon_parts(g)]
+
+        def repaired(polys):
+            return [
+                q
+                for p in polys
+                for q in ([p] if p.is_valid else polygon_parts(make_valid(p)))
+            ]
+
+        water_polys = repaired(water_polys)
+        river_polys = repaired(river_polys)
+        lake_polys = repaired(lake_polys)
+        wetland_polys = repaired(wetland_polys)
+        island_polys = repaired(island_polys)
+        estuary_polys = repaired(estuary_polys)
+        reef_polys = repaired(reef_polys)
+        breakwater_polys = repaired(breakwater_polys)
 
         west, east, south, north = region
         region_box = box(west, south, east, north)

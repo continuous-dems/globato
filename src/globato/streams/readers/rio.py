@@ -15,9 +15,10 @@ import logging
 import numpy as np
 
 import rasterio
+from rasterio.crs import CRS
 from rasterio.windows import Window, from_bounds
 from rasterio.warp import transform_bounds
-from rasterio.errors import WindowError
+from rasterio.errors import CRSError, WindowError
 
 from fetchez.utils import int_or, float_or
 
@@ -36,6 +37,11 @@ class RasterioReader(BaseGlobatoReader):
     meta_desc = "Read raster data through rasterio into a point stream"
     meta_extensions = ["tif", "tiff", "vrt", "dt0", "dt1", "dt2", "img"]
 
+    # Rasters stored in thin full-width strips (ASCII grids, untiled GeoTIFFs) would
+    # stream one strip at a time, i.e. thousands of tiny chunks. Read those in bands
+    # of whole strips holding about this many cells instead.
+    STRIP_CHUNK_CELLS = 500_000
+
     def __init__(
         self,
         path,
@@ -51,6 +57,7 @@ class RasterioReader(BaseGlobatoReader):
         auto_weight=False,
         min_weight=None,
         uncertainty_scale=1.0,
+        src_srs=None,
         **kwargs,
     ):
         super().__init__(path, **kwargs)
@@ -71,10 +78,16 @@ class RasterioReader(BaseGlobatoReader):
         self.auto_weight = auto_weight
         self.min_weight = float_or(min_weight)
         self.uncertainty_scale = float_or(uncertainty_scale, 1.0)
+        self.src_srs = src_srs
         self.kwargs = kwargs
 
     def get_srs(self):
-        """Get SRS as WKT."""
+        """Get source SRS."""
+        if self.src_srs:
+            return self.src_srs
+
+        if getattr(self, "srs", None):
+            return self.srs
 
         try:
             with rasterio.Env(CPL_MIN_LOG_LEVEL=rasterio.logging.ERROR):
@@ -82,6 +95,27 @@ class RasterioReader(BaseGlobatoReader):
                     return src.crs.to_wkt() if src.crs else "EPSG:4326"
         except Exception:
             return "EPSG:4326"
+
+    def _crop_crs(self, src):
+        """Horizontal CRS used to crop the raster to the region.
+
+        src_srs can carry a vertical datum that only transformez understands
+        (e.g. 'EPSG:32611+vdatum:mllw'); the crop needs just the horizontal part.
+        """
+
+        srs = str(self.src_srs).strip() if getattr(self, "src_srs", None) else None
+        if srs:
+            if "+" in srs and not srs.startswith("+") and "[" not in srs:
+                srs = srs.split("+")[0]
+            try:
+                return CRS.from_user_input(srs)
+            except CRSError:
+                logger.warning(
+                    f"Unrecognized src_srs '{self.src_srs}' for {self.src_fn}; "
+                    "using the file's own CRS to crop."
+                )
+
+        return src.crs or CRS.from_epsg(4326)
 
     def _yield_raw_chunks(self):
         yield from self._process_rio_dataset()
@@ -110,10 +144,12 @@ class RasterioReader(BaseGlobatoReader):
             # Dynamically grab the SRS from the Region object, fallback to WGS84
             region_srs = getattr(self.region, "srs", None) or "EPSG:4326"
 
-            if src.crs and src.crs.to_string() != region_srs:
+            src_crs = self._crop_crs(src)
+
+            if src_crs != CRS.from_user_input(region_srs):
                 try:
                     west, south, east, north = transform_bounds(
-                        region_srs, src.crs, west, south, east, north
+                        region_srs, src_crs, west, south, east, north
                     )
                 except Exception as err:
                     logger.error(f"Failed to transform bounds for {self.src_fn}: {err}")
@@ -139,14 +175,21 @@ class RasterioReader(BaseGlobatoReader):
         else:
             master_window = Window(0, 0, src.width, src.height)
 
-        block_h, block_w = src.block_shapes[0]
-        h_chunk = self.chunk_size or block_h
-        w_chunk = self.chunk_size or block_w
-
         y_start = int(master_window.row_off)
         y_end = int(master_window.row_off + master_window.height)
         x_start = int(master_window.col_off)
         x_end = int(master_window.col_off + master_window.width)
+
+        # If blocks span the full width, the file is stored in strips of block_h
+        # rows. Each strip gives block_h * (cropped width) cells; take the number of
+        # whole strips needed to reach STRIP_CHUNK_CELLS (-(-a // b) rounds a / b
+        # up), and at least one.
+        block_h, block_w = src.block_shapes[0]
+        if not self.chunk_size and block_w >= src.width:
+            strips = -(-self.STRIP_CHUNK_CELLS // (block_h * (x_end - x_start)))
+            block_h *= max(strips, 1)
+        h_chunk = self.chunk_size or block_h
+        w_chunk = self.chunk_size or block_w
 
         for y in range(y_start, y_end, h_chunk):
             rows = min(h_chunk, y_end - y)

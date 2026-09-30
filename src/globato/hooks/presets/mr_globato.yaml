@@ -15,7 +15,6 @@ hooks:
     args:
       res: 3s
       output: "%name%_%batch_name%_sources.vrt"
-      # vector_output: "%name%_%batch_name%_sm.gpkg"
 
   # Side-stack testing, not default for now.
   # - name: side_stack_check
@@ -36,10 +35,16 @@ hooks:
       crs: epsg:4326+3855
       mode: mixed
       nodata: -9999.0
-      # weight_threshold: 0.25/.1
       weight_threshold: 3/2/1/.75/.5/.4/.3/.2/.1
       output: "%name%_%batch_name%_stack.tif"
-      # state: "%name%_%batch_name%_state.tif"
+      # state_fn: "%name%_%batch_name%_state.tif"
+
+  - name: stack_provenance
+    args:
+      storage: disk
+      output: "%name%_%batch_name%_stack_sources.vrt"
+      vector_output: "%name%_%batch_name%_sm.gpkg"
+      group_by: MODULE/WEIGHT
 
   - name: focus_sink
     args:

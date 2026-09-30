@@ -3,6 +3,7 @@
 import logging
 
 import json
+import re
 
 import h5py
 import numpy as np
@@ -16,6 +17,7 @@ from fetchez.modules import earthdata
 from globato.streams.readers import icesat2
 from globato.streams.readers.icesat2 import (
     ATL03Reader,
+    PHOTON_CLASSES,
     _as_atl24_time,
     _atl24_release_shift,
     _atl24_rows_in_atl03,
@@ -1035,3 +1037,14 @@ def test_building_mask_tests_only_photons_the_reader_could_yield(tmp_path):
         df.copy(), LAND, 7, except_classes=[40, 41, 42, 44]
     )
     assert out["ph_h_classed"].tolist() == [7, 7, 44]
+
+
+def test_meta_desc_lists_every_photon_class():
+    """Released versions of IVERT read the class list by parsing this text."""
+    parsed = {
+        int(m.group(1)): m.group(2)
+        for line in ATL03Reader.meta_desc.splitlines()
+        if (m := re.match(r"^\s*(-?\d+)\s*:\s*(.+?)\s*$", line))
+    }
+    assert parsed == PHOTON_CLASSES
+    assert list(parsed) == list(PHOTON_CLASSES)
