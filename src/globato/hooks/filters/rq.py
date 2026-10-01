@@ -415,6 +415,8 @@ class ReferenceQuality(GlobatoFilter):
             logger.error("[RQ] transformez.grid_engine required for 'grid' builder.")
             return None
 
+        # nx = int(np.ceil((self.wgs_region[1] - self.wgs_region[0]) / self.res))
+        # ny = int(np.ceil((self.wgs_region[3] - self.wgs_region[2]) / self.res))
         nx = max(1, int(np.floor(self.wgs_region.width / self.res)))
         ny = max(1, int(np.floor(self.wgs_region.height / self.res)))
         logger.debug(
@@ -498,7 +500,7 @@ class ReferenceQuality(GlobatoFilter):
 
         valid_ref = in_bounds & np.isfinite(ref_vals)
         self.out_of_bounds_points += int(np.count_nonzero(~in_bounds))
-        self.invalid_reference_points += int(np.count_nonzero(in_bounds & ~valid_ref))
+        self.invalid_reference_points = int(np.count_nonzero(np.isnan(self.ref_data)))
 
         diff = np.abs(rz - ref_vals)
         is_outlier = np.zeros(len(chunk), dtype=bool)
