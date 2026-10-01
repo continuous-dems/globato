@@ -56,6 +56,26 @@ hooks:
       chunk_size: 2048
       stage: collection
 
+  # --- Testing MS-QUALITY ---
+  # - name: ms_support_weight
+  #   args:
+  #     radius: 5
+  #     floor: 0.6
+  #     power: 0.5
+  #     min_neighbors: 4
+
+  # - name: ms_consistency_weight
+  #   args:
+  #     radius: 5
+  #     method: mad
+  #     min_count: 1
+  #     max_count: 4
+  #     sigma: 3
+  #     max_residual: 20
+  #     floor: 0.6
+  #     min_neighbors: 8
+
+  # --- Testing BLEND ---
   # - name: ms_blend
   #   args:
   #     weight_threshold: 1.0

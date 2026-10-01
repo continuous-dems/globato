@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 * Added resumable per-source stack provenance state with bounded-memory disk storage and an optional in-memory backend.
 * Added grouped provenance vector output and QGIS styling, including configurable metadata-based grouping such as module and source weight.
 * Added regression coverage for stack/source provenance alignment, boundary-pixel behavior, resume state, storage-backend parity, and deterministic derived outputs.
+* Added the ms_quality raster hook(s); `ms_consistency_weight` and `ms_support_weight`
 
 ### CHANGED
 
