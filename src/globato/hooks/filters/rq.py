@@ -12,15 +12,22 @@ Fetches a reference raster (e.g. GEBCO) and filters points that deviate from it.
 :license: MIT, see LICENSE for more details.
 """
 
-import os
+import json
+import hashlib
 import logging
+from pathlib import Path
+import threading
 import numpy as np
 import rasterio
-import threading
 from scipy.ndimage import map_coordinates
 
 import fetchez
 from fetchez.utils import str2inc, parse_arg_to_list
+
+try:
+    from fetchez.entry import entry_id
+except ImportError:  # pragma: no cover - compatibility with older Fetchez
+    entry_id = None
 
 from .base import GlobatoFilter
 
@@ -60,7 +67,7 @@ class ReferenceQuality(GlobatoFilter):
       - 'iho_2': IHO S-44 Order 2 TVU (a=1.0, b=0.023)
 
     Args:
-        reference (str): Fetchez Module Name (default: 'gebco_cog').
+        reference (str): Fetchez Module Name (default: 'gmrt').
         threshold (float): Max allowed difference.
         mode (str): 'diff' (absolute) or 'percent' (relative).
         builder (str): 'vrt' or 'grid'.
@@ -97,6 +104,8 @@ class ReferenceQuality(GlobatoFilter):
 
         self.total_points = 0
         self.dropped_points = 0
+        self.invalid_reference_points = 0
+        self.out_of_bounds_points = 0
 
         # IHO S-44 Parameters (a, b)
         self.iho_order = str(iho_order).lower()
@@ -128,7 +137,7 @@ class ReferenceQuality(GlobatoFilter):
 
         # self.target_region = self.wgs_region.buffer(pct=5)
 
-        outdir = getattr(mod, "_outdir")
+        outdir = Path(getattr(mod, "_outdir"))
         if not self.ref_fn:
             files = self._fetch_reference_files(region, outdir)
 
@@ -139,11 +148,11 @@ class ReferenceQuality(GlobatoFilter):
                 return False
 
             if self.builder == "grid" and HAS_GRID_ENGINE:
-                self.ref_fn = self._build_grid(files, region)
+                self.ref_fn = self._build_grid(files, region, outdir)
             else:
-                self.ref_fn = self._build_vrt(files, region)
+                self.ref_fn = self._build_vrt(files, region, outdir)
 
-            if not self.ref_fn or not os.path.exists(self.ref_fn):
+            if not self.ref_fn or not Path(self.ref_fn).exists():
                 logger.error(
                     "[RQ] Builder failed to generate a reference surface. Disabling RQ filter."
                 )
@@ -154,10 +163,17 @@ class ReferenceQuality(GlobatoFilter):
             # Store the inverse transform matrix to map points to fractional pixels natively
             self.inv_transform = ~self.src.transform
             ref_raw = self.src.read(1).astype("float64")
-            nodata = self.src.nodata if self.src.nodata is not None else -9999
+            nodata = self.src.nodata
 
-            # Standardize NoData to NaN so the bilinear interpolator ignores voids cleanly
-            self.ref_data = np.where(ref_raw == nodata, np.nan, ref_raw)
+            # Standardize NoData to NaN so the bilinear interpolator ignores voids cleanly.
+            if nodata is None:
+                self.ref_data = np.where(np.isnan(ref_raw), np.nan, ref_raw)
+            elif np.isnan(nodata):
+                self.ref_data = np.where(np.isnan(ref_raw), np.nan, ref_raw)
+            else:
+                self.ref_data = np.where(
+                    np.isclose(ref_raw, nodata, atol=1e-6), np.nan, ref_raw
+                )
             # self.ref_data = self.src.read(1)
         except Exception as e:
             logger.error(
@@ -200,7 +216,7 @@ class ReferenceQuality(GlobatoFilter):
         valid_files = []
 
         for source in self.ref_sources:
-            if os.path.exists(source) and os.path.isfile(source):
+            if Path(source).is_file():
                 valid_files.append(source)
                 continue
 
@@ -210,13 +226,13 @@ class ReferenceQuality(GlobatoFilter):
                     source,
                     region=region.copy().buffer(pct=5).to_list(),
                     region_srs=region.srs,
-                    outdir=outdir,
+                    outdir=str(outdir),
                     use_cache=True,
                 )
-                if files:
-                    for f in files:
-                        if os.path.exists(f) and os.path.getsize(f) > 0:
-                            valid_files.append(f)
+                # if files:
+                for f in files:
+                    if Path(f).is_file() and Path(f).stat().st_size > 0:
+                        valid_files.append(f)
             except Exception as e:
                 logger.warning(f"[RQ] Fetch failed for {source}: {e}")
 
@@ -233,7 +249,7 @@ class ReferenceQuality(GlobatoFilter):
                         [
                             f
                             for f in fallback
-                            if os.path.exists(f) and os.path.getsize(f) > 2000
+                            if Path(f).is_file() and Path(f).stat().st_size > 2000
                         ]
                     )
             except Exception as e:
@@ -258,83 +274,231 @@ class ReferenceQuality(GlobatoFilter):
         )
         return sorted_files
 
-    def _build_vrt(self, files, region):
-        """Builds a VRT using GDAL."""
+    @staticmethod
+    def _file_identity(filename):
+        """Return stable semantic metadata for a source raster artifact.
+
+        RQ should distinguish regenerated source artifacts even when their
+        filesystem names are unchanged. File contents are intentionally not
+        hashed here because reference rasters can be large; the source path,
+        stat information, and raster geometry/metadata form the identity input.
+        """
+        path = Path(filename).resolve()
+        stat = path.stat()
+        identity = {
+            "name": path.name,
+            "size": stat.st_size,
+            "mtime_ns": stat.st_mtime_ns,
+        }
+
+        try:
+            with rasterio.open(path) as src:
+                identity.update(
+                    {
+                        "driver": src.driver,
+                        "width": src.width,
+                        "height": src.height,
+                        "count": src.count,
+                        "dtype": src.dtypes[0],
+                        "crs": src.crs.to_string() if src.crs else None,
+                        "transform": tuple(src.transform),
+                        "bounds": tuple(src.bounds),
+                        "nodata": src.nodata,
+                    }
+                )
+        except Exception as exc:
+            identity["raster_error"] = str(exc)
+
+        return identity
+
+    def _reference_identity(self, files):
+        """Return the Fetchez entry identity for the derived RQ reference."""
+        state = {
+            "requested_references": list(self.ref_sources),
+            "references": [self._file_identity(f) for f in files],
+            "region": {
+                "w": float(self.wgs_region.xmin),
+                "e": float(self.wgs_region.xmax),
+                "s": float(self.wgs_region.ymin),
+                "n": float(self.wgs_region.ymax),
+                "srs": self.wgs_region.srs,
+            },
+            "resolution": float(self.res),
+            "builder": self.builder,
+        }
+
+        # Use Fetchez's canonical entry identity machinery whenever available.
+        if entry_id is not None:
+            return entry_id(
+                {
+                    "url": "globato://rq-reference",
+                    "dst_fn": "rq-reference.tif",
+                    "data_type": "raster",
+                    "profile": "rq/v1",
+                    "src_srs": self.wgs_region.srs,
+                    "metadata": state,
+                }
+            )
+
+        # Compatibility fallback for older Fetchez installations.
+        payload = json.dumps(
+            state,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=True,
+        )
+        return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+    @staticmethod
+    def _reference_is_valid(path):
+        """Return True when a cached reference surface can be opened."""
+        path = Path(path)
+        if not path.is_file() or path.stat().st_size == 0:
+            return False
+
+        try:
+            with rasterio.open(path) as src:
+                return src.width > 0 and src.height > 0 and src.count > 0
+        except Exception:
+            return False
+
+    def _build_vrt(self, files, region, outdir):
+        """Build or reuse a content-addressed VRT using GDAL."""
 
         if not HAS_GDAL:
             logger.error("[RQ] GDAL required for 'vrt' builder.")
             return None
 
-        vrt_path = os.path.joinx(
-            os.path.dirname(files[0]),
-            f"rq_ref_{self.name}_{self.wgs_region.format('fn')}.vrt",
-        )
-        if not os.path.exists(vrt_path):
+        cache_dir = Path(outdir) / "rq"
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        identity = self._reference_identity(files)
+        vrt_path = cache_dir / f"rq_ref_{identity[:24]}.vrt"
+
+        with T_LOCK:
+            if vrt_path.exists() and not self.overwrite:
+                if self._reference_is_valid(vrt_path):
+                    logger.debug(f"[RQ] Reusing cached reference surface: {vrt_path}")
+                    return str(vrt_path)
+                logger.warning(
+                    f"[RQ] Cached reference surface is invalid; rebuilding: {vrt_path}"
+                )
+                try:
+                    vrt_path.unlink()
+                except OSError:
+                    pass
+
             try:
+                if self.overwrite and vrt_path.exists():
+                    vrt_path.unlink()
                 vrt_options = gdal.BuildVRTOptions(resampleAlg="bilinear")
-                gdal.BuildVRT(vrt_path, files, options=vrt_options)
-                return vrt_path
+                gdal.BuildVRT(str(vrt_path), files, options=vrt_options)
             except Exception as e:
                 logger.warning(f"[RQ] VRT Build failed: {e}. Using first file.")
+                try:
+                    if vrt_path.exists():
+                        vrt_path.unlink()
+                except OSError:
+                    pass
                 return files[0]
 
-    def _build_grid(self, files, region):
-        """Builds a mosaicked GeoTIFF using GridEngine."""
+        if self._reference_is_valid(vrt_path):
+            logger.debug(f"[RQ] Wrote reference surface: {vrt_path}")
+            return str(vrt_path)
+
+        logger.warning(f"[RQ] VRT builder produced no usable reference: {vrt_path}")
+        return None
+
+    def _build_grid(self, files, region, outdir):
+        """Build or reuse a content-addressed GeoTIFF reference mosaic."""
 
         if not HAS_GRID_ENGINE:
             logger.error("[RQ] transformez.grid_engine required for 'grid' builder.")
             return None
 
-        nx = int(np.ceil((self.wgs_region[1] - self.wgs_region[0]) / self.res))
-        ny = int(np.ceil((self.wgs_region[3] - self.wgs_region[2]) / self.res))
+        nx = max(1, int(np.floor(self.wgs_region.width / self.res)))
+        ny = max(1, int(np.floor(self.wgs_region.height / self.res)))
         logger.debug(
             f"[RQ] Gridding geographic reference surface ({nx}x{ny}) from {len(files)} files..."
         )
 
-        out_path = os.path.join(
-            os.path.dirname(files[0]),
-            f"rq_ref_{self.name}_{self.wgs_region.format('fn')}.tif",
-        )
+        cache_dir = Path(outdir) / "rq"
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        identity = self._reference_identity(files)
+        out_path = cache_dir / f"rq_ref_{identity[:24]}.tif"
 
-        if not os.path.exists(out_path):
+        with T_LOCK:
+            if out_path.exists() and not self.overwrite:
+                if self._reference_is_valid(out_path):
+                    logger.debug(f"[RQ] Reusing cached reference surface: {out_path}")
+                    return str(out_path)
+                logger.warning(
+                    f"[RQ] Cached reference surface is invalid; rebuilding: {out_path}"
+                )
+                try:
+                    out_path.unlink()
+                except OSError:
+                    pass
+
             try:
+                if self.overwrite and out_path.exists():
+                    out_path.unlink()
                 grid_data = GridEngine.load_and_interpolate(
                     files, self.wgs_region, nx, ny
                 )
-                GridWriter.write(out_path, grid_data, self.wgs_region)
-            except Exception:
+                GridWriter.write(str(out_path), grid_data, self.wgs_region)
+            except Exception as exc:
+                logger.exception(f"[RQ] Failed to build reference grid: {exc}")
+                try:
+                    if out_path.exists():
+                        out_path.unlink()
+                except OSError:
+                    pass
                 return None
 
-        return out_path
+        if self._reference_is_valid(out_path):
+            logger.debug(f"[RQ] Wrote reference surface: {out_path}")
+            return str(out_path)
+
+        logger.error(f"[RQ] Grid writer produced no usable reference: {out_path}")
+        return None
 
     def filter_chunk(self, chunk):
-        nodata = self.src.nodata if self.src.nodata is not None else -9999
+        """Return a boolean mask identifying points rejected by RQ."""
         rx, ry, rz = chunk["x"], chunk["y"], chunk["z"]
 
-        # if self.target_srs:
         if self._transformer:
             rx, ry, rz = self._transformer.transform(rx, ry, rz)
 
         cols, rows = self.inv_transform * (rx, ry)
 
-        # Align rasterio (corner-based) with SciPy (center-based)
+        # Convert rasterio transform coordinates (cell corners) into SciPy
+        # array coordinates (cell centers).
         cols -= 0.5
         rows -= 0.5
 
-        # rows, cols = rasterio.transform.rowcol(self.src.transform, rx, ry)
-        rows = np.clip(rows, 0, self.src.height - 1)
-        cols = np.clip(cols, 0, self.src.width - 1)
-
-        # ref_vals = self.ref_data[rows, cols]
-        ref_vals = map_coordinates(
-            self.ref_data,
-            [rows, cols],
-            order=1,
-            mode="constant",
-            cval=np.nan,
-            prefilter=False,
+        in_bounds = (
+            np.isfinite(cols)
+            & np.isfinite(rows)
+            & (rows >= 0)
+            & (rows <= self.src.height - 1)
+            & (cols >= 0)
+            & (cols <= self.src.width - 1)
         )
-        valid_ref = (ref_vals != nodata) & (~np.isnan(ref_vals))
+
+        ref_vals = np.full(len(chunk), np.nan, dtype=np.float64)
+        if np.any(in_bounds):
+            ref_vals[in_bounds] = map_coordinates(
+                self.ref_data,
+                [rows[in_bounds], cols[in_bounds]],
+                order=1,
+                mode="constant",
+                cval=np.nan,
+                prefilter=False,
+            )
+
+        valid_ref = in_bounds & np.isfinite(ref_vals)
+        self.out_of_bounds_points += int(np.count_nonzero(~in_bounds))
+        self.invalid_reference_points += int(np.count_nonzero(in_bounds & ~valid_ref))
 
         diff = np.abs(rz - ref_vals)
         is_outlier = np.zeros(len(chunk), dtype=bool)
@@ -342,10 +506,7 @@ class ReferenceQuality(GlobatoFilter):
         if self.mode == "iho":
             # IHO S-44 Formula: TVU = sqrt(a^2 + (b * depth)^2)
             allowable_error = np.sqrt(self.iho_a**2 + (self.iho_b * ref_vals) ** 2)
-            # allowable_error *= (self.threshold / 100.0) if self.threshold != 50 else 1.0
-
             is_outlier = (diff > allowable_error) & valid_ref
-
         elif self.mode == "percent":
             with np.errstate(divide="ignore", invalid="ignore"):
                 pct_diff = (diff / np.abs(ref_vals)) * 100
@@ -353,13 +514,14 @@ class ReferenceQuality(GlobatoFilter):
         else:
             is_outlier = (diff > self.threshold) & valid_ref
 
-        chunk_drops = np.sum(is_outlier)
+        chunk_drops = int(np.sum(is_outlier))
         self.dropped_points += chunk_drops
         self.total_points += len(chunk)
 
         if self.total_points > 0 and self.total_points % 1000000 < len(chunk):
             logger.debug(
-                f"[RQ] Heartbeat: Filtered {self.dropped_points:,} outliers out of {self.total_points:,} points evaluated..."
+                f"[RQ] Heartbeat: Filtered {self.dropped_points:,} outliers out of "
+                f"{self.total_points:,} points evaluated..."
             )
 
         return is_outlier
@@ -368,18 +530,16 @@ class ReferenceQuality(GlobatoFilter):
         if self.total_points > 0:
             pct_dropped = (self.dropped_points / self.total_points) * 100
             logger.debug(
-                f"[RQ] Complete: Removed {self.dropped_points:,} outliers ({pct_dropped:.2f}%) from {self.total_points:,} total points."
+                f"[RQ] Complete: Removed {self.dropped_points:,} outliers "
+                f"({pct_dropped:.2f}%) from {self.total_points:,} total points. "
+                f"Reference invalid: {self.invalid_reference_points:,}; "
+                f"out of bounds: {self.out_of_bounds_points:,}."
             )
 
         if hasattr(self, "src"):
             self.src.close()
 
-        if self.ref_fn and os.path.exists(self.ref_fn):
-            if self.ref_fn.endswith(".vrt"):
-                try:
-                    os.remove(self.ref_fn)
-                except Exception:
-                    pass
-
+        # RQ reference surfaces are persistent derived artifacts in the RQ
+        # cache.
         if hasattr(super(), "teardown"):
             super().teardown()
