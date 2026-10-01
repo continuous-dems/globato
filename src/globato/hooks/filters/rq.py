@@ -205,7 +205,7 @@ class ReferenceQuality(GlobatoFilter):
                     region=self.wgs_region,
                 ).get_components()
         except Exception as e:
-            logger.exception(f"Could not perform vertical transformation: {e}")
+            logger.debug(f"Could not perform vertical transformation: {e}")
             return False
 
         return True
@@ -469,7 +469,7 @@ class ReferenceQuality(GlobatoFilter):
         rx, ry, rz = chunk["x"], chunk["y"], chunk["z"]
 
         if self._transformer:
-            rx, ry, rz = self._transformer.transform(rx, ry, rz)
+            rx, ry = self._transformer.transform(rx, ry)
 
         cols, rows = self.inv_transform * (rx, ry)
 
