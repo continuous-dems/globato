@@ -13,7 +13,9 @@ Based on cudem.grits.flats
 :license: MIT, see LICENSE for more details.
 """
 
+import hashlib
 import logging
+import os
 import numpy as np
 
 from .base import RasterStreamHook
@@ -39,6 +41,20 @@ class RasterFlats(RasterStreamHook):
         super().__init__(**kwargs)
 
         self.size_threshold = int(size_threshold)
+
+    def _dst_fn(self, src_fn):
+        # TNM downloads can have the same basename in distinct cache folders.
+        # Keep the established naming for every other raster workflow.
+        if (
+            self.output
+            or getattr(getattr(self, "current_mod", None), "name", None) != "tnm"
+        ):
+            return super()._dst_fn(src_fn)
+        identity = hashlib.sha256(os.path.abspath(src_fn).encode("utf-8")).hexdigest()[
+            :16
+        ]
+        stem = os.path.splitext(os.path.basename(src_fn))[0]
+        return os.path.join(self.local_tmp, f"{stem}_{identity}{self.suffix}.tif")
 
     def process_chunk(self, data, ndv, entry, transform=None, window=None):
         """data: (Bands, Rows, Cols)"""

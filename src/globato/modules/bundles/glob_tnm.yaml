@@ -1,0 +1,171 @@
+name: glob-tnm
+description: >
+  USGS TNM elevation products with authoritative source-footprint hierarchy
+  and newest-first project 1-meter selection. This bundle contains no coastline policy.
+
+tags:
+  - globato
+  - topography
+  - lidar
+  - glob-stream
+  - glob-bundle
+
+modules:
+  - module: tnm
+    args:
+      products: s1m
+      formats: GeoTIFF
+      use_cache: false
+    hooks:
+      - name: remote_raster_footprint
+      - name: tnm-policy
+      - name: raster_flats
+        args:
+          stage: file
+      - name: stream-init
+        args:
+          vert_srs: EPSG:5703
+      - name: stream_reproject
+        args:
+          dst_srs: EPSG:4269+5703
+          cache_dir: "%shared_cache%"
+      - name: claim-grid-filter
+        args:
+          res: null
+  - module: tnm
+    args:
+      products: 1m
+      formats: GeoTIFF
+      use_cache: false
+    hooks:
+      - name: tnm-wesm-coverage
+      - name: tnm-policy
+      - name: raster_flats
+        args:
+          stage: file
+      - name: stream-init
+        args:
+          vert_srs: EPSG:5703
+      - name: stream_reproject
+        args:
+          dst_srs: EPSG:4269+5703
+          cache_dir: "%shared_cache%"
+      - name: claim-grid-filter
+        args:
+          res: null
+  - module: tnm
+    args:
+      products: 1_9as
+      use_cache: false
+    hooks:
+      - name: remote_archive_footprint
+      - name: tnm-policy
+      - name: unzip
+      - name: filename_filter
+        args:
+          match: .img
+      - name: filename_filter
+        args:
+          exclude: .xml
+      - name: raster_flats
+        args:
+          stage: file
+      - name: stream-init
+        args:
+          vert_srs: EPSG:5703
+      - name: stream_reproject
+        args:
+          dst_srs: EPSG:4269+5703
+          cache_dir: "%shared_cache%"
+      - name: claim-grid-filter
+        args:
+          res: null
+  - module: tnm
+    args:
+      products: 5m
+      use_cache: false
+    hooks:
+      - name: remote_raster_footprint
+      - name: tnm-policy
+      - name: raster_flats
+        args:
+          stage: file
+      - name: stream-init
+        args:
+          vert_srs: EPSG:5703
+      - name: stream_reproject
+        args:
+          dst_srs: EPSG:4269+5703
+          cache_dir: "%shared_cache%"
+      - name: claim-grid-filter
+        args:
+          res: null
+  - module: tnm
+    args:
+      products: 1_3as
+      formats: GeoTIFF
+      use_cache: false
+    hooks:
+      - name: tnm-policy
+      - name: raster_flats
+        args:
+          stage: file
+      - name: stream-init
+        args:
+          vert_srs: EPSG:5703
+      - name: stream_reproject
+        args:
+          dst_srs: EPSG:4269+5703
+          cache_dir: "%shared_cache%"
+      - name: claim-grid-filter
+        args:
+          res: null
+  - module: tnm
+    args:
+      products: 1_as
+      formats: GeoTIFF
+      use_cache: false
+    hooks:
+      - name: tnm-policy
+      - name: raster_flats
+        args:
+          stage: file
+      - name: stream-init
+        args:
+          vert_srs: EPSG:5703
+      - name: stream_reproject
+        args:
+          dst_srs: EPSG:4269+5703
+          cache_dir: "%shared_cache%"
+      - name: claim-grid-filter
+        args:
+          res: null
+  - module: tnm
+    args:
+      products: 2_as
+      formats: GeoTIFF
+      use_cache: false
+    hooks:
+      - name: tnm-policy
+      - name: raster_flats
+        args:
+          stage: file
+      - name: stream-init
+        args:
+          vert_srs: EPSG:5703
+      - name: stream_reproject
+        args:
+          dst_srs: EPSG:4269+5703
+          cache_dir: "%shared_cache%"
+      - name: claim-grid-filter
+        args:
+          res: null
+
+products:
+  - s1m
+  - 1m
+  - 1_9as
+  - 5m
+  - 1_3as
+  - 1_as
+  - 2_as
