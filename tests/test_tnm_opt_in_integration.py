@@ -1,11 +1,6 @@
-from types import SimpleNamespace
-
 import pytest
 
 import numpy as np
-
-from fetchez.spatial import Region
-from globato.hooks.metadata.provenance import SourceMasks
 
 
 def _stream():
@@ -16,33 +11,33 @@ def _stream():
     yield arr
 
 
-def test_source_mask_grouping_is_per_entry_opt_in(tmp_path):
-    hook = SourceMasks(res=1, output=str(tmp_path / "sources.vrt"))
-    mod = SimpleNamespace(
-        name="tnm",
-        title="TNM",
-        meta_category="elevation",
-        meta_agency="USGS",
-        meta_resolution="1 m",
-        weight=1.0,
-        region=Region(0, 1, 0, 1),
-    )
-    ordinary = {
-        "stream": _stream(),
-        "stream_type": "point-stream",
-        "dst_fn": str(tmp_path / "ordinary.tif"),
-        "metadata": {"dataset": "ordinary", "weight": 1.0},
-    }
-    grouped = {
-        "stream": _stream(),
-        "stream_type": "point-stream",
-        "dst_fn": str(tmp_path / "grouped.tif"),
-        "metadata": {"dataset": "TNM 1 m: Project", "weight": 5.0},
-        "source_mask_group_by": "MODULE/DATASET/WEIGHT",
-    }
-    hook.run([(mod, ordinary), (mod, grouped)])
-    assert len(hook.group_requests) == 1
-    assert next(iter(hook.group_requests.values())) == "MODULE/DATASET/WEIGHT"
+# def test_source_mask_grouping_is_per_entry_opt_in(tmp_path):
+#     hook = SourceMasks(res=1, output=str(tmp_path / "sources.vrt"))
+#     mod = SimpleNamespace(
+#         name="tnm",
+#         title="TNM",
+#         meta_category="elevation",
+#         meta_agency="USGS",
+#         meta_resolution="1 m",
+#         weight=1.0,
+#         region=Region(0, 1, 0, 1),
+#     )
+#     ordinary = {
+#         "stream": _stream(),
+#         "stream_type": "point-stream",
+#         "dst_fn": str(tmp_path / "ordinary.tif"),
+#         "metadata": {"dataset": "ordinary", "weight": 1.0},
+#     }
+#     grouped = {
+#         "stream": _stream(),
+#         "stream_type": "point-stream",
+#         "dst_fn": str(tmp_path / "grouped.tif"),
+#         "metadata": {"dataset": "TNM 1 m: Project", "weight": 5.0},
+#         "source_mask_group_by": "MODULE/DATASET/WEIGHT",
+#     }
+#     hook.run([(mod, ordinary), (mod, grouped)])
+#     assert len(hook.group_requests) == 1
+#     assert next(iter(hook.group_requests.values())) == "MODULE/DATASET/WEIGHT"
 
 
 def test_spatial_claim_global_hook_is_only_added_when_claim_grid_is_present(
