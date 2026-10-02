@@ -15,12 +15,6 @@ import click
 import logging
 
 # Globato CLI
-# from .wafflez import wafflez_group
-# from .gritz import gritz_group
-# from .pointz import pointz_group
-# from .perspecto import perspecto_group
-
-# from .run import run_cmd
 from .build import build_cmd
 from .sources import sources_group
 from .pointz import dump
@@ -28,8 +22,7 @@ from .perspecto import perspecto_hillshade
 from .recipes import recipes_group
 from .gui import gui_cmd
 from .process import process_cmd
-from fetchez.cli.recipes import run_recipe
-# from fetchez.cli.pipeline import pipeline_group
+from fetchez.cli.run import run_recipe
 
 from fetchez.cli import setup_logging
 from fetchez.utils import FetchezMainGroup
@@ -81,18 +74,11 @@ class GlobatoMainGroup(FetchezMainGroup):
             "hillshade",
             "gui",
             "process",
-            # "pipeline",
         ],
         "Discovery": [
             "recipes",
             "sources",
         ],
-        # "Tools": [
-        #     # "cudem",
-        #     "gritz",
-        #     "dlim",
-        #     "perspecto",
-        # ],
     },
 )
 @click.version_option(package_name="globato")
@@ -119,12 +105,7 @@ def cli(verbose, quiet):
     setup_logging(name="globato", quiet=quiet, verbose=verbose)
 
 
-# cli.add_command(run_cmd, name="run")
 cli.add_command(build_cmd, name="build")
-# cli.add_command(wafflez_group, name="cudem")
-# cli.add_command(gritz_group, name="gritz")
-# cli.add_command(pointz_group, name="dlim")
-# cli.add_command(perspecto_group, name="perspecto")
 cli.add_command(sources_group, name="sources")
 cli.add_command(run_recipe, name="run")
 cli.add_command(dump, name="dump")
@@ -132,7 +113,6 @@ cli.add_command(perspecto_hillshade, name="hillshade")
 cli.add_command(recipes_group, name="recipes")
 cli.add_command(gui_cmd, name="gui")
 cli.add_command(process_cmd, name="process")
-# cli.add_command(pipeline_group, name="pipeline")
 
 
 if __name__ == "__main__":

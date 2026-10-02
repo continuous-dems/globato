@@ -14,7 +14,8 @@ Discoverability and documentation for globato dem recipes.
 import click
 
 from fetchez.utils import FetchezMainGroup
-from fetchez.cli.recipes import run_recipe, list_recipes, info_recipe
+from fetchez.cli.recipes import list_recipes, info_recipe
+from fetchez.cli.run import run_recipe
 
 for param in list_recipes.params:
     if param.name == "search":
