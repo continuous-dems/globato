@@ -147,7 +147,7 @@ modules:
           data_type: "nos-grid"
       - name: set-srs
         args:
-          horz_srs: "auto-utm"
+          horz_srs: "auto_utm"
           vert_srs: "vdatum:mllw"
       - name: dynamic-weight
         args:
