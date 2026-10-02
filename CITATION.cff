@@ -10,8 +10,8 @@ abstract: >-
   It is designed for the rapid development, blending, and processing of high-accuracy
   Topo-Bathy Digital Elevation Models (DEMs).
 
-version: "0.3.8"
-date-released: "2026-08-27"
+version: "0.3.9"
+date-released: "2026-10-02"
 
 type: "software"
 license: "MIT"
