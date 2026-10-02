@@ -16,7 +16,9 @@ import click
 import logging
 
 from fetchez.utils import FetchezMainCommand
+from fetchez.cli.pipeline import PipelineExecutor
 
+from globato.utils import is_globato_source
 import globato.api
 
 
@@ -25,6 +27,14 @@ logger = logging.getLogger(__name__)
 
 # --- Build command ---
 CONTEXT_SETTINGS = dict(max_content_width=220)
+
+
+class GlobatoPipelineExecutor(PipelineExecutor):
+    def module_allowed(self, name, meta):
+        return is_globato_source(meta)
+
+    def bundle_allowed(self, name, bundle):
+        return is_globato_source(bundle)
 
 
 @click.command("build", cls=FetchezMainCommand, context_settings=CONTEXT_SETTINGS)

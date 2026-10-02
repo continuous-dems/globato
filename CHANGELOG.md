@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### ADDED
+* Add `is_globato_source` to utils.
+
+### CHANGED
+* Update cli to use modern fetchez imports.
+
 ## [0.3.9 - 10-02-2026]
 
 ### ADDED
