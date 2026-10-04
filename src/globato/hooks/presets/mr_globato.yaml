@@ -1,5 +1,8 @@
 name: mr-globato
 description: "The standard Multi-Resolution Global Bathymetry and Topography pipeline."
+tags:
+  - globato-dem
+  - dem
 hooks:
   - name: spatial-crop
   - name: audit
@@ -33,7 +36,7 @@ hooks:
     args:
       res: 3s
       crs: epsg:4326+3855
-      mode: mixed
+      strategy: mixed
       nodata: -9999.0
       weight_threshold: 3/2/1/.75/.5/.4/.3/.2/.1
       output: "%name%_%batch_name%_stack.tif"

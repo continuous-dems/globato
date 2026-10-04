@@ -1,5 +1,8 @@
 name: mr-globato-crm
 description: "The standard CRM step-down, trim, and visualize pipeline."
+tags:
+  - globato-dem
+  - dem
 hooks:
   - preset: mr-globato
     args:

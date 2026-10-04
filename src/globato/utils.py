@@ -35,6 +35,7 @@ logger = logging.getLogger(__name__)
 
 
 GLOBATO_SOURCE_TAG = "glob-stream"
+GLOBATO_BUILD_TAG = "globato-dem"
 
 
 def is_globato_source(meta):
@@ -43,6 +44,13 @@ def is_globato_source(meta):
 
 
 globato_source_p = is_globato_source
+
+
+def is_globato_build_preset(meta):
+    return GLOBATO_BUILD_TAG in meta.get("tags", [])
+
+
+globato_build_preset_p = is_globato_build_preset
 
 
 def run_cmd(cmd, data_fun=None, verbose=False, cwd="."):

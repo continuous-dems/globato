@@ -18,13 +18,14 @@ import logging
 from typing import Union, List, Optional, Generator
 
 from fetchez.recipe import Recipe
-from fetchez.registry import HookRegistry
+from fetchez.registry import HookRegistry, PresetRegistry
 from fetchez.utils import str2inc, parse_hook_string, compile_sources
 from fetchez.api import _compile_modules
 from fetchez.spatial import parse_region
+from fetchez.cli.pipeline import make_pipeline_config
 
 from globato.streams.base import GlobatoStream
-from globato.utils import globatize_modules, make_recipe_config
+from globato.utils import globatize_modules, make_recipe_config, is_globato_build_preset
 
 logger = logging.getLogger(__name__)
 
@@ -162,6 +163,171 @@ def _default_blend_distances(resolutions, previous_tier_mode):
     # Raster handoff may still benefit from reopening a small transition zone.
     count = len(resolutions)
     return [2 * (2**power) for power in reversed(range(count))]
+
+
+def build_preset_overrides(
+    increment=None,
+    crs=None,
+    nodata=None,
+    stack_strategy=None,
+    stack_weights=None,
+    dem_weights=None,
+    previous_tier_mode=None,
+    previous_tier_resampling=None,
+):
+    overrides = {}
+
+    def update(name, **args):
+        overrides.setdefault(name, {}).update(args)
+
+    if increment is not None:
+        for hook_name in (
+            "provenance",
+            "source_masks",
+            "multi_stack",
+        ):
+            update(hook_name, res=increment)
+
+    if crs is not None:
+        update("multi_stack", crs=crs)
+
+    if nodata is not None:
+        update("multi_stack", nodata=nodata)
+
+    resolutions = "/".join(
+        _format_inc(value, increment) for value in _auto_resolutions(increment)
+    )
+    update(
+        "ms_binary_cudem",
+        resolutions=resolutions,
+        steps=len(resolutions.split("/")) - 1,
+    )
+
+    if stack_strategy is not None:
+        update(
+            "multi_stack",
+            strategy=stack_strategy,
+        )
+
+    if stack_weights is not None:
+        update(
+            "multi_stack",
+            weight_threshold=stack_weights,
+        )
+
+    if dem_weights is not None:
+        update(
+            "ms_binary_cudem",
+            weights=dem_weights,
+        )
+
+    if previous_tier_mode is not None:
+        update(
+            "ms_binary_cudem",
+            previous_tier_mode=previous_tier_mode,
+        )
+
+    if previous_tier_resampling is not None:
+        update(
+            "ms_binary_cudem",
+            previous_tier_resampling=previous_tier_resampling,
+        )
+
+    return [{"name": name, "args": args} for name, args in overrides.items()]
+
+
+def build_recipe_config(
+    modules,
+    *,
+    region,
+    increment,
+    preset="mr-globato",
+    outname="globato_dem",
+    region_srs="EPSG:4326",
+    target_srs="EPSG:4326",
+    nodata="-99999",
+    extend="0:0",
+    stack_strategy="mixed",
+    stack_weights="auto",
+    dem_weights="auto",
+    previous_tier_mode="points",
+    previous_tier_resampling="bilinear",
+    modifiers=None,
+    schemas=None,
+    threads=1,
+):
+
+    batch_outname = "%name%_%batch_name%"
+
+    # --- Resolution and Weight Tiers ---
+    resolutions = _auto_resolutions(increment)
+
+    if str(stack_weights).lower() == "auto":
+        stack_weight_list = _auto_stack_weights()
+    else:
+        stack_weight_list = _parse_weights(stack_weights)
+
+    if str(dem_weights).lower() == "auto":
+        dem_weight_list = _auto_dem_weights(resolutions)
+    else:
+        dem_weight_list = _parse_weights(dem_weights)
+
+    # --- Parse Extend ---
+    ext_parts = str(extend).split(":")
+    ext_cells = int(ext_parts[0]) if len(ext_parts) > 0 and ext_parts[0] else 0
+    ext_pct = float(ext_parts[1]) if len(ext_parts) > 1 and ext_parts[1] else 0.0
+
+    # --- Parse Preset and Overrides ---
+    PresetRegistry.load_all()
+    preset_def = PresetRegistry.get_yaml(preset)
+
+    if not preset_def:
+        raise ValueError(f"Preset '{preset}' is not registered.")
+
+    if not is_globato_build_preset(preset_def):
+        raise ValueError(f"Preset '{preset}' is not a Globato DEM-building preset.")
+
+    overrides = build_preset_overrides(
+        increment=increment,
+        crs=target_srs,
+        nodata=nodata,
+        stack_weights=stack_weight_list,
+        previous_tier_mode=previous_tier_mode,
+        previous_tier_resampling=previous_tier_resampling,
+        dem_weights=dem_weight_list,
+    )
+
+    # --- Make Pipeline Config ---
+    config = make_pipeline_config(
+        modules,
+        name=outname,
+        region=region,
+        region_srs=region_srs,
+        global_hooks=[
+            {
+                "preset": preset,
+                "args": overrides,
+            }
+        ],
+        modifiers=modifiers,
+        schemas=schemas,
+        threads=threads,
+    )
+
+    if ext_cells > 0 or ext_pct > 0:
+        config.setdefault("modifiers", []).append(
+            {
+                "name": "buffer_and_cut",
+                "args": {
+                    "cells": ext_cells,
+                    "pct": ext_pct,
+                    "inc": increment,
+                    "outname": batch_outname,
+                },
+            }
+        )
+
+    return config
 
 
 def build(
