@@ -1,5 +1,4 @@
 #!/usr/bin/env python
-# -*- coding: utf-8 -*-
 
 """
 globato.hooks.rasters.multiband
@@ -11,8 +10,9 @@ Build a multi-band raster from collection of single-bands
 :license: MIT, see LICENSE for more details.
 """
 
-import os
 import logging
+import os
+
 import rasterio
 from fetchez.hooks import FetchHook
 

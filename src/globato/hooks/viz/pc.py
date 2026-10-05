@@ -1,5 +1,4 @@
 #!/usr/bin/env python
-# -*- coding: utf-8 -*-
 
 """
 globato.hooks.viz.pc
@@ -8,11 +7,12 @@ globato.hooks.viz.pc
 point cloud visualizations
 """
 
-import os
 import logging
+import os
+
+import matplotlib.pyplot as plt
 import numpy as np
 import numpy.lib.recfunctions as rfn
-import matplotlib.pyplot as plt
 
 # from mpl_toolkits.mplot3d import Axes3D
 from fetchez.hooks import FetchHook

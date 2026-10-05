@@ -1,5 +1,4 @@
 #!/usr/bin/env python
-# -*- coding: utf-8 -*-
 
 """
 globato.hooks.rasters.crop
@@ -7,11 +6,13 @@ globato.hooks.rasters.crop
 Crops a raster to the absolute boundaries of its valid data (removes NoData moats).
 """
 
-import os
 import logging
+import os
+
 import numpy as np
 import rasterio
 from rasterio.windows import Window, intersection
+
 from .base import RasterGlobalHook, copy_metadata
 
 logger = logging.getLogger(__name__)

@@ -1,5 +1,4 @@
 #!/usr/bin/env python
-# -*- coding: utf-8 -*-
 
 """
 globato.hooks.rasters.scipy_griddata
@@ -13,6 +12,7 @@ Methods: linear, cubic, nearest
 """
 
 import logging
+
 import numpy as np
 from scipy import interpolate
 

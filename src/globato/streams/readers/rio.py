@@ -1,5 +1,4 @@
 #!/usr/bin/env python
-# -*- coding: utf-8 -*-
 
 """
 globato.streams.readers.rio
@@ -12,15 +11,14 @@ Rasterio data parsing
 """
 
 import logging
+
 import numpy as np
-
 import rasterio
+from fetchez.utils import float_or, int_or
 from rasterio.crs import CRS
-from rasterio.windows import Window, from_bounds
-from rasterio.warp import transform_bounds
 from rasterio.errors import CRSError, WindowError
-
-from fetchez.utils import int_or, float_or
+from rasterio.warp import transform_bounds
+from rasterio.windows import Window, from_bounds
 
 from .base import BaseGlobatoReader
 
@@ -119,7 +117,6 @@ class RasterioReader(BaseGlobatoReader):
 
     def _yield_raw_chunks(self):
         yield from self._process_rio_dataset()
-        return
 
     def _process_rio_dataset(self, src=None):
         """Yield chunks using Rasterio Windows. Accepts an optional open dataset."""

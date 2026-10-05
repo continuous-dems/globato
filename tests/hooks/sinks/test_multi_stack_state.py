@@ -4,7 +4,6 @@ import rasterio
 from globato.hooks.sinks.multi_stack import MultiStackAccumulator
 from globato.hooks.transforms.point_pixels import FUSION_BANDS
 
-
 POINT_DTYPE = [
     ("x", "f8"),
     ("y", "f8"),

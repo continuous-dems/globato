@@ -1,5 +1,4 @@
 #!/usr/bin/env python
-# -*- coding: utf-8 -*-
 
 """
 globato.cli.dem
@@ -10,17 +9,15 @@ The command-line interface for the dem group
 
 import os
 import sys
+
 import click
 import yaml
-
 from fetchez.recipe import Recipe
 
 
 @click.group(name="dem")
 def dem_group():
     """Generate custom Digital Elevation Models (Legacy Waffles style)."""
-
-    pass
 
 
 def _parse_source(src_str):

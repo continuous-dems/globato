@@ -1,5 +1,4 @@
 #!/usr/bin/env python
-# -*- coding: utf-8 -*-
 
 """
 globato.streams.readers.xyz
@@ -13,9 +12,9 @@ Process XYZ/ASCII files
 
 import logging
 import warnings
-import numpy as np
 
-from fetchez.utils import int_or, float_or
+import numpy as np
+from fetchez.utils import float_or, int_or
 
 from .base import BaseGlobatoReader
 

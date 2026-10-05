@@ -1,5 +1,4 @@
 #!/usr/bin/env python
-# -*- coding: utf-8 -*-
 
 """
 globato.hooks.rasters.polygonize
@@ -11,14 +10,15 @@ Polygonize the raster.
 :license: MIT, see LICENSE for more details.
 """
 
-import os
 import logging
+import os
+
 import numpy as np
 import rasterio
-from rasterio.features import shapes
 import shapely
-from pyogrio.raw import write
 from fetchez.hooks import FetchHook
+from pyogrio.raw import write
+from rasterio.features import shapes
 
 logger = logging.getLogger(__name__)
 

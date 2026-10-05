@@ -1,5 +1,4 @@
 #!/usr/bin/env python
-# -*- coding: utf-8 -*-
 
 """
 globato.hooks.filters.spatial_crop
@@ -12,10 +11,13 @@ crop stream data by region
 """
 
 import logging
+
 import numpy as np
 from fetchez.hooks import FetchHook
 from fetchez.utils import str2bool
+
 from globato.utils import add_field_to_recarray
+
 # from globato.processors.filter.base import GlobatoFilter
 
 logger = logging.getLogger(__name__)

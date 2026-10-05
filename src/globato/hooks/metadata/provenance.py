@@ -1,5 +1,4 @@
 #!/usr/bin/env python
-# -*- coding: utf-8 -*-
 
 """
 globato.hooks.metadata.provenance
@@ -13,22 +12,22 @@ Generate bitmap data mask
 
 from __future__ import annotations
 
-import os
-import logging
-import threading
 import hashlib
+import logging
+import os
 import tempfile
+import threading
 from urllib.parse import urlparse
 
 import numpy as np
 import rasterio
+from fetchez.hooks import FetchHook
+from fetchez.utils import int_or, str2bool, str2inc
 from rasterio.enums import Resampling
-from rasterio.warp import reproject
 from rasterio.features import shapes
+from rasterio.warp import reproject
 from rasterio.windows import Window
 
-from fetchez.hooks import FetchHook
-from fetchez.utils import str2inc, str2bool, int_or
 from ..transforms.point_pixels import PointPixels
 
 logger = logging.getLogger(__name__)
@@ -165,14 +164,13 @@ class ProvenanceHook(FetchHook):
         col_off, row_off, w, h = sub_win
         window = Window(col_off, row_off, w, h)
 
-        with self.lock:
-            with rasterio.open(self.output, "r+") as dst:
-                mask_data = dst.read(1, window=window)
+        with self.lock, rasterio.open(self.output, "r+") as dst:
+            mask_data = dst.read(1, window=window)
 
-                # Bitwise OR to add this module's presence
-                mask_data[has_data] |= bit_val
+            # Bitwise OR to add this module's presence
+            mask_data[has_data] |= bit_val
 
-                dst.write(mask_data, 1, window=window)
+            dst.write(mask_data, 1, window=window)
 
     def teardown(self):
         """Write the legend to metadata on exit."""
@@ -424,7 +422,7 @@ class MaskSet:
             f"  <GeoTransform>{gt}</GeoTransform>",
         ]
 
-        import xml.sax.saxutils as saxutils
+        from xml.sax import saxutils
 
         for band, (_, path) in enumerate(valid, start=1):
             with rasterio.open(path) as src:
@@ -625,7 +623,7 @@ class MaskSet:
             geometry = frame.geometry.union_all()
             record = {
                 "GROUP_ID": str(group_id),
-                "SOURCE_COUNT": int(len(frame)),
+                "SOURCE_COUNT": len(frame),
                 "geometry": geometry,
             }
 
@@ -663,7 +661,7 @@ class MaskSet:
             )
             return
 
-        import xml.sax.saxutils as saxutils
+        from xml.sax import saxutils
 
         palette = [
             "228,26,28,150",

@@ -1,5 +1,4 @@
 #!/usr/bin/env python
-# -*- coding: utf-8 -*-
 
 """
 globato.cli.pointz
@@ -10,25 +9,26 @@ Point cloud filtering and manipulation.
 :license: MIT, see LICENSE for more details.
 """
 
-import sys
 import logging
+import sys
+
 import click
 import yaml
 from fetchez.recipe import Recipe
-from fetchez.utils import (
-    parse_hook_string,
-    FetchezMainGroup,
-    FetchezMainCommand,
-    str2inc,
-    compile_sources,
-)
 from fetchez.registry import (
     HookRegistry,
+    ProfileRegistry,
     # ModuleRegistry,
     ReaderRegistry,
-    ProfileRegistry,
 )
 from fetchez.spatial import Region
+from fetchez.utils import (
+    FetchezMainCommand,
+    FetchezMainGroup,
+    compile_sources,
+    parse_hook_string,
+    str2inc,
+)
 
 from globato.utils import globatize_modules, make_recipe_config
 
@@ -45,8 +45,6 @@ POINTZ_COMMANDS = ["info", "region", "dump", "list-filters", "pipeline"]
 )
 def pointz_group():
     """Filter, transform, and stream point cloud data."""
-
-    pass
 
 
 def _yield_stdin_chunks(chunk_size=100000):

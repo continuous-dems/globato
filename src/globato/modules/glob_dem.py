@@ -1,5 +1,4 @@
 #!/usr/bin/env python
-# -*- coding: utf-8 -*-
 
 """
 globato.modules.glob_dem
@@ -17,14 +16,14 @@ Useful for:
 :license: MIT, see LICENSE for more details.
 """
 
-import os
 import logging
+import os
 
-from fetchez import core, cli, utils
-from fetchez.registry import ModuleRegistry
-from fetchez.modules import FetchModule
-
+from fetchez import cli, core, utils
 from fetchez.hooks.stream_init import DataStream
+from fetchez.modules import FetchModule
+from fetchez.registry import ModuleRegistry
+
 from globato.hooks.sinks.simple_stack import SimpleStack
 
 # try:

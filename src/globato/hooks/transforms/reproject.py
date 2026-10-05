@@ -1,5 +1,4 @@
 #!/usr/bin/env python
-# -*- coding: utf-8 -*-
 
 """
 globato.hooks.transforms.reproject
@@ -12,8 +11,8 @@ Reproject the data stream. Hook for fetchez.
 """
 
 import logging
-from fetchez.hooks import FetchHook
 
+from fetchez.hooks import FetchHook
 from transformez.srs import SRSParser
 from transformez.utils import RasterQuery
 

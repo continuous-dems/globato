@@ -1,5 +1,4 @@
 #!/usr/bin/env python
-# -*- coding: utf-8 -*-
 
 """
 globato.streams.readers.pyogrio
@@ -11,15 +10,15 @@ Pyogrio/shapely vector reader with native 3D Breakline densification.
 :license: MIT, see LICENSE for more details.
 """
 
-import os
 import logging
-import numpy as np
-from fetchez.utils import float_or, str2inc
+import os
+import warnings
 
+import numpy as np
+import pandas as pd
 import pyogrio
 import shapely
-import pandas as pd
-import warnings
+from fetchez.utils import float_or, str2inc
 
 from .base import BaseGlobatoReader
 

@@ -1,12 +1,12 @@
-import pytest
 import time
 from pathlib import Path
 
 import numpy as np
+import pytest
 import rasterio
-from rasterio.transform import from_origin
-from fetchez.spatial import Region
 from fetchez.modules.local_fs import LocalFS
+from fetchez.spatial import Region
+from rasterio.transform import from_origin
 
 from globato.hooks.filters import rq as rq_module
 from globato.hooks.filters.rq import ReferenceQuality

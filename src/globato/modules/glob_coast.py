@@ -1,5 +1,4 @@
 #!/usr/bin/env python
-# -*- coding: utf-8 -*-
 
 """
 globato.modules.glob_coast
@@ -12,22 +11,22 @@ Merges Vectors (NHD, OSM) and Rasters (Copernicus, GMRT) into a unified product 
 :license: MIT, see LICENSE for more details.
 """
 
-import os
 import logging
+import os
+
 import numpy as np
 import rasterio
-from rasterio.features import rasterize
-from rasterio.transform import from_origin
-from rasterio.enums import Resampling
-from rasterio.warp import reproject
-from pyogrio.raw import read
-from shapely import from_wkb
-
-from fetchez import core, cli, utils
+from fetchez import cli, core, utils
 from fetchez.hooks.extract import Extract
 from fetchez.hooks.fn_filter import FilenameFilter
-from fetchez.registry import ModuleRegistry
 from fetchez.modules import FetchModule
+from fetchez.registry import ModuleRegistry
+from pyogrio.raw import read
+from rasterio.enums import Resampling
+from rasterio.features import rasterize
+from rasterio.transform import from_origin
+from rasterio.warp import reproject
+from shapely import from_wkb
 
 # from globato.hooks.tools.osm_landmask import OSMLandmask
 from globato.hooks.rasters.polygonize import RasterPolygonizeHook

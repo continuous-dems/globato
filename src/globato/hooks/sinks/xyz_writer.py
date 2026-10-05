@@ -1,5 +1,4 @@
 #!/usr/bin/env python
-# -*- coding: utf-8 -*-
 
 """
 globato.hooks.sinks.xyz_writer
@@ -10,9 +9,10 @@ Writes the point stream to an ASCII XYZ file inline.
 :license: MIT, see LICENSE for more details.
 """
 
+import logging
 import os
 import sys
-import logging
+
 import numpy as np
 from fetchez.hooks import FetchHook
 

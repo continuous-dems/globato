@@ -1,5 +1,4 @@
 #!/usr/bin/env python
-# -*- coding: utf-8 -*-
 
 """
 globato.streams.readers.multibeam
@@ -13,16 +12,17 @@ Falls back to MB-System subprocess calls for raw vendor formats.
 :license: MIT, see LICENSE for more details.
 """
 
+import logging
 import os
 import struct
-import logging
+
 import numpy as np
 import pandas as pd
-
-from .base import BaseGlobatoReader
+from fetchez.utils import float_or
 
 from globato.utils import yield_cmd
-from fetchez.utils import float_or
+
+from .base import BaseGlobatoReader
 
 logger = logging.getLogger(__name__)
 

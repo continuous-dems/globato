@@ -1,5 +1,4 @@
 #!/usr/bin/env python
-# -*- coding: utf-8 -*-
 
 """
 globato.cli.transform
@@ -7,9 +6,10 @@ globato.cli.transform
 Vertical Datum transformation using the Transformez API.
 """
 
-import sys
-import click
 import logging
+import sys
+
+import click
 from transformez import api
 
 logger = logging.getLogger(__name__)
@@ -18,8 +18,6 @@ logger = logging.getLogger(__name__)
 @click.group(name="transform")
 def transform_group():
     """Apply vertical datum transformations and generate shift grids."""
-
-    pass
 
 
 @transform_group.command("run")

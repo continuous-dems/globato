@@ -1,5 +1,4 @@
 #!/usr/bin/env python
-# -*- coding: utf-8 -*-
 
 """
 globato.streams.schema
@@ -11,8 +10,9 @@ Makes sure incoming format streams make the correct rec-array
 :license: MIT, see LICENSE for more details.
 """
 
-import numpy as np
 import logging
+
+import numpy as np
 
 logger = logging.getLogger(__name__)
 

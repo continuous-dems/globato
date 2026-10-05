@@ -1,5 +1,4 @@
 #!/usr/bin/env python
-# -*- coding: utf-8 -*-
 
 """
 globato.hooks.filters.water_surface_filter
@@ -11,10 +10,11 @@ globato.hooks.filters.water_surface_filter
 
 import logging
 import os
+
 import numpy as np
 import rasterio
+from fetchez.utils import float_or, str2bool, str2inc
 
-from fetchez.utils import str2bool, float_or, str2inc
 from .base import GlobatoFilter
 
 logger = logging.getLogger(__name__)

@@ -1,5 +1,4 @@
 #!/usr/bin/env python
-# -*- coding: utf-8 -*-
 
 """
 globato.cli
@@ -11,28 +10,28 @@ The main command-line interface for the Globato framework.
 :license: MIT, see LICENSE for more details.
 """
 
-import click
 import logging
+
+import click
+
+# from fetchez.cli.pipeline import pipeline_group
+from fetchez.cli import setup_logging
+from fetchez.cli.recipes import run_recipe
+from fetchez.utils import FetchezMainGroup
 
 # Globato CLI
 # from .wafflez import wafflez_group
 # from .gritz import gritz_group
 # from .pointz import pointz_group
 # from .perspecto import perspecto_group
-
 # from .run import run_cmd
 from .build import build_cmd
-from .sources import sources_group
-from .pointz import dump
-from .perspecto import perspecto_hillshade
-from .recipes import recipes_group
 from .gui import gui_cmd
+from .perspecto import perspecto_hillshade
+from .pointz import dump
 from .process import process_cmd
-from fetchez.cli.recipes import run_recipe
-# from fetchez.cli.pipeline import pipeline_group
-
-from fetchez.cli import setup_logging
-from fetchez.utils import FetchezMainGroup
+from .recipes import recipes_group
+from .sources import sources_group
 
 logger = logging.getLogger(__name__)
 

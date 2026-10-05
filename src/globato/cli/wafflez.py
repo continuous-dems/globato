@@ -1,5 +1,4 @@
 #!/usr/bin/env python
-# -*- coding: utf-8 -*-
 
 """
 globato.cli.wafflez
@@ -13,26 +12,27 @@ list, dump, copy, validate, run, build
 :license: MIT, see LICENSE for more details.
 """
 
-import os
-import sys
-import click
 import copy
 import json
-import yaml
 import logging
+import os
+import sys
 
+import click
+import yaml
 from fetchez.recipe import Recipe
-from fetchez.registry import RecipeRegistry, BundleRegistry
-from fetchez.utils import (
-    int_or,
-    str2inc,
-    parse_hook_string,
-    compile_sources,
-    FetchezMainGroup,
-    FetchezMainCommand,
-)
-from globato.utils import globatize_modules, make_recipe_config
+from fetchez.registry import BundleRegistry, RecipeRegistry
 from fetchez.spatial import yield_parsed_regions
+from fetchez.utils import (
+    FetchezMainCommand,
+    FetchezMainGroup,
+    compile_sources,
+    int_or,
+    parse_hook_string,
+    str2inc,
+)
+
+from globato.utils import globatize_modules, make_recipe_config
 
 logger = logging.getLogger(__name__)
 
@@ -69,8 +69,6 @@ def wafflez_group():
       # Run an existing recipe over a batch of geometries from a Shapefile
       $ globato wafflez run -R ./coastal_tiles.shp my_custom_recipe.yaml
     """
-
-    pass
 
 
 def _load_yaml(target):

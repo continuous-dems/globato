@@ -1,5 +1,4 @@
 #!/usr/bin/env python
-# -*- coding: utf-8 -*-
 
 """
 globato.modules.sources
@@ -9,24 +8,24 @@ globato.modules.sources
 These ensure data is unzipped, filtered, and ready for streaming into multi_stack.
 """
 
-import os
 import logging
+import os
 
+from fetchez import cli
 from fetchez.hooks import FetchHook
 from fetchez.hooks.extract import Extract
+from fetchez.hooks.fn_filter import FilenameFilter
 from fetchez.hooks.set_datatype import SetDatatype
 from fetchez.hooks.set_srs import SetSrs
-from fetchez.hooks.fn_filter import FilenameFilter
 from fetchez.hooks.stream_init import DataStream
-from fetchez import cli
 
-from globato.hooks.filters.rq import ReferenceQuality
-from globato.hooks.filters.rangez import RangeZ
 from globato.hooks.filters.outlierz import OutlierZ
+from globato.hooks.filters.point_raster_mask import PointRasterMask
+from globato.hooks.filters.rangez import RangeZ
+from globato.hooks.filters.rq import ReferenceQuality
 
 # from globato.hooks.filters.dropclass import DropClass
 from globato.hooks.filters.spatial_crop import SpatialCrop
-from globato.hooks.filters.point_raster_mask import PointRasterMask
 
 logger = logging.getLogger(__name__)
 

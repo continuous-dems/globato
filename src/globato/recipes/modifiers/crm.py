@@ -1,5 +1,4 @@
 #!/usr/bin/env python
-# -*- coding: utf-8 -*-
 
 """
 globato.schemas.crm
@@ -14,6 +13,7 @@ processing hooks and global pipeline assembly hooks.
 """
 
 import logging
+
 from fetchez.recipes.schemas import BaseSchema
 from fetchez.spatial import parse_region
 

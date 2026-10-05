@@ -1,5 +1,4 @@
 #!/usr/bin/env python
-# -*- coding: utf-8 -*-
 
 """
 globato
@@ -28,6 +27,6 @@ except ImportError:
     __version__ = "dev"
 
 # --- API ----
-from .api import read, build
+from .api import build, read
 
-__all__ = ["read", "build"]
+__all__ = ["build", "read"]

@@ -1,5 +1,4 @@
 #!/usr/bin/env python
-# -*- coding: utf-8 -*-
 
 """
 globato.modules.glob_sdb
@@ -8,12 +7,11 @@ globato.modules.glob_sdb
 SDB generation
 """
 
-import os
 import logging
+import os
 
 from fetchez.hooks.set_datatype import SetDatatype
 from fetchez.modules import FetchModule
-
 
 logger = logging.getLogger(__name__)
 
@@ -47,8 +45,8 @@ class GlobSDB(FetchModule):
         self.add_hook(SetDatatype(datatype="raster"))
 
     def run(self):
-        from globato.hooks.rasters.sdb_interp import SDBInterpolation
         from globato.cli.recipe import Recipe
+        from globato.hooks.rasters.sdb_interp import SDBInterpolation
 
         logger.info(
             f"Initializing SDB Super-Module. Training source: {self.train_source}"

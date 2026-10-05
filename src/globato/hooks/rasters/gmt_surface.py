@@ -1,5 +1,4 @@
 #!/usr/bin/env python
-# -*- coding: utf-8 -*-
 
 """
 globato.hooks.rasters.gmt_surface
@@ -13,6 +12,7 @@ via PyGMT to interpolate sparse grids. Essential for deep water/large gaps.
 """
 
 import logging
+
 import numpy as np
 import rasterio
 from rasterio.transform import xy

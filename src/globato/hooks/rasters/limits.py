@@ -1,5 +1,4 @@
 #!/usr/bin/env python
-# -*- coding: utf-8 -*-
 
 """
 globato.hooks.rasters.limits
@@ -10,10 +9,11 @@ Apply limits to a raster z/w/u/etc.
 :license: MIT, see LICENSE for more details.
 """
 
-import numpy as np
 import logging
 
+import numpy as np
 from fetchez.utils import float_or
+
 from globato.hooks.rasters.base import RasterStreamHook
 
 logger = logging.getLogger(__name__)

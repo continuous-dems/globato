@@ -1,5 +1,4 @@
 #!/usr/bin/env python
-# -*- coding: utf-8 -*-
 
 """
 globato.hooks.filters.coplanarz
@@ -9,10 +8,12 @@ globato.hooks.filters.coplanarz
 :license: MIT, see LICENSE for more details.
 """
 
-from tqdm import tqdm
 import logging
+
 import numpy as np
 from fetchez.utils import float_or, int_or
+from tqdm import tqdm
+
 from .base import GlobatoFilter
 
 logger = logging.getLogger(__name__)

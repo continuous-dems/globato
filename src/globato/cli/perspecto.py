@@ -1,5 +1,4 @@
 #!/usr/bin/env python
-# -*- coding: utf-8 -*-
 
 """
 globato.cli.perspecto
@@ -7,14 +6,15 @@ globato.cli.perspecto
 Visualization tools for DEMs and Point Clouds.
 """
 
+import logging
 import os
 import sys
 import time
+
 import click
-import logging
 from fetchez.registry import HookRegistry
-from fetchez.utils import parse_hook_string, FetchezMainGroup, FetchezMainCommand
 from fetchez.spatial import Region
+from fetchez.utils import FetchezMainCommand, FetchezMainGroup, parse_hook_string
 
 from globato.utils import add_field_to_recarray
 
@@ -60,8 +60,6 @@ def _list_cmaps(ctx, param, value):
 )
 def perspecto_group():
     """Visualize DEMs and Point Clouds."""
-
-    pass
 
 
 @perspecto_group.command("hillshade", cls=FetchezMainCommand)

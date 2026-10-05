@@ -1,5 +1,4 @@
 #!/usr/bin/env python
-# -*- coding: utf-8 -*-
 
 """globato.hooks.sinks.side_stack
 
@@ -19,16 +18,16 @@ import logging
 import os
 import re
 import tempfile
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any
 
 import numpy as np
 import rasterio
-from rasterio.crs import CRS
-
 from fetchez.hooks import FetchHook
 from fetchez.utils import float_or, str2bool, str2inc
+from rasterio.crs import CRS
 
 from globato.hooks.transforms.point_pixels import (
     FUSION_BAND_MAP,
@@ -281,7 +280,7 @@ class SideStackIdentity:
         region: Any,
         res: Any,
         crs: Any,
-    ) -> "SideStackIdentity":
+    ) -> SideStackIdentity:
         return cls(
             source=source_identity(entry),
             processing=tuple(processing_identity(mod, entry)),

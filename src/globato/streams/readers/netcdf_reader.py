@@ -1,8 +1,8 @@
 #!/usr/bin/env python
-# -*- coding: utf-8 -*-
 
 import logging
 import threading
+
 import numpy as np
 
 from .base import BaseGlobatoReader
@@ -185,7 +185,7 @@ class NetCDFReader(BaseGlobatoReader):
                 size = end - i
 
                 chunk = np.zeros(size, dtype=dtypes)
-                for name in chunk_arrays.keys():
+                for name in chunk_arrays:
                     chunk[name] = chunk_arrays[name][i:end]
 
                 yield chunk

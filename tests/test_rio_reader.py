@@ -1,9 +1,9 @@
 import numpy as np
 import pytest
 import rasterio
+from fetchez.spatial import Region
 from rasterio.transform import from_origin
 
-from fetchez.spatial import Region
 from globato.streams.readers.rio import RasterioReader
 
 # A 2 km UTM 11N grid off Santa Barbara, and a lon/lat region around it.

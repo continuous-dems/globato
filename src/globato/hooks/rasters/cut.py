@@ -1,5 +1,4 @@
 #!/usr/bin/env python
-# -*- coding: utf-8 -*-
 
 """
 globato.hooks.rasters.cut
@@ -8,9 +7,11 @@ Masks data outside the defined pipeline region.
 """
 
 import logging
+
 import numpy as np
 import rasterio
-from rasterio.windows import from_bounds, intersection, Window
+from rasterio.windows import Window, from_bounds, intersection
+
 from .base import RasterStreamHook
 
 logger = logging.getLogger(__name__)

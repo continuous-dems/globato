@@ -1,5 +1,4 @@
 #!/usr/bin/env python
-# -*- coding: utf-8 -*-
 
 """
 globato.cli.build
@@ -11,14 +10,13 @@ The globato build command to build a fetchez recipe and execute it.
 :license: MIT, see LICENSE for more details.
 """
 
-import sys
-import click
 import logging
+import sys
 
+import click
 from fetchez.utils import FetchezMainCommand
 
 import globato.api
-
 
 logger = logging.getLogger(__name__)
 

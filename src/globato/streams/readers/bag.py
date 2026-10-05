@@ -1,5 +1,4 @@
 #!/usr/bin/env python
-# -*- coding: utf-8 -*-
 
 """
 globato.streams.readers.bag
@@ -15,7 +14,6 @@ Handles VR-BAGs, standard BAGs, uncertainty bands, etc.
 import logging
 
 import rasterio
-
 from fetchez.spatial import Region
 
 from .rio import RasterioReader
@@ -85,7 +83,7 @@ class BAGReader(RasterioReader):
     - Automatically handles Variable Resolution (VR) via GDAL Open Options.
     - Reads Band 2 as Uncertainty ('u').
     - Calculates weight based on resolution.
-    - MODE=[LOW_RES_GRID​/​LIST_SUPERGRIDS​/​RESAMPLED_GRID​/​INTERPOLATED​/​AUTO]: Defaults to AUTO.
+    - MODE=[LOW_RES_GRID\u200b/\u200bLIST_SUPERGRIDS\u200b/\u200bRESAMPLED_GRID\u200b/\u200bINTERPOLATED\u200b/\u200bAUTO]: Defaults to AUTO.
     """
 
     name = "bag-point-reader"

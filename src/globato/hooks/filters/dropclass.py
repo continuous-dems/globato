@@ -1,5 +1,4 @@
 #!/usr/bin/env python
-# -*- coding: utf-8 -*-
 
 """
 globato.hooks.filters.dropclass
@@ -12,7 +11,9 @@ Drops the classification from the point stream
 """
 
 import logging
+
 import numpy as np
+
 from .base import GlobatoFilter
 
 logger = logging.getLogger(__name__)

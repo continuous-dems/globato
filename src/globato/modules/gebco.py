@@ -1,5 +1,4 @@
 #!/usr/bin/env python
-# -*- coding: utf-8 -*-
 
 """
 globato.modules.gebco
@@ -14,6 +13,7 @@ Get gebco as a cog
 import logging
 
 from fetchez.modules.gebco import GEBCO as CoreGEBCO
+
 from ..hooks.rasters.cog import COGSubset
 
 logger = logging.getLogger(__name__)

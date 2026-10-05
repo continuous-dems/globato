@@ -1,5 +1,4 @@
 #!/usr/bin/env python
-# -*- coding: utf-8 -*-
 
 """
 globato.hooks.filters.reference
@@ -9,15 +8,16 @@ globato.hooks.filters.reference
 :license: MIT, see LICENSE for more details.
 """
 
-import os
 import logging
+import os
+
 import numpy as np
 import rasterio
 from fetchez.hooks import FetchHook
-from fetchez.utils import str2bool, float_or
-from globato.utils import add_field_to_recarray
-
+from fetchez.utils import float_or, str2bool
 from scipy.ndimage import map_coordinates
+
+from globato.utils import add_field_to_recarray
 
 logger = logging.getLogger(__name__)
 

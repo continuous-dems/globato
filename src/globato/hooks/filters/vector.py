@@ -1,5 +1,4 @@
 #!/usr/bin/env python
-# -*- coding: utf-8 -*-
 
 """
 globato.hooks.filters.vector
@@ -12,14 +11,14 @@ Optimized by rasterizing vectors to a boolean mask on-the-fly.
 :license: MIT, see LICENSE for more details.
 """
 
-import os
 import logging
+import os
+
 from .base import GlobatoFilter
 from .reference import RasterSampling
 
 try:
-    from osgeo import gdal
-    from osgeo import ogr
+    from osgeo import gdal, ogr
 
     HAS_OSGEO = True
 except ImportError:

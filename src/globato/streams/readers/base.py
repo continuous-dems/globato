@@ -1,5 +1,4 @@
 #!/usr/bin/env python
-# -*- coding: utf-8 -*-
 
 """
 globato.streams.readers.base
@@ -9,9 +8,11 @@ globato.streams.readers.base
 :license: MIT, see LICENSE for more details.
 """
 
-import numpy as np
 import logging
+
+import numpy as np
 from fetchez.streams.readers import BaseReader
+
 from ..schema import ensure_schema
 
 logger = logging.getLogger(__name__)

@@ -1,5 +1,4 @@
 #!/usr/bin/env python
-# -*- coding: utf-8 -*-
 
 """
 globato.hooks.sinks.gtpc_writer
@@ -12,11 +11,13 @@ Supports optional spatial binning to reduce file size.
 :license: MIT, see LICENSE for more details.
 """
 
-import os
 import logging
-import numpy as np
+import os
+
 import h5py
+import numpy as np
 from fetchez.hooks import FetchHook
+
 from ..transforms.point_pixels import PointPixels
 
 logger = logging.getLogger(__name__)

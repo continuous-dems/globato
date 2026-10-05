@@ -1,5 +1,4 @@
 #!/usr/bin/env python
-# -*- coding: utf-8 -*-
 
 """
 globato.hooks.rasters.binary_cudem
@@ -11,35 +10,32 @@ and interpolator settings, bridging gaps in sparse data without
 degrading the high-frequency fidelity of dense coastal data.
 """
 
-import os
-import shutil
 import json
 import logging
-import numpy as np
-
-import scipy.ndimage
-from scipy.interpolate import griddata
-
-import rasterio
-from rasterio.warp import reproject, Resampling
-from rasterio.features import rasterize
-
-import pyogrio
-import shapely
+import os
+import shutil
 
 import fetchez
+import numpy as np
+import pyogrio
+import rasterio
+import scipy.ndimage
+import shapely
+from fetchez.registry import HookRegistry
 from fetchez.spatial import Region
 from fetchez.utils import (
-    remove_glob2,
-    str2inc,
+    float_or,
     inc2str,
     int_or,
-    str_or,
-    float_or,
-    parse_hook_string,
     parse_arg_to_list,
+    parse_hook_string,
+    remove_glob2,
+    str2inc,
+    str_or,
 )
-from fetchez.registry import HookRegistry
+from rasterio.features import rasterize
+from rasterio.warp import Resampling, reproject
+from scipy.interpolate import griddata
 
 from .base import RasterGlobalHook
 

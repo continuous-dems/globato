@@ -1,13 +1,12 @@
 # tests/test_modifiers.py
 
 from pathlib import Path
+from unittest.mock import patch
 
 import yaml
 
 import globato
 from globato.recipes.modifiers.buffer_and_cut import RegionBufferModifier
-
-from unittest.mock import patch
 
 
 def _config():

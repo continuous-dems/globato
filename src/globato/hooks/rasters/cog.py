@@ -1,5 +1,4 @@
 #!/usr/bin/env python
-# -*- coding: utf-8 -*-
 
 """
 globato.hooks.formats.cog
@@ -12,11 +11,12 @@ subsets it to region using Rasterio (GDAL /vsicurl/).
 :license: MIT, see LICENSE for more details.
 """
 
-import os
 import logging
+import os
+
 import rasterio
-from rasterio.windows import from_bounds
 from fetchez.hooks import FetchHook
+from rasterio.windows import from_bounds
 
 logger = logging.getLogger(__name__)
 
@@ -56,7 +56,6 @@ class COGSubset(FetchHook):
 
                     except Exception as e:
                         logger.error(f"COG Subset failed for {dst_fn}: {e}")
-                        pass
 
             new_entries.append((mod, entry))
 

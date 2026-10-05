@@ -1,5 +1,4 @@
 #!/usr/bin/env python
-# -*- coding: utf-8 -*-
 
 """
 vizdem.modules.colorbar
@@ -12,9 +11,10 @@ Generate a color bar.
 """
 
 import logging
-import matplotlib.pyplot as plt
-import matplotlib.cm as cm
+
 import matplotlib.colors as mcolors
+import matplotlib.pyplot as plt
+from matplotlib import cm
 
 from .geohillshade import GeoHillshade
 

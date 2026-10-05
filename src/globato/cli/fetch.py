@@ -1,5 +1,4 @@
 #!/usr/bin/env python
-# -*- coding: utf-8 -*-
 
 """
 globato.cli.fetch
@@ -7,13 +6,13 @@ globato.cli.fetch
 Direct data discovery and downloading for curated Globato DEM sources.
 """
 
+import logging
 import os
 import sys
-import click
-import logging
 
-from fetchez.registry import ModuleRegistry
+import click
 from fetchez.core import run_fetchez
+from fetchez.registry import ModuleRegistry
 from fetchez.utils import yield_parsed_regions
 
 logger = logging.getLogger(__name__)
@@ -22,7 +21,6 @@ logger = logging.getLogger(__name__)
 @click.group(name="fetch")
 def fetch_group():
     """Discover and download curated elevation/bathymetry data."""
-    pass
 
 
 @fetch_group.command("list")

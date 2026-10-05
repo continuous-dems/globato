@@ -1,5 +1,4 @@
 #!/usr/bin/env python
-# -*- coding: utf-8 -*-
 
 """
 globato.hooks.tools.cleanup_tmp
@@ -11,10 +10,11 @@ Cleanup the 'tmp' directory in the collection stage.
 :license: MIT, see LICENSE for more details.
 """
 
+import logging
 import os
 import shutil
-import logging
 from pathlib import Path
+
 from fetchez.hooks import FetchHook
 from fetchez.utils import str2bool
 

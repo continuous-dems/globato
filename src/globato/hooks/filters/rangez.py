@@ -1,5 +1,4 @@
 #!/usr/bin/env python
-# -*- coding: utf-8 -*-
 
 """
 globato.hooks.filters.rangez
@@ -12,6 +11,7 @@ Filter data by z-range
 """
 
 import logging
+
 import numpy as np
 from fetchez.utils import float_or
 

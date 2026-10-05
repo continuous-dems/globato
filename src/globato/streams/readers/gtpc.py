@@ -1,5 +1,4 @@
 #!/usr/bin/env python
-# -*- coding: utf-8 -*-
 
 """
 globato.streams.readers.gtpc
@@ -12,6 +11,7 @@ Globato Point Cloud files.
 """
 
 import logging
+
 import h5py
 import numpy as np
 

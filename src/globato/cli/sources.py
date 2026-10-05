@@ -1,5 +1,4 @@
 #!/usr/bin/env python
-# -*- coding: utf-8 -*-
 
 """
 globato.cli.sources
@@ -12,12 +11,12 @@ Discoverability and documentation for globato dem sources.
 """
 
 import sys
-import click
 
-from fetchez.api import search_modules, list_modules, search_bundles, list_bundles
+import click
+from fetchez.api import list_bundles, list_modules, search_bundles, search_modules
 from fetchez.recipe import Recipe
 from fetchez.registry import ModuleRegistry
-from fetchez.utils import truncate_string, FetchezMainGroup, FetchezMainCommand
+from fetchez.utils import FetchezMainCommand, FetchezMainGroup, truncate_string
 
 
 @click.group(cls=FetchezMainGroup, name="sources", fetchez_commands=["list", "info"])
@@ -27,8 +26,6 @@ def sources_group():
     \b
     Globato curates and provides a number of fetchez module sources. Find them here.
     """
-
-    pass
 
 
 @sources_group.command("list", cls=FetchezMainCommand)

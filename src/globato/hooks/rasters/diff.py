@@ -1,5 +1,4 @@
 #!/usr/bin/env python
-# -*- coding: utf-8 -*-
 
 """
 globato.hooks.rasters.diff
@@ -8,12 +7,14 @@ Calculates the difference between a Source and Auxiliary DEM.
 Handles on-the-fly resampling and alignment automatically.
 """
 
-import os
 import logging
+import os
+
 import numpy as np
 import rasterio
-from rasterio.vrt import WarpedVRT
 from rasterio.enums import Resampling
+from rasterio.vrt import WarpedVRT
+
 from .base import RasterGlobalHook
 
 logger = logging.getLogger(__name__)

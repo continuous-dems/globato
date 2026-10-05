@@ -1,5 +1,4 @@
 #!/usr/bin/env python
-# -*- coding: utf-8 -*-
 
 """
 globato.hooks.rasters.verde_surface
@@ -13,6 +12,7 @@ An excellent, pure-Python alternative to GMT's continuous curvature splines.
 """
 
 import logging
+
 import numpy as np
 import rasterio
 from rasterio.transform import xy

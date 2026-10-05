@@ -1,5 +1,4 @@
 #!/usr/bin/env python
-# -*- coding: utf-8 -*-
 
 """
 globato.hooks.rasters.cudem
@@ -12,18 +11,19 @@ Based on cudem.waffles.cudem
 :license: MIT, see LICENSE for more details.
 """
 
+import logging
 import os
 import shutil
-import logging
+
 import numpy as np
 import rasterio
 import scipy.ndimage
 from fetchez.utils import remove_glob2, str2inc
-from rasterio.warp import calculate_default_transform, reproject, Resampling
 from rasterio.fill import fillnodata
+from rasterio.warp import Resampling, calculate_default_transform, reproject
 
-from .fill import RasterFill
 from .base import RasterGlobalHook
+from .fill import RasterFill
 
 logger = logging.getLogger(__name__)
 
@@ -254,7 +254,7 @@ class CudemStepDown(RasterGlobalHook):
             interp = None
 
             if self.algo == "interp_gmt":
-                from .gmt_surface import GmtSurface, HAS_PYGMT
+                from .gmt_surface import HAS_PYGMT, GmtSurface
 
                 if HAS_PYGMT:
                     interp = GmtSurface(
@@ -268,7 +268,7 @@ class CudemStepDown(RasterGlobalHook):
                     self.algo = "raster_fill"
 
             elif self.algo == "interp_verde":
-                from .verde_surface import VerdeSurface, HAS_VERDE
+                from .verde_surface import HAS_VERDE, VerdeSurface
 
                 if HAS_VERDE:
                     interp = VerdeSurface(

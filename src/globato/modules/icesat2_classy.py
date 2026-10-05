@@ -1,5 +1,4 @@
 #!/usr/bin/env python
-# -*- coding: utf-8 -*-
 
 """
 globato.modules.icesat2_classy
@@ -12,15 +11,15 @@ ICESat-2 Data Parser (ATL03, ATL24) ported from CUDEM for Fetchez-Globato.
 """
 
 import logging
-from fetchez.modules import FetchModule
-from fetchez.core import run_fetchez
-from fetchez.cli import cli_opts
 
+from fetchez.cli import cli_opts
+from fetchez.core import run_fetchez
+from fetchez.hooks.copy_artifact import CopyArtifactHook
+from fetchez.modules import FetchModule
 from fetchez.modules.earthdata import IceSat2
 
 # from globato.streams.readers.icesat2 import IceSat2Stream
 from globato.hooks.sinks.xyz_writer import XYZWrite
-from fetchez.hooks.copy_artifact import CopyArtifactHook
 
 logger = logging.getLogger(__name__)
 

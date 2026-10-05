@@ -1,5 +1,4 @@
 #!/usr/bin/env python
-# -*- coding: utf-8 -*-
 
 """
 globato.hooks.filters.vector_crop
@@ -12,13 +11,14 @@ Crops stream data using a polygon vector mask.
 """
 
 import logging
+
 import numpy as np
-from pyogrio.raw import read
 import shapely
+from fetchez.utils import str2bool
+from pyogrio.raw import read
 from shapely.geometry import MultiPolygon
 from shapely.vectorized import contains as vec_contains
 
-from fetchez.utils import str2bool
 from .base import GlobatoFilter
 
 logger = logging.getLogger(__name__)

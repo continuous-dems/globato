@@ -1,5 +1,4 @@
 #!/usr/bin/env python
-# -*- coding: utf-8 -*-
 
 """
 globato.streams.readers.gdal_proc
@@ -13,6 +12,7 @@ GDAL data parsing
 
 import logging
 from typing import Any
+
 import numpy as np
 
 try:
@@ -23,6 +23,7 @@ except ImportError:
     HAS_GDAL = False
 
 from fetchez.utils import int_or
+
 from .base import BaseGlobatoReader
 
 logger = logging.getLogger(__name__)
@@ -89,7 +90,7 @@ class GDALReader(BaseGlobatoReader):
         try:
             ds = gdal.Open(self.src_fn, gdal.GA_ReadOnly)
             if not ds:
-                raise IOError(f"Could not open {self.src_fn}")
+                raise OSError(f"Could not open {self.src_fn}")
 
             gt = ds.GetGeoTransform()
             ds = None
@@ -101,7 +102,7 @@ class GDALReader(BaseGlobatoReader):
         try:
             ds = gdal.Open(self.src_fn, gdal.GA_ReadOnly)
             if not ds:
-                raise IOError(f"Could not open {self.src_fn}")
+                raise OSError(f"Could not open {self.src_fn}")
 
             src_srs = ds.GetProjection()
             ds = None
@@ -114,7 +115,7 @@ class GDALReader(BaseGlobatoReader):
 
         ds = gdal.Open(self.src_fn, gdal.GA_ReadOnly)
         if not ds:
-            raise IOError(f"Could not open {self.src_fn}")
+            raise OSError(f"Could not open {self.src_fn}")
 
         try:
             gt = ds.GetGeoTransform()

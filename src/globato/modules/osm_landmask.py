@@ -1,5 +1,4 @@
 #!/usr/bin/env python
-# -*- coding: utf-8 -*-
 
 """
 globato.modules.osm_landmask
@@ -11,23 +10,22 @@ Extract topological features from OSM and pieces together a coastline
 binary (landmask) or topological vector.
 """
 
-import os
-import logging
-import json
-import math
 import hashlib
+import json
+import logging
+import math
+import os
 
 import numpy as np
-from pyogrio.raw import write
 import shapely
-from shapely.geometry import box, LineString, Point, Polygon
-from shapely.validation import make_valid
-from shapely.ops import linemerge, unary_union, polygonize
-
-from fetchez.modules import FetchModule
-from fetchez.core import Fetch, urlencode, CUDEM_USER_AGENT
 from fetchez.cli import cli_opts
+from fetchez.core import CUDEM_USER_AGENT, Fetch, urlencode
+from fetchez.modules import FetchModule
 from fetchez.utils import str2bool
+from pyogrio.raw import write
+from shapely.geometry import LineString, Point, Polygon, box
+from shapely.ops import linemerge, polygonize, unary_union
+from shapely.validation import make_valid
 
 try:
     from fetchez.modules.gmrt import gmrt_fetch_point

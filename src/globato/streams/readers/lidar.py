@@ -1,5 +1,4 @@
 #!/usr/bin/env python
-# -*- coding: utf-8 -*-
 
 """
 globato.streams.readers.lidar
@@ -13,12 +12,11 @@ This readers lidar to a point stream.
 
 import logging
 
-import numpy as np
 import laspy as lp
-from rasterio.warp import transform_bounds
+import numpy as np
+from fetchez.utils import int_or, str2bool, str_or
 from pyproj import CRS
-
-from fetchez.utils import str_or, int_or, str2bool
+from rasterio.warp import transform_bounds
 
 from .base import BaseGlobatoReader
 

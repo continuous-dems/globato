@@ -1,9 +1,10 @@
-import os
 import logging
+import os
+
 import numpy as np
 import rasterio
-from scipy.ndimage import distance_transform_edt
 from fetchez.registry import HookRegistry
+from scipy.ndimage import distance_transform_edt
 
 from .base import RasterGlobalHook
 

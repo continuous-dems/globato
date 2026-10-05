@@ -1,5 +1,4 @@
 #!/usr/bin/env python
-# -*- coding: utf-8 -*-
 
 """
 globato.hooks.rasters.base
@@ -12,18 +11,18 @@ Handles Streaming (Local/Chunked) and Global (Whole-File) operations.
 :license: MIT, see LICENSE for more details.
 """
 
-import os
 import logging
+import os
 import shutil
+
 import numpy as np
 import rasterio
-from rasterio.windows import Window
-from pyogrio.raw import read
 import shapely
-
-from fetchez.spatial import parse_region
 from fetchez.hooks import FetchHook
+from fetchez.spatial import parse_region
 from fetchez.utils import float_or, parse_arg_to_list  # , inc2str
+from pyogrio.raw import read
+from rasterio.windows import Window
 
 logger = logging.getLogger(__name__)
 

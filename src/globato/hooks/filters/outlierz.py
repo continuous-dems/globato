@@ -1,5 +1,4 @@
 #!/usr/bin/env python
-# -*- coding: utf-8 -*-
 
 """
 globato.hooks.filters.outlierz
@@ -10,8 +9,10 @@ globato.hooks.filters.outlierz
 """
 
 import logging
+
 import numpy as np
 from fetchez.utils import float_or
+
 from .base import GlobatoFilter
 
 logger = logging.getLogger(__name__)

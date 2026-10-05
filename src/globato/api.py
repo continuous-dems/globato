@@ -1,5 +1,4 @@
 #!/usr/bin/env python
-# -*- coding: utf-8 -*-
 
 """
 globato.api
@@ -12,16 +11,16 @@ Provides interface for streaming, processing, and accessing geospatial data.
 :license: MIT, see LICENSE for more details.
 """
 
-import os
-import yaml
 import logging
-from typing import Union, List, Optional, Generator
+import os
+from collections.abc import Generator
 
+import yaml
+from fetchez.api import _compile_modules
 from fetchez.recipe import Recipe
 from fetchez.registry import HookRegistry
-from fetchez.utils import str2inc, parse_hook_string, compile_sources
-from fetchez.api import _compile_modules
 from fetchez.spatial import parse_region
+from fetchez.utils import compile_sources, parse_hook_string, str2inc
 
 from globato.streams.base import GlobatoStream
 from globato.utils import globatize_modules, make_recipe_config
@@ -30,10 +29,10 @@ logger = logging.getLogger(__name__)
 
 
 def read(
-    sources: Union[str, List[str]],
-    region: Optional[Union[str, List[float]]] = None,
-    shared_cache: Optional[str] = None,
-    target_srs: Optional[str] = None,
+    sources: str | list[str],
+    region: str | list[float] | None = None,
+    shared_cache: str | None = None,
+    target_srs: str | None = None,
     **kwargs,
 ) -> GlobatoStream:
     """The unified entry point for the Globato streaming API.

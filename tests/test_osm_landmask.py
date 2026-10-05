@@ -2,8 +2,8 @@ import json
 
 import geopandas as gpd
 import pytest
-
 from fetchez.spatial import Region
+
 from globato.modules import osm_landmask as om
 
 REGION = [0.0, 1.0, 0.0, 1.0]  # w, e, s, n

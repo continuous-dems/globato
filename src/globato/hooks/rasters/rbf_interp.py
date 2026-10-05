@@ -1,5 +1,4 @@
 #!/usr/bin/env python
-# -*- coding: utf-8 -*-
 
 """
 globato.hooks.rasters.rbf_interp
@@ -13,6 +12,7 @@ Defaults to 'thin_plate_spline', mathematically mimicking GMT's surface.
 """
 
 import logging
+
 import numpy as np
 from scipy.interpolate import RBFInterpolator
 

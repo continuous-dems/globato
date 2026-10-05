@@ -1,5 +1,4 @@
 #!/usr/bin/env python
-# -*- coding: utf-8 -*-
 
 """
 globato.hooks.transforms.bind_grid
@@ -13,13 +12,14 @@ Bind grid values to a point-stream field
 
 import logging
 import os
+
 import numpy as np
 import rasterio
+from fetchez.hooks import FetchHook
 from rasterio.windows import Window
 
-from fetchez.hooks import FetchHook
-from globato.utils import add_field_to_recarray
 from globato.hooks.filters.reference import RasterSampling
+from globato.utils import add_field_to_recarray
 
 logger = logging.getLogger(__name__)
 

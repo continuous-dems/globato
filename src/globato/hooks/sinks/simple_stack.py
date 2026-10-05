@@ -1,5 +1,4 @@
 #!/usr/bin/env python
-# -*- coding: utf-8 -*-
 
 """
 globato.hooks.sinks.simple_stack
@@ -11,15 +10,15 @@ This is the grid engine utility for combining data into a grid.
 :license: MIT, see LICENSE for more details.
 """
 
-import os
 import logging
-import numpy as np
+import os
 import threading
-import rasterio
-from rasterio.windows import Window
 
-from fetchez.hooks import FetchHook
+import numpy as np
+import rasterio
 from fetchez import utils
+from fetchez.hooks import FetchHook
+from rasterio.windows import Window
 
 logger = logging.getLogger(__name__)
 
@@ -124,20 +123,19 @@ class PointAccumulator:
         win_h = r_max - r_min + 1
         window = Window(c_min, r_min, win_w, win_h)
 
-        with self.lock:
-            with rasterio.open(self.acc_fn, "r+") as dst:
-                current_sum = dst.read(1, window=window)
-                current_w = dst.read(2, window=window)
+        with self.lock, rasterio.open(self.acc_fn, "r+") as dst:
+            current_sum = dst.read(1, window=window)
+            current_w = dst.read(2, window=window)
 
-                rel_r = u_rows - r_min
-                rel_c = u_cols - c_min
+            rel_r = u_rows - r_min
+            rel_c = u_cols - c_min
 
-                # Update Window
-                current_sum[rel_r, rel_c] += pixel_sum_z
-                current_w[rel_r, rel_c] += pixel_sum_w
+            # Update Window
+            current_sum[rel_r, rel_c] += pixel_sum_z
+            current_w[rel_r, rel_c] += pixel_sum_w
 
-                dst.write(current_sum, 1, window=window)
-                dst.write(current_w, 2, window=window)
+            dst.write(current_sum, 1, window=window)
+            dst.write(current_w, 2, window=window)
 
     def finalize(self, ndv=-9999):
         """Divide Sums by Weights to produce final Z grid."""

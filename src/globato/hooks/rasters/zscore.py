@@ -1,5 +1,4 @@
 #!/usr/bin/env python
-# -*- coding: utf-8 -*-
 
 """
 globato.hooks.rasters.zscore
@@ -15,6 +14,7 @@ Based on cudem.grits.zscore
 """
 
 import logging
+
 import numpy as np
 import scipy.ndimage
 

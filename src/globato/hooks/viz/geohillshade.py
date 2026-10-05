@@ -1,5 +1,4 @@
 #!/usr/bin/env python
-# -*- coding: utf-8 -*-
 
 """
 globato.hooks.viz.geoshade
@@ -9,8 +8,9 @@ Stream-based Georeferenced Hillshade generator.
 Supports Matplotlib colormaps and dynamic CPT fetching.
 """
 
-import os
 import logging
+import os
+
 import numpy as np
 
 try:
@@ -21,6 +21,7 @@ except ImportError:
     HAS_MATPLOTLIB = False
 
 from globato.hooks.rasters.base import RasterStreamHook, write_cog
+
 from . import cpt as cpt_utils
 
 logger = logging.getLogger(__name__)
@@ -145,7 +146,6 @@ class GeoHillshade(RasterStreamHook):
             return cmap
         except ValueError:
             self._is_native_cmap = False
-            pass
         # try:
         #     return plt.get_cmap(self.cmap_name)
         # except ValueError:

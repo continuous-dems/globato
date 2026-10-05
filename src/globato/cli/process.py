@@ -1,5 +1,4 @@
 #!/usr/bin/env python
-# -*- coding: utf-8 -*-
 
 """
 globato.cli.process
@@ -7,19 +6,19 @@ globato.cli.process
 Unified pipeline execution for points and rasters.
 """
 
-import sys
-import os
 import logging
+import os
+import sys
+
 import click
 import yaml
-
 from fetchez.recipe import Recipe
+from fetchez.registry import HookRegistry
 from fetchez.utils import (
-    parse_hook_string,
     FetchezMainCommand,
     compile_sources,
+    parse_hook_string,
 )
-from fetchez.registry import HookRegistry
 
 from globato.utils import globatize_modules, make_recipe_config
 

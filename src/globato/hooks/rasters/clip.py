@@ -1,5 +1,4 @@
 #!/usr/bin/env python
-# -*- coding: utf-8 -*-
 
 """
 globato.hooks.rasters.clip
@@ -11,6 +10,7 @@ Clip a raster to a vector
 """
 
 import logging
+
 import numpy as np
 
 from .base import RasterStreamHook

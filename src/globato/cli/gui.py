@@ -1,15 +1,15 @@
 # globato/cli/gui.py
 
-import os
-import sys
-import time
-import subprocess
-import threading
-import webbrowser
-import click
 import logging
+import os
+import subprocess
+import sys
+import threading
+import time
+import webbrowser
 from importlib import resources
 
+import click
 from fetchez.utils import FetchezMainCommand
 
 logger = logging.getLogger(__name__)

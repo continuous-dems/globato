@@ -14,7 +14,6 @@ from globato.hooks.metadata.metadata import RasterMetadataHook
 from globato.hooks.rasters.base import RasterCOG
 from globato.hooks.viz.geohillshade import GeoHillshade
 
-
 # Bigger than one 256 px block: a single-block file with no overviews is
 # trivially in COG order, which would hide the bug these tests are for.
 SIZE = 700

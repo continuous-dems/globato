@@ -1,5 +1,4 @@
 #!/usr/bin/env python
-# -*- coding: utf-8 -*-
 
 """
 globato.hooks.rasters.ms_quality
@@ -25,8 +24,8 @@ import logging
 import warnings
 
 import numpy as np
-from numpy.lib.stride_tricks import sliding_window_view
 import scipy.ndimage
+from numpy.lib.stride_tricks import sliding_window_view
 
 from .base import RasterStreamHook
 

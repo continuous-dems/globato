@@ -1,5 +1,4 @@
 #!/usr/bin/env python
-# -*- coding: utf-8 -*-
 
 """
 globato.hooks.filters.rq
@@ -12,17 +11,17 @@ Fetches a reference raster (e.g. GEBCO) and filters points that deviate from it.
 :license: MIT, see LICENSE for more details.
 """
 
-import json
 import hashlib
+import json
 import logging
-from pathlib import Path
 import threading
-import numpy as np
-import rasterio
-from scipy.ndimage import map_coordinates
+from pathlib import Path
 
 import fetchez
-from fetchez.utils import str2inc, parse_arg_to_list
+import numpy as np
+import rasterio
+from fetchez.utils import parse_arg_to_list, str2inc
+from scipy.ndimage import map_coordinates
 
 try:
     from fetchez.entry import entry_id
@@ -122,7 +121,7 @@ class ReferenceQuality(GlobatoFilter):
         if not getattr(mod, "region", None):
             return False
 
-        region = getattr(mod, "region")
+        region = mod.region
         region = mod.region.copy()
         if not self.target_srs:
             self.target_srs = region.srs
@@ -137,7 +136,7 @@ class ReferenceQuality(GlobatoFilter):
 
         # self.target_region = self.wgs_region.buffer(pct=5)
 
-        outdir = Path(getattr(mod, "_outdir"))
+        outdir = Path(mod._outdir)
         if not self.ref_fn:
             files = self._fetch_reference_files(region, outdir)
 
@@ -166,9 +165,7 @@ class ReferenceQuality(GlobatoFilter):
             nodata = self.src.nodata
 
             # Standardize NoData to NaN so the bilinear interpolator ignores voids cleanly.
-            if nodata is None:
-                self.ref_data = np.where(np.isnan(ref_raw), np.nan, ref_raw)
-            elif np.isnan(nodata):
+            if nodata is None or np.isnan(nodata):
                 self.ref_data = np.where(np.isnan(ref_raw), np.nan, ref_raw)
             else:
                 self.ref_data = np.where(

@@ -1,5 +1,4 @@
 #!/usr/bin/env python
-# -*- coding: utf-8 -*-
 
 """
 globato.hooks.rasters.fill
@@ -12,6 +11,7 @@ Requires global context to smoothly interpolate large gaps and extrapolate to ed
 """
 
 import logging
+
 import numpy as np
 import rasterio
 from rasterio.fill import fillnodata

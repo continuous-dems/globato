@@ -1,5 +1,4 @@
 #!/usr/bin/env python
-# -*- coding: utf-8 -*-
 
 """Post-stack source provenance with interchangeable tier-state storage.
 
@@ -35,11 +34,10 @@ import threading
 
 import numpy as np
 import rasterio
-from rasterio.windows import Window
-
 from fetchez.hooks import FetchHook
 from fetchez.spatial import Region
 from fetchez.utils import str2bool
+from rasterio.windows import Window
 
 from ..transforms.point_pixels import FUSION_BAND_MAP, FUSION_BANDS, PointPixels
 from .provenance import MaskSet, source_id, source_token
@@ -294,11 +292,10 @@ class DiskStackTierState(StackTierStateBase):
         if codes is None or not np.any(codes):
             return
 
-        with self.lock:
-            with rasterio.open(path, "r+") as dst:
-                current = dst.read(1, window=window)
-                np.maximum(current, codes, out=current)
-                dst.write(current, 1, window=window)
+        with self.lock, rasterio.open(path, "r+") as dst:
+            current = dst.read(1, window=window)
+            np.maximum(current, codes, out=current)
+            dst.write(current, 1, window=window)
 
     def iter_sources(self):
         for dataset_id, path in self.states.items():

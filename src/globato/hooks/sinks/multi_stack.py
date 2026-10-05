@@ -1,5 +1,4 @@
 #!/usr/bin/env python
-# -*- coding: utf-8 -*-
 
 """globato.hooks.sinks.multi_stack
 
@@ -24,18 +23,19 @@ import logging
 import os
 import tempfile
 import threading
-from typing import Mapping
+from collections.abc import Mapping
 from dataclasses import dataclass
 
 import numpy as np
 import rasterio
+from fetchez.hooks import FetchHook
+from fetchez.spatial import Region
+from fetchez.utils import BOLD, CYAN, colorize, format_dataset_id, str2bool
 from rasterio.crs import CRS
 from rasterio.enums import ColorInterp
 from rasterio.windows import Window
 
-from fetchez.hooks import FetchHook
-from fetchez.spatial import Region
-from fetchez.utils import BOLD, CYAN, colorize, format_dataset_id, str2bool
+from globato import __version__
 
 from ..transforms.point_pixels import (
     FUSION_BAND_MAP,
@@ -44,7 +44,6 @@ from ..transforms.point_pixels import (
     PointPixels,
     finalize_fusion_state,
 )
-from globato import __version__
 
 logger = logging.getLogger(__name__)
 

@@ -1,5 +1,4 @@
 #!/usr/bin/env python
-# -*- coding: utf-8 -*-
 
 """
 globato.hooks.rasters.blend
@@ -13,14 +12,15 @@ Based on cudem.grits.blend
 :license: MIT, see LICENSE for more details.
 """
 
-import os
 import logging
-import numpy as np
-import scipy.ndimage
-import scipy.interpolate
-import rasterio
+import os
 
-from .base import RasterStreamHook, RasterGlobalHook
+import numpy as np
+import rasterio
+import scipy.interpolate
+import scipy.ndimage
+
+from .base import RasterGlobalHook, RasterStreamHook
 
 logger = logging.getLogger(__name__)
 

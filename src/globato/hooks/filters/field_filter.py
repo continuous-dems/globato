@@ -1,5 +1,4 @@
 #!/usr/bin/env python
-# -*- coding: utf-8 -*-
 
 """
 globato.hooks.filters.field_filter
@@ -12,6 +11,7 @@ Filter data by field (z, weight, confidence, classification)
 """
 
 import logging
+
 import numpy as np
 from fetchez.hooks import FetchHook
 

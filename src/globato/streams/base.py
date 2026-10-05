@@ -1,5 +1,4 @@
 #!/usr/bin/env python
-# -*- coding: utf-8 -*-
 
 """
 globato.streams.base
@@ -10,12 +9,11 @@ globato.streams.base
 """
 
 import logging
-from typing import cast, Optional
+from typing import cast
 
-from fetchez.streams.base import BaseStream
-
-import pandas as pd
 import numpy as np
+import pandas as pd
+from fetchez.streams.base import BaseStream
 
 logger = logging.getLogger(__name__)
 
@@ -54,7 +52,7 @@ class GlobatoStream(BaseStream):
         return self
 
     # --- Terminal Sinks ---
-    def to_dataframe(self, limit: Optional[int] = None) -> pd.DataFrame:
+    def to_dataframe(self, limit: int | None = None) -> pd.DataFrame:
         """Consumes the pipeline and returns a Pandas DataFrame."""
 
         chunks = []

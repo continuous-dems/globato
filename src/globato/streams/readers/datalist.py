@@ -1,5 +1,4 @@
 #!/usr/bin/env python
-# -*- coding: utf-8 -*-
 
 """
 globato.streams.readers.datalist
@@ -13,15 +12,16 @@ and hierarchical dataset weights.
 :license: MIT, see LICENSE for more details.
 """
 
-import os
 import json
-import shlex
 import logging
+import os
+import shlex
+
 import numpy as np
 
-from .base import BaseGlobatoReader
-
 from globato.utils import add_field_to_recarray
+
+from .base import BaseGlobatoReader
 
 try:
     import h3
@@ -139,12 +139,12 @@ class DatalistReader(BaseGlobatoReader):
     def get_srs(self):
         """Datalists don't have a single strict SRS, defer to individual files."""
 
-        return None
+        return
 
     def _yield_raw_chunks(self):
         # from globato.hooks.formats.stream_factory import StreamFactory
         # from fetchez.hooks.stream_init import DataStream
-        from fetchez.registry import ReaderRegistry, ProfileRegistry
+        from fetchez.registry import ProfileRegistry, ReaderRegistry
 
         ReaderRegistry.load_all()
         ProfileRegistry.load_all()

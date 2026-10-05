@@ -1,5 +1,4 @@
 #!/usr/bin/env python
-# -*- coding: utf-8 -*-
 
 """
 globato.hooks.sinks.pipe
@@ -11,8 +10,9 @@ pipe the stream to xyz (stdout)
 :license: MIT, see LICENSE for more details.
 """
 
-import sys
 import logging
+import sys
+
 import numpy as np
 from fetchez.hooks import FetchHook
 
@@ -116,7 +116,7 @@ class XYZPrinter(FetchHook):
                 #         self.fmt = ["%d", "%d", "%.6f"]
                 #         np.savetxt(sys.stdout, data, fmt=self.fmt, delimiter=self.delimiter)
 
-            except IOError:
+            except OSError:
                 try:
                     sys.stdout.close()
                 except Exception:

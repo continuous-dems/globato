@@ -1,5 +1,4 @@
 #!/usr/bin/env python
-# -*- coding: utf-8 -*-
 
 """
 globato.recipes.modifiers.buffer_and_cut
@@ -14,10 +13,11 @@ desired region.
 """
 
 import logging
-from fetchez.utils import str2inc, str2bool, float_or, str_or
-from fetchez.spatial import parse_region
+
 from fetchez.recipes.modifiers import BaseModifier
 from fetchez.registry import HookRegistry
+from fetchez.spatial import parse_region
+from fetchez.utils import float_or, str2bool, str2inc, str_or
 
 logger = logging.getLogger(__name__)
 
@@ -56,7 +56,7 @@ class RegionBufferModifier(BaseModifier):
         self.outname = str_or(outname) or "%name%_%batch_name%"
         self.force = str2bool(force)
 
-        if "increment" in kwargs.keys():
+        if "increment" in kwargs:
             self.inc = str2inc(str_or(kwargs["increment"], "1"))
 
     def _produces_dem(self, hook_name):

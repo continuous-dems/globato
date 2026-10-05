@@ -1,5 +1,4 @@
 #!/usr/bin/env python
-# -*- coding: utf-8 -*-
 
 """
 globato.cli.run
@@ -12,22 +11,23 @@ recipe.
 :license: MIT, see LICENSE for more details.
 """
 
-import os
-import sys
-import click
 import copy
 import json
-import yaml
 import logging
+import os
+import sys
 
+import click
+import yaml
 from fetchez.recipe import Recipe
 from fetchez.registry import RecipeRegistry
-from fetchez.utils import (
-    str2inc,
-    FetchezMainCommand,
-)
-from globato.utils import globatize_modules
 from fetchez.spatial import yield_parsed_regions
+from fetchez.utils import (
+    FetchezMainCommand,
+    str2inc,
+)
+
+from globato.utils import globatize_modules
 
 logger = logging.getLogger(__name__)
 

@@ -1,5 +1,4 @@
 #!/usr/bin/env python
-# -*- coding: utf-8 -*-
 
 """globato.hooks.transforms.point_pixels
 
@@ -22,12 +21,11 @@ from dataclasses import dataclass
 
 import numpy as np
 import rasterio
-from rasterio import Affine
-from rasterio.windows import Window
-
 from fetchez.hooks import FetchHook
 from fetchez.spatial import Region
 from fetchez.utils import float_or, int_or, str2inc
+from rasterio import Affine
+from rasterio.windows import Window
 
 logger = logging.getLogger(__name__)
 

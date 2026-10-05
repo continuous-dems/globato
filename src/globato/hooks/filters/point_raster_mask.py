@@ -1,5 +1,4 @@
 #!/usr/bin/env python
-# -*- coding: utf-8 -*-
 
 """
 globato.hooks.filters.point_raster_mask
@@ -9,12 +8,13 @@ globato.hooks.filters.point_raster_mask
 :license: MIT, see LICENSE for more details.
 """
 
-import os
 import logging
+import os
+
 import numpy as np
 import rasterio
-
 from fetchez.utils import str2bool
+
 from .base import GlobatoFilter
 
 logger = logging.getLogger(__name__)

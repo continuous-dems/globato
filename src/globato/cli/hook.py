@@ -1,5 +1,4 @@
 #!/usr/bin/env python
-# -*- coding: utf-8 -*-
 
 """
 globato.cli.hook
@@ -7,9 +6,10 @@ globato.cli.hook
 Discoverability and documentation for processing hooks.
 """
 
-import click
 import inspect
 import sys
+
+import click
 from fetchez.registry import HookRegistry
 
 
@@ -34,8 +34,6 @@ def hook_group():
       globato pointz run my_data.laz+rq:threshold=50,mode=percent
       globato recipe build -R loc:Miami copernicus:datatype=3+range_z:min_z=0
     """
-
-    pass
 
 
 @hook_group.command("list")

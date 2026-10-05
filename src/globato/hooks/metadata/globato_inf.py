@@ -1,5 +1,4 @@
 #!/usr/bin/env python
-# -*- coding: utf-8 -*-
 
 """
 globato.hooks.metadata.globato_inf
@@ -9,8 +8,9 @@ globato.hooks.metadata.globato_inf
 :license: MIT, see LICENSE for more details.
 """
 
-import os
 import json
+import os
+
 import numpy as np
 from fetchez.hooks import FetchHook
 

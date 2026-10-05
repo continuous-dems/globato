@@ -1,5 +1,4 @@
 #!/usr/bin/env python
-# -*- coding: utf-8 -*-
 
 """
 globato.hooks.rasters.tnm_hydroflat
@@ -22,16 +21,16 @@ available for callers that explicitly want vector-guided discovery.
 :license: MIT, see LICENSE for more details.
 """
 
-from collections import Counter
 import hashlib
 import logging
 import math
 import os
+from collections import Counter
 
 import numpy as np
 import rasterio
-from rasterio.features import rasterize
 import scipy.ndimage
+from rasterio.features import rasterize
 
 from .base import RasterGlobalHook
 
@@ -331,8 +330,9 @@ class TNMHydroflat(RasterGlobalHook):
 
         from fetchez.registry import ModuleRegistry
         from fetchez.spatial import Region
-        from globato.utils import resolve_barrier
         from rasterio.warp import transform_bounds
+
+        from globato.utils import resolve_barrier
 
         # Direct/API use may resolve OSM before the CLI loads entry points.
         if ModuleRegistry.get_class("osm_landmask") is None:

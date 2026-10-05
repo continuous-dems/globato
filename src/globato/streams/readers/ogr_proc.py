@@ -1,5 +1,4 @@
 #!/usr/bin/env python
-# -*- coding: utf-8 -*-
 
 """
 globato.hooks.formats.ogr_proc
@@ -12,6 +11,7 @@ OGR data parsing from cudem
 """
 
 import logging
+
 import numpy as np
 
 try:

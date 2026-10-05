@@ -1,5 +1,4 @@
 #!/usr/bin/env python
-# -*- coding: utf-8 -*-
 
 """
 globato.cli.gritz
@@ -10,11 +9,11 @@ The command-line interface for the raster/grits group.
 
 import os
 import sys
-import click
 import time
-import numpy as np
 
-from fetchez.utils import FetchezMainGroup, FetchezMainCommand
+import click
+import numpy as np
+from fetchez.utils import FetchezMainCommand, FetchezMainGroup
 
 
 def generate_gritz_receipt(src_path, dst_path, op_name, elapsed):
@@ -147,8 +146,6 @@ GRITZ_COMMANDS = [
 )
 def gritz_group():
     """Raster manipulation tools."""
-
-    pass
 
 
 @gritz_group.command("diff", cls=FetchezMainCommand)

@@ -1,5 +1,4 @@
 #!/usr/bin/env python
-# -*- coding: utf-8 -*-
 
 """
 globato.hooks.rasters.slope
@@ -8,6 +7,7 @@ Filters data based on calculated Slope (Rise/Run).
 """
 
 import numpy as np
+
 from .base import RasterStreamHook
 
 

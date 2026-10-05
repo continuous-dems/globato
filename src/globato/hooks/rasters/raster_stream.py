@@ -1,5 +1,7 @@
 import logging
+
 import rasterio
+
 from globato.hooks.rasters.base import RasterStreamHook
 
 logger = logging.getLogger(__name__)

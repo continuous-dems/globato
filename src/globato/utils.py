@@ -1,5 +1,4 @@
 #!/usr/bin/env python
-# -*- coding: utf-8 -*-
 
 """
 globato.utils
@@ -11,24 +10,22 @@ Some utility functions for globato. Taken from cudem.utils
 :license: MIT, see LICENSE for more details.
 """
 
+import io
+import logging
 import os
-import sys
 import shutil
 import subprocess
-import logging
-import io
+import sys
 
-from tqdm import tqdm
 import numpy as np
-from numpy.lib.recfunctions import append_fields
-
 from fetchez.core import run_fetchez
-from fetchez.registry import ModuleRegistry, BundleRegistry
-from fetchez.utils import str2inc
 from fetchez.recipe import Recipe
+from fetchez.registry import BundleRegistry, ModuleRegistry
+from fetchez.utils import str2inc
+from numpy.lib.recfunctions import append_fields
+from tqdm import tqdm
 
 # from fetchez.utils import parse_source_string as fetchez_parse_source
-
 from transformez.utils import cmd_exists
 
 logger = logging.getLogger(__name__)
@@ -318,13 +315,14 @@ def resolve_barrier(
 
     import pyproj
     import rasterio
-    from rasterio.features import rasterize, shapes
-    from rasterio.warp import calculate_default_transform, reproject, Resampling
-    from rasterio.transform import from_bounds
     import shapely
+    from pyogrio.raw import read as pyogrio_read
+    from pyogrio.raw import write as pyogrio_write
+    from rasterio.features import rasterize, shapes
+    from rasterio.transform import from_bounds
+    from rasterio.warp import Resampling, calculate_default_transform, reproject
     from shapely.geometry import shape
     from shapely.ops import transform as shapely_transform
-    from pyogrio.raw import read as pyogrio_read, write as pyogrio_write
 
     if not barrier_str:
         return None

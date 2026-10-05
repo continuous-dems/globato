@@ -1,5 +1,4 @@
 #!/usr/bin/env python
-# -*- coding: utf-8 -*-
 
 """
 globato.hooks.vectors.vector_fill_holes
@@ -11,12 +10,13 @@ Perfect for solidifying landmasks and delineating continuous ocean boundaries.
 :license: MIT, see LICENSE for more details.
 """
 
-import os
 import logging
-from pyogrio.raw import read, write
+import os
+
 import shapely
-from shapely.geometry import Polygon, MultiPolygon
 from fetchez.hooks import FetchHook
+from pyogrio.raw import read, write
+from shapely.geometry import MultiPolygon, Polygon
 
 logger = logging.getLogger(__name__)
 

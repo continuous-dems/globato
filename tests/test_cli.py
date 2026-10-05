@@ -1,11 +1,11 @@
 #!/usr/bin/env python
-# -*- coding: utf-8 -*-
 
 """
 Tests for the Globato CLI Framework.
 """
 
 import os
+
 import pytest
 import yaml
 from click.testing import CliRunner

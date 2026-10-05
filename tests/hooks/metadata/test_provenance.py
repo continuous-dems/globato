@@ -1,13 +1,12 @@
 # tests/metdata/test_provenance.py
 
-import pytest
-
 import numpy as np
+import pytest
 import rasterio
+from fetchez.spatial import Region
 from rasterio.windows import Window
 
 from globato.hooks.metadata.provenance import MaskSet
-from fetchez.spatial import Region
 
 
 def test_maskset_valid_masks_are_sorted_by_dataset_id(tmp_path):

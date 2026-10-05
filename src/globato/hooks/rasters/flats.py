@@ -1,5 +1,4 @@
 #!/usr/bin/env python
-# -*- coding: utf-8 -*-
 
 """
 globato.hooks.rasters.flats
@@ -14,6 +13,7 @@ Based on cudem.grits.flats
 """
 
 import logging
+
 import numpy as np
 
 from .base import RasterStreamHook

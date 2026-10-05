@@ -1,5 +1,4 @@
 #!/usr/bin/env python
-# -*- coding: utf-8 -*-
 
 """
 globato.hooks.rasters.kriging_surface
@@ -12,6 +11,7 @@ Uses pykrige to interpolate sparse grids.
 """
 
 import logging
+
 import numpy as np
 import rasterio
 from rasterio.transform import xy

@@ -1,5 +1,4 @@
 #!/usr/bin/env python
-# -*- coding: utf-8 -*-
 
 """
 globato.cli.bundles
@@ -9,6 +8,7 @@ Discoverability and documentation for module bundles.
 
 import os
 import sys
+
 import click
 import yaml
 from fetchez.registry import BundleRegistry
@@ -29,8 +29,6 @@ def bundle_group():
     - bundle: us_coastal_streaming
       args: {weight: 1.0}
     """
-
-    pass
 
 
 @bundle_group.command("list")

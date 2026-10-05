@@ -1,9 +1,11 @@
 # tests/test_utils.py
 
 import os
-import rasterio
+
 import numpy as np
+import rasterio
 from fetchez.spatial import Region
+
 from globato.utils import resolve_barrier
 
 

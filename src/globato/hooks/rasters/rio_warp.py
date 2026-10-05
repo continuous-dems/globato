@@ -1,5 +1,4 @@
 #!/usr/bin/env python
-# -*- coding: utf-8 -*-
 
 """
 globato.hooks.rasters.rio_warp
@@ -11,17 +10,18 @@ Warp/reproject a raster dataset
 :license: MIT, see LICENSE for more details.
 """
 
-import os
 import logging
+import os
+
 import rasterio
-from rasterio.warp import (
-    calculate_default_transform,
-    reproject,
-    Resampling,
-    transform_bounds,
-)
 from fetchez.hooks import FetchHook
 from fetchez.utils import str2inc
+from rasterio.warp import (
+    Resampling,
+    calculate_default_transform,
+    reproject,
+    transform_bounds,
+)
 
 logger = logging.getLogger(__name__)
 

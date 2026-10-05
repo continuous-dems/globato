@@ -1,5 +1,4 @@
 #!/usr/bin/env python
-# -*- coding: utf-8 -*-
 
 """
 globato.cli.region
@@ -7,13 +6,13 @@ globato.cli.region
 Spatial management commands for generating, formatting, and splitting bounding boxes.
 """
 
-import click
 import json
 import math
 import sys
 
-from fetchez.utils import FetchezMainGroup, FetchezMainCommand
+import click
 from fetchez.spatial import yield_parsed_regions
+from fetchez.utils import FetchezMainCommand, FetchezMainGroup
 
 REGION_COMMANDS = ["echo", "buffer", "split", "transform"]
 

@@ -1,5 +1,4 @@
 #!/usr/bin/env python
-# -*- coding: utf-8 -*-
 
 """
 globato.hooks.rasters.footprint_fill
@@ -11,10 +10,11 @@ Fill a raster and clip to a morphological boundary (footprint)
 :license: MIT, see LICENSE for more details.
 """
 
+import logging
+
 import numpy as np
 import scipy.ndimage
 from rasterio.fill import fillnodata
-import logging
 
 from globato.hooks.rasters.base import RasterStreamHook
 

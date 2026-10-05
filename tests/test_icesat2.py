@@ -1,23 +1,22 @@
 # tests/test_icesat2.py
 
-import logging
-
 import json
+import logging
 import re
 
+import fetchez
 import h5py
 import numpy as np
 import pandas as pd
 import pytest
 import shapely
+from fetchez.modules import earthdata
 from shapely.strtree import STRtree
 
-import fetchez
-from fetchez.modules import earthdata
 from globato.streams.readers import icesat2
 from globato.streams.readers.icesat2 import (
-    ATL03Reader,
     PHOTON_CLASSES,
+    ATL03Reader,
     _as_atl24_time,
     _atl24_release_shift,
     _atl24_rows_in_atl03,

@@ -12,9 +12,8 @@ from globato.hooks.metadata.stack_provenance import (
     MemoryStackTierState,
     StackProvenance,
 )
-from globato.hooks.transforms.point_pixels import FUSION_BAND_MAP, FUSION_BANDS
 from globato.hooks.sinks.multi_stack import MultiStackAccumulator
-
+from globato.hooks.transforms.point_pixels import FUSION_BAND_MAP, FUSION_BANDS
 
 WIDTH = 4
 HEIGHT = 4

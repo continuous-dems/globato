@@ -1,5 +1,4 @@
 #!/usr/bin/env python
-# -*- coding: utf-8 -*-
 
 """
 globato.streams.readers.icesat2
@@ -11,23 +10,22 @@ ICESat-2 Data Parser (ATL03, ATL24) ported from CUDEM for Fetchez-Globato.
 :license: MIT, see LICENSE for more details.
 """
 
-import os
 import glob
-import traceback
-import numpy as np
-from numpy.lib.stride_tricks import sliding_window_view
-import h5py as h5
-import pandas as pd
-import logging
-from pyogrio.raw import read
-import shapely
 import json
+import logging
 import math
-from shapely.strtree import STRtree
+import os
+import traceback
 
 import fetchez
-from fetchez import utils
-from fetchez import spatial
+import h5py as h5
+import numpy as np
+import pandas as pd
+import shapely
+from fetchez import spatial, utils
+from numpy.lib.stride_tricks import sliding_window_view
+from pyogrio.raw import read
+from shapely.strtree import STRtree
 
 # from fetchez.core import run_fetchez
 from .base import BaseGlobatoReader

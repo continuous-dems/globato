@@ -1,5 +1,4 @@
 #!/usr/bin/env python
-# -*- coding: utf-8 -*-
 
 """
 globato.hooks.raster.sdb_interp
@@ -8,15 +7,16 @@ globato.hooks.raster.sdb_interp
 SDB interpolation hook
 """
 
-import os
 import logging
+import os
+
 import numpy as np
 import rasterio
-from rasterio.warp import reproject, Resampling
-
-from .base import RasterGlobalHook
 from fetchez.core import run_fetchez
 from fetchez.spatial import Region
+from rasterio.warp import Resampling, reproject
+
+from .base import RasterGlobalHook
 
 try:
     from sklearn.ensemble import RandomForestRegressor

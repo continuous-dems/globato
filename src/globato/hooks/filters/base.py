@@ -1,5 +1,4 @@
 #!/usr/bin/env python
-# -*- coding: utf-8 -*-
 
 """
 globato.hooks.filters.base
@@ -13,10 +12,11 @@ Handles stream iteration, schema enforcement, and classification.
 """
 
 import logging
-import numpy as np
 
-from fetchez.hooks import FetchHook
+import numpy as np
 from fetchez import utils
+from fetchez.hooks import FetchHook
+
 from globato.utils import add_field_to_recarray
 
 logger = logging.getLogger(__name__)

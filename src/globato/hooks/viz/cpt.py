@@ -1,5 +1,4 @@
 #!/usr/bin/env python
-# -*- coding: utf-8 -*-
 
 """
 globato.hooks.viz.cpt
@@ -18,8 +17,8 @@ try:
 except ImportError:
     HAS_MATPLOTLIB = False
 
-from fetchez.utils import int_or, float_or
 from fetchez import core, registry
+from fetchez.utils import float_or, int_or
 
 logger = logging.getLogger(__name__)
 
@@ -464,8 +463,7 @@ def load_cmap(cpt_file, name="globato_cpt"):
             x = max(0.0, min(1.0, x))
 
             if unique_x:
-                if x < unique_x[-1]:
-                    x = unique_x[-1]
+                x = max(x, unique_x[-1])
 
                 if x == unique_x[-1]:
                     c_right[-1] = color

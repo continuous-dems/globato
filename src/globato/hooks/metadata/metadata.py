@@ -1,5 +1,4 @@
 #!/usr/bin/env python
-# -*- coding: utf-8 -*-
 
 """
 globato.hooks.metadata.metadata
@@ -11,10 +10,10 @@ Inject metadata into a raster
 :license: MIT, see LICENSE for more details.
 """
 
-import os
 import logging
-import rasterio
+import os
 
+import rasterio
 from fetchez.hooks import FetchHook
 
 from globato.hooks.rasters.base import is_cog, update_cog_metadata

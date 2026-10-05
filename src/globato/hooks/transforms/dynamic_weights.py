@@ -1,5 +1,4 @@
 #!/usr/bin/env python
-# -*- coding: utf-8 -*-
 
 """
 globato.hooks.transforms.dynamic_weights
@@ -46,10 +45,11 @@ In all cases the result is clamped to [floor, cap] where:
 :license: MIT, see LICENSE for more details.
 """
 
-import numpy as np
 import logging
+
+import numpy as np
 from fetchez.hooks import FetchHook
-from fetchez.utils import str2bool, float_or
+from fetchez.utils import float_or, str2bool
 
 logger = logging.getLogger(__name__)
 

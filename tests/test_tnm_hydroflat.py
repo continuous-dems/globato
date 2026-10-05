@@ -204,6 +204,7 @@ def test_osm_resolution_transforms_projected_bounds_to_geographic(
     captured = {}
 
     from fetchez.registry import ModuleRegistry
+
     import globato.utils
 
     monkeypatch.setattr(

@@ -1,5 +1,4 @@
 #!/usr/bin/env python
-# -*- coding: utf-8 -*-
 
 """
 globato.hooks.filters.block_thin
@@ -12,8 +11,10 @@ These filters are destructive by nature.
 """
 
 import logging
+
 import numpy as np
 from fetchez import utils
+
 from .base import GlobatoFilter
 
 logger = logging.getLogger(__name__)

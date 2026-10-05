@@ -1,5 +1,4 @@
 #!/usr/bin/env python
-# -*- coding: utf-8 -*-
 
 """
 globato.hooks.rasters.morphology
@@ -13,6 +12,7 @@ Mophology operations on the raster.
 
 import numpy as np
 import scipy.ndimage
+
 from .base import RasterStreamHook
 
 

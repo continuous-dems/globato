@@ -1,5 +1,4 @@
 #!/usr/bin/env python
-# -*- coding: utf-8 -*-
 
 """
 globato.hooks.sinks.raster_writer
@@ -11,9 +10,10 @@ Writes the stream to a raster
 :license: MIT, see LICENSE for more details.
 """
 
+import logging
 import os
 import shutil
-import logging
+
 import rasterio
 from fetchez.hooks import FetchHook
 from fetchez.utils import str2bool

@@ -1,5 +1,4 @@
 #!/usr/bin/env python
-# -*- coding: utf-8 -*-
 
 """
 globato.streams.readers.fio
@@ -12,9 +11,10 @@ Fiona/Shapely based Vector Reader (Shapefile, GeoPackage, S-57).
 """
 
 import logging
-import numpy as np
 
+import numpy as np
 from fetchez.utils import float_or
+
 from .base import BaseGlobatoReader
 
 try:

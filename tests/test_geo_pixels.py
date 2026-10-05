@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
-
 from fetchez.spatial import Region
+
 from globato.hooks.transforms.point_pixels import PointPixels
 
 

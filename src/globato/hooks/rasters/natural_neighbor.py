@@ -1,5 +1,4 @@
 #!/usr/bin/env python
-# -*- coding: utf-8 -*-
 
 """
 globato.hooks.rasters.natural_neighbor
@@ -12,6 +11,7 @@ Uses naturalneighbor to interpolate sparse grids.
 """
 
 import logging
+
 import numpy as np
 import rasterio
 from rasterio.transform import xy
