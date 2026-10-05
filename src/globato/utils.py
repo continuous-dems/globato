@@ -46,6 +46,10 @@ def is_globato_source(meta):
 globato_source_p = is_globato_source
 
 
+def is_globato_hook(meta):
+    return GLOBATO_BUILD_TAG in meta.get("tags", [])
+
+
 def is_globato_build_preset(meta):
     return GLOBATO_BUILD_TAG in meta.get("tags", [])
 

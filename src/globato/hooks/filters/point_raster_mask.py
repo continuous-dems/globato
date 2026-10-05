@@ -51,7 +51,7 @@ class PointRasterMask(GlobatoFilter):
 
     def setup(self, mod, entry):
         if not self.barrier:
-            logger.warning(f"[{self.name}] No barrier provided. Skipping.")
+            logger.warning(f"[{self.name}] No barrier provided {mod}. Skipping.")
             return False
 
         if self.skip_entry and str2bool(entry.get(self.skip_entry)):

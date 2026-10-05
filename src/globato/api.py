@@ -19,13 +19,13 @@ from typing import Union, List, Optional, Generator
 
 from fetchez.recipe import Recipe
 from fetchez.registry import HookRegistry, PresetRegistry
-from fetchez.utils import str2inc, parse_hook_string, compile_sources
+from fetchez.utils import str2inc, parse_hook_string
 from fetchez.api import _compile_modules
 from fetchez.spatial import parse_region
 from fetchez.cli.pipeline import make_pipeline_config
 
 from globato.streams.base import GlobatoStream
-from globato.utils import globatize_modules, make_recipe_config, is_globato_build_preset
+from globato.utils import make_recipe_config, is_globato_build_preset
 
 logger = logging.getLogger(__name__)
 
@@ -331,7 +331,7 @@ def build_recipe_config(
 
 
 def build(
-    sources,
+    modules,
     region,
     increment,
     format="GTiff",
@@ -372,8 +372,8 @@ def build(
 
     HookRegistry.load_all()
 
-    if isinstance(sources, str):
-        sources = [sources]
+    # if isinstance(sources, str):
+    #     sources = [sources]
 
     filters = filters or []
     parsed_modifiers = [parse_hook_string(m) for m in (modifier or [])]
@@ -392,12 +392,12 @@ def build(
         if str(dem_weights).lower() == "auto":
             dem_weights = legacy_weights
 
-    compiled_modules = globatize_modules(
-        compile_sources(sources),
-        shared_cache=shared_cache,
-        crs=t_srs,
-        res=increment,
-    )
+    # compiled_modules = globatize_modules(
+    #     compile_sources(sources),
+    #     shared_cache=shared_cache,
+    #     crs=t_srs,
+    #     res=increment,
+    # )
 
     base_outdir = os.path.abspath(outdir) if outdir else os.path.abspath(".")
 
@@ -524,9 +524,7 @@ def build(
     global_hooks.append({"name": "cleanup_tmp", "args": {"target_dir": "tmp"}})
 
     # --- Build Config ---
-    config = make_recipe_config(
-        outname, region, compiled_modules, global_hooks, crs=t_srs
-    )
+    config = make_recipe_config(outname, region, modules, global_hooks, crs=t_srs)
 
     if ext_cells > 0 or ext_pct > 0:
         config.setdefault("modifiers", []).append(
