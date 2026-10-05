@@ -18,6 +18,7 @@ import logging
 from fetchez.utils import (
     FetchezMainCommand,
     parse_hook_string,
+    str2inc,
 )
 from fetchez.recipe import Recipe
 from fetchez.spatial import parse_region
@@ -109,6 +110,112 @@ class MRGlobatoAdapter:
         },
     ]
 
+    DEFAULT_STACK_WEIGHTS = [
+        4.0,
+        3.0,
+        2.0,
+        1.0,
+        0.75,
+        0.5,
+        0.4,
+        0.3,
+        0.25,
+        0.2,
+        0.1,
+    ]
+
+    # Binary CUDEM uses a deliberately coarser quality vocabulary than mixed-mode
+    # MultiStack.  These thresholds describe the resolution at which surviving
+    # observations become direct constraints, not source-to-source competition.
+    DEM_WEIGHT_SCALE = [2.0, 1.0, 0.5, 0.25, 0.1]
+
+    @staticmethod
+    def _parse_weights(value):
+        """Normalize slash-delimited or iterable weight thresholds."""
+        if value is None:
+            return []
+        if isinstance(value, str):
+            values = [item for item in value.split("/") if item.strip()]
+        else:
+            values = list(value)
+        return sorted((float(item) for item in values), reverse=True)
+
+    @staticmethod
+    def _format_inc(value, template=None):
+        """Format a numeric increment as a parseable Fetchez resolution string.
+
+        When the requested increment uses arc-second syntax, preserve that syntax
+        throughout the generated Binary CUDEM resolution ladder.
+        """
+        value = float(value)
+
+        if isinstance(template, str):
+            units = template.strip().lower()[-1:]
+
+            if units == "s":
+                arcseconds = value * 3600.0
+                nearest_integer = round(arcseconds)
+                if abs(arcseconds - nearest_integer) < 1e-6:
+                    arcseconds = float(nearest_integer)
+                return f"{arcseconds:.12g}s"
+            if units == "t":
+                return f"{value * 111320.0:.12g}t"
+
+        return f"{value:.12g}"
+
+    @staticmethod
+    def _auto_resolutions(increment, max_tiers=6):
+        """Build a factor-of-three resolution ladder through the coarse tier."""
+        base_res = str2inc(increment)
+        is_arcseconds = isinstance(increment, str) and increment.lower().endswith("s")
+        target_max_res = str2inc("15s") if is_arcseconds or base_res < 1 else 500.0
+
+        resolutions = [base_res]
+        while resolutions[-1] < target_max_res and len(resolutions) < max_tiers:
+            next_res = resolutions[-1] * 3.0
+            if next_res >= target_max_res:
+                if abs(resolutions[-1] - target_max_res) > 1e-12:
+                    resolutions.append(target_max_res)
+                break
+            resolutions.append(next_res)
+
+        return resolutions
+
+    @classmethod
+    def _auto_dem_weights(cls, resolutions):
+        """Choose DEM-admission tiers independently from MultiStack mixed tiers."""
+        num_steps = max(0, len(resolutions) - 1)
+        if num_steps == 0:
+            return []
+
+        if num_steps <= len(cls.DEM_WEIGHT_SCALE):
+            return cls.DEM_WEIGHT_SCALE[-num_steps:]
+
+        # Extremely fine/custom products can extend the high end without changing
+        # the familiar 0.5/0.25/0.1 coarse admission tiers.
+        weights = list(cls.DEM_WEIGHT_SCALE)
+        next_weight = weights[0] * 2.0
+        while len(weights) < num_steps:
+            weights.insert(0, next_weight)
+            next_weight *= 2.0
+        return weights
+
+    @classmethod
+    def _auto_stack_weights(cls):
+        """Fine-grained competition tiers for mixed-mode source reduction."""
+        return list(cls.DEFAULT_STACK_WEIGHTS)
+
+    @staticmethod
+    def _default_blend_distances(resolutions, previous_tier_mode):
+        """Return conservative strategy-specific Binary CUDEM blend defaults."""
+        if previous_tier_mode == "points":
+            # Point handoff already blends through the tier interpolation itself.
+            return [0] * len(resolutions)
+
+        # Raster handoff may still benefit from reopening a small transition zone.
+        count = len(resolutions)
+        return [2 * (2**power) for power in reversed(range(count))]
+
     @classmethod
     def make_command(cls):
         help_text = cls.description
@@ -139,14 +246,6 @@ class MRGlobatoAdapter:
             **(options or {}),
         }
 
-        from globato.api import (
-            _format_inc,
-            _auto_resolutions,
-            _auto_stack_weights,
-            _parse_weights,
-            _auto_dem_weights,
-        )
-
         overrides = {}
 
         def update(name, **args):
@@ -167,23 +266,24 @@ class MRGlobatoAdapter:
             update("multi_stack", nodata=nodata)
 
         # --- Resolution and Weight Tiers ---
-        resolutions = _auto_resolutions(increment)
+        resolutions = cls._auto_resolutions(increment)
 
         if str(options.get("stack_weights")).lower() == "auto":
-            stack_weight_list = _auto_stack_weights()
+            stack_weight_list = cls._auto_stack_weights()
         else:
-            stack_weight_list = _parse_weights(options.get("stack_weights"))
+            stack_weight_list = cls._parse_weights(options.get("stack_weights"))
 
         if stack_weight_list:
             stack_weight_list = "/".join(map(str, stack_weight_list))
 
         if str(options.get("dem_weights")).lower() == "auto":
-            dem_weight_list = _auto_dem_weights(resolutions)
+            dem_weight_list = cls._auto_dem_weights(resolutions)
         else:
-            dem_weight_list = _parse_weights(options.get("dem_weights"))
+            dem_weight_list = cls._parse_weights(options.get("dem_weights"))
 
         resolutions = "/".join(
-            _format_inc(value, increment) for value in _auto_resolutions(increment)
+            cls._format_inc(value, increment)
+            for value in cls._auto_resolutions(increment)
         )
         update(
             "ms_binary_cudem",
@@ -236,8 +336,6 @@ GLOBATO_PRESET_ADAPTERS = {
 
 
 class GlobatoPipelineExecutor(PipelineExecutor):
-    # PresetRegistry.load_all()
-
     def module_allowed(self, name, meta):
         return is_globato_source(meta)
 
@@ -251,6 +349,7 @@ class GlobatoPipelineExecutor(PipelineExecutor):
         return True
 
     def get_command(self, ctx, name):
+        PresetRegistry.load_all()
         preset_def = PresetRegistry.get_yaml(name)
 
         if preset_def and is_globato_build_preset(preset_def):
