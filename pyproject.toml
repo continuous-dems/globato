@@ -179,6 +179,34 @@ module = "scipy.*"
 follow_untyped_imports = false
 ignore_missing_imports = true
 
+[tool.ruff.lint]
+# Keep the lint policy explicit. Do not use `extend-select` here:
+# Ruff's default rule set may change between releases, which can otherwise
+# introduce new lint requirements during routine dependency updates.
+select = [
+    "E4",  # import-related pycodestyle errors
+    "E7",  # statement-related pycodestyle errors
+    "E9",  # runtime/syntax-ish pycodestyle errors
+    "F",   # Pyflakes
+    # "B",   # flake8-bugbear
+    # "PTH100",  # os.path.abspath
+    "PTH102",  # os.mkdir
+    # "PTH103",  # os.mkdirs
+    # "PTH110",  # os.path.exists
+    # "PTH112",  # os.path.isdir
+    # "PTH120",  # os.path.dirname
+    "T20",  # flake8-print
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Allow print() statements in CLI module where they are expected
+"src/globato/hooks/viz/cpt.py" = ["T201"]
+"tests/**/*.py" = ["S", "T201"]
+
+[tool.ruff.format]
+# Keep documentation examples under manual control.
+exclude = ["*.md"]
+
 [tool.pytest.ini_options]
 markers = [
     "health: marks tests that require live network access to external APIs (run with '-m health')"
