@@ -12,6 +12,7 @@ schemas:
   - name: validate-recipe
 
 modules:
+  - name: ensure-spatial-claim
   - bundle: global-bathy-topo
 
 global_hooks:

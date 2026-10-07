@@ -590,7 +590,12 @@ def process_build(
 
     # modules = [cmd for cmd in commands if cmd.pop("type", None) == "module"]
     # presets = [cmd for cmd in commands if cmd.get("type") == "preset"]
-    parsed_modifiers = [parse_hook_string(m) for m in modifier]
+    # parsed_modifiers = [parse_hook_string(m) for m in modifier]
+    parsed_modifiers = [
+        {"name": "ensure-spatial-claim"},
+    ]
+
+    parsed_modifiers.extend(parse_hook_string(m) for m in modifier)
     parsed_schemas = [s for s in schema]
 
     config = make_pipeline_config(
