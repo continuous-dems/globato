@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### CHANGED
 * Update cli to use modern fetchez imports.
+* The base raster hook now hases it's _dst_fn to avoid collision in certain instances.
 
 ## [0.3.9 - 10-02-2026]
 
