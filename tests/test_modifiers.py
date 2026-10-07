@@ -6,6 +6,7 @@ import yaml
 
 import globato
 from globato.recipes.modifiers.buffer_and_cut import RegionBufferModifier
+from globato.recipes.modifiers.ensure_spatial_claim import EnsureSpatialClaim
 
 from unittest.mock import patch
 
@@ -247,13 +248,15 @@ def test_buffer_and_cut_still_sees_a_raster_cut_after_format_cog():
     assert "raster_crop" not in [h["name"] for h in config["global_hooks"]]
 
 
-def test_buffer_and_cut_leaves_a_config_with_no_global_hooks_alone():
-    """A buffered region with no cut/crop to undo it would deliver an oversize DEM."""
+def test_buffer_and_cut_normalizes_missing_global_hooks_to_an_empty_list():
+    """Without a DEM-producing hook, leave the region unchanged but normalize global_hooks."""
     for config in ({}, {"global_hooks": None}):
         config["region"] = _config()["region"]
-        expected = dict(config)
 
-        assert RegionBufferModifier(pct=20).apply(config) == expected
+        result = RegionBufferModifier(pct=20).apply(config)
+
+        assert result["region"] == _config()["region"]
+        assert result["global_hooks"] == []
 
 
 def test_buffer_and_cut_without_a_region_leaves_the_config_alone():
@@ -334,3 +337,90 @@ def test_buffer_and_cut_default_replaces_the_preset_dem():
 
     assert _crop_output(config) == dem_output
     assert _crop_output(config) in delivered
+
+
+# -----------------------------------------------------------------------------
+# ensure-spatial-claim modifier
+# -----------------------------------------------------------------------------
+
+
+def _claim_config(hook_name="claim-grid-filter", global_hooks=None):
+    config = {
+        "modules": [
+            {
+                "module": "tnm",
+                "hooks": [{"name": hook_name, "args": {"res": "1s"}}],
+            }
+        ]
+    }
+    if global_hooks is not None:
+        config["global_hooks"] = global_hooks
+    return config
+
+
+def test_ensure_spatial_claim_inserts_global_hook_when_claim_grid_filter_is_used():
+    config = _claim_config(global_hooks=[{"name": "audit"}])
+
+    result = EnsureSpatialClaim().apply(config)
+
+    assert [hook["name"] for hook in result["global_hooks"]] == [
+        "spatial-claim",
+        "audit",
+    ]
+
+
+def test_ensure_spatial_claim_accepts_claim_grid_filter_alias():
+    config = _claim_config(hook_name="claim_grid_filter", global_hooks=[])
+
+    result = EnsureSpatialClaim().apply(config)
+
+    assert [hook["name"] for hook in result["global_hooks"]] == ["spatial-claim"]
+
+
+def test_ensure_spatial_claim_does_not_duplicate_existing_hook():
+    for name in ("spatial-claim", "spatial_claim"):
+        config = _claim_config(global_hooks=[{"name": name}, {"name": "audit"}])
+
+        result = EnsureSpatialClaim().apply(config)
+
+        normalized = [hook["name"].replace("_", "-") for hook in result["global_hooks"]]
+        assert normalized.count("spatial-claim") == 1
+        assert normalized[-1] == "audit"
+
+
+def test_ensure_spatial_claim_is_a_noop_without_claim_grid_filter():
+    config = {
+        "modules": [
+            {
+                "module": "tnm",
+                "hooks": [{"name": "raster-warp"}],
+            }
+        ],
+        "global_hooks": [{"name": "audit"}],
+    }
+    expected = {
+        "modules": [
+            {
+                "module": "tnm",
+                "hooks": [{"name": "raster-warp"}],
+            }
+        ],
+        "global_hooks": [{"name": "audit"}],
+    }
+
+    assert EnsureSpatialClaim().apply(config) == expected
+
+
+def test_ensure_spatial_claim_normalizes_missing_global_hooks():
+    config = _claim_config()
+
+    result = EnsureSpatialClaim().apply(config)
+
+    assert result["global_hooks"] == [{"name": "spatial-claim"}]
+
+
+def test_ensure_spatial_claim_handles_missing_or_empty_modules():
+    for config in ({}, {"modules": None}, {"modules": []}):
+        result = EnsureSpatialClaim().apply(config)
+
+        assert result["global_hooks"] == []

@@ -30,7 +30,11 @@ class EnsureSpatialClaim(BaseModifier):
 
     def apply(self, config):
         modules = config.get("modules") or []
-        global_hooks = config.setdefault("global_hooks", [])
+
+        global_hooks = config.get("global_hooks")
+        if global_hooks is None:
+            global_hooks = []
+        config["global_hooks"] = global_hooks
 
         claim_grid_enabled = any(
             self._hook_name(hook) == "claim-grid-filter"
@@ -48,13 +52,7 @@ class EnsureSpatialClaim(BaseModifier):
         if claim_grid_enabled and not spatial_claim_enabled:
             global_hooks.insert(
                 0,
-                {
-                    "name": "spatial-claim",
-                },
-            )
-            logger.info(
-                "[%s] Added required global 'spatial-claim' hook.",
-                self.name,
+                {"name": "spatial-claim"},
             )
 
         return config

@@ -84,7 +84,10 @@ class RegionBufferModifier(BaseModifier):
         ]  # update this to handle multiple regions.
 
         HookRegistry.load_all()
-        global_hooks = config.setdefault("global_hooks", [])
+        global_hooks = config.get("global_hooks")
+        if global_hooks is None:
+            global_hooks = []
+            config["global_hooks"] = global_hooks
         hook_names = [h.get("name", "").replace("-", "_") for h in global_hooks]
 
         # The buffer only makes sense if something grids the buffered region into a
