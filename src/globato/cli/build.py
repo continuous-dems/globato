@@ -592,7 +592,12 @@ def process_build(
     # presets = [cmd for cmd in commands if cmd.get("type") == "preset"]
     # parsed_modifiers = [parse_hook_string(m) for m in modifier]
     parsed_modifiers = [
-        {"name": "ensure-spatial-claim"},
+        {
+            "name": "ensure-spatial-claim",
+            "args": {
+                "res": increment,
+            },
+        },
     ]
 
     parsed_modifiers.extend(parse_hook_string(m) for m in modifier)
