@@ -8,6 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### ADDED
+* `XYZReader` takes `keep_pos` and `keep_values` to keep only rows whose value in one column is in a given set.
+
+### FIXED
+* The `nos-xyz` profile drops soundings NOS marks inactive (`active` == 0); pass `keep_pos=None` to read them all.
 * Add `is_globato_source` to utils.
 
 ### CHANGED

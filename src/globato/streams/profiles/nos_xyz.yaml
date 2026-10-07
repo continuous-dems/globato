@@ -9,3 +9,6 @@ reader:
     z_scale: -1
     usecols: [2, 1, 3]
     names: ["y", "x", "z"]
+    # drop soundings NOS marks inactive (active == 0); set keep_pos to null to keep them
+    keep_pos: 5
+    keep_values: [1]

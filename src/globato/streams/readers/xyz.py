@@ -51,11 +51,17 @@ class XYZReader(BaseGlobatoReader):
         z_scale=1,
         x_offset=0,
         y_offset=0,
+        keep_pos=None,
+        keep_values=None,
         chunk_size=100_000,
         **kwargs,
     ):
         """Accepts generic args like `skiprows` and `delimiter` to match StreamFactory profiles,
         while maintaining legacy cudem compatability (`xpos`, `skip`, `delim`).
+
+        `keep_pos` and `keep_values` keep only the rows whose value in column
+        `keep_pos` is one of `keep_values` (e.g. NOS `active` == 1). Leave
+        either unset to read every row.
         """
 
         super().__init__(path, **kwargs)
@@ -95,6 +101,18 @@ class XYZReader(BaseGlobatoReader):
         else:
             self.x_offset = float_or(x_offset, 0)
         self.y_offset = float_or(y_offset, 0)
+        self.keep_pos = int_or(keep_pos)
+        self.keep_values = None
+        if keep_values is not None:
+            if isinstance(keep_values, str):
+                keep_values = keep_values.split("/")
+            keep_values = [
+                v
+                for v in (float_or(v) for v in np.atleast_1d(keep_values))
+                if v is not None
+            ]
+            self.keep_values = keep_values or None
+        self.keep_rows = self.keep_pos is not None and self.keep_values is not None
         self.chunk_size = chunk_size
         self.transform = (
             self.x_scale != 1
@@ -151,6 +169,9 @@ class XYZReader(BaseGlobatoReader):
         if self.upos is not None:
             cols_to_extract.append(self.upos)
 
+        if self.keep_rows:
+            cols_to_extract.append(self.keep_pos)
+
         sorted_cols = sorted(list(set(cols_to_extract)))
 
         col_map = {
@@ -180,6 +201,16 @@ class XYZReader(BaseGlobatoReader):
 
                             if chunk_data.size == 0:
                                 break
+
+                            if self.keep_rows:
+                                chunk_data = chunk_data[
+                                    np.isin(
+                                        chunk_data[:, col_map[self.keep_pos]],
+                                        self.keep_values,
+                                    )
+                                ]
+                                if chunk_data.size == 0:
+                                    continue
 
                             x = chunk_data[:, col_map[self.xpos]]
                             y = chunk_data[:, col_map[self.ypos]]
