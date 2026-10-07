@@ -256,6 +256,7 @@ class MRGlobatoAdapter:
                 "provenance",
                 "source_masks",
                 "multi_stack",
+                "claim-grid-filter",
             ):
                 update(hook_name, res=increment)
 
