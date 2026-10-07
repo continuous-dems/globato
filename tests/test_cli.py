@@ -39,7 +39,7 @@ def test_cli_base_help(runner):
         assert cmd in result.output, f"Missing '{cmd}' command in CLI help!"
 
 
-def test_recipe_build_save_only(runner):
+def test_recipe_build_save_only(runner, tmp_path):
     """Test the recipe builder's YAML generation in an isolated filesystem."""
 
     with runner.isolated_filesystem():
@@ -56,27 +56,37 @@ def test_recipe_build_save_only(runner):
                 "-O",
                 "test_dem",
                 "--export",
-                "mbdb+rq:threshold=50",
+                "tmp.yml",
+                "glob_multibeam",
+                "rq",
+                "--threshold",
+                "50",
             ],
         )
 
+        print(result.output)
         assert result.exit_code == 0
-        assert "Globato recipe exported to" in result.output
-        assert "test_dem_recipe.yaml" in result.output
-        assert os.path.exists("test_dem/test_dem_recipe.yaml")
+        assert "Pipeline recipe exported to" in result.output
+        # assert "test_dem_recipe.yaml" in result.output
+        assert "tmp.yml" in result.output
+        # assert os.path.exists("test_dem/tmp.yaml")
+        assert os.path.exists("tmp.yml")
 
-        with open("test_dem/test_dem_recipe.yaml", "r") as f:
+        # with open("test_dem/test_dem_recipe.yaml", "r") as f:
+        #     config = yaml.safe_load(f)
+
+        with open("tmp.yml", "r") as f:
             config = yaml.safe_load(f)
 
         assert config["project"]["name"] == "test_dem"
-        assert config["modules"][0]["module"] == "mbdb"
+        assert config["modules"][0]["module"] == "glob_multibeam"
 
         hooks = config["modules"][0]["hooks"]
         # assert hooks[0]["name"] == "stream-init"  # stream-init gets auto-injected by fetchez now
-        assert hooks[0]["name"] == "stream_reproject"
-        assert hooks[0]["args"]["dst_srs"] == "EPSG:4326"
-        assert hooks[1]["name"] == "rq"
-        assert hooks[1]["args"]["threshold"] == 50
+        # assert hooks[0]["name"] == "stream_reproject"
+        # assert hooks[0]["args"]["dst_srs"] == "EPSG:4326"
+        assert hooks[0]["name"] == "rq"
+        assert hooks[0]["args"]["threshold"] == 50
 
 
 def test_recipe_info_source_eager(runner):
