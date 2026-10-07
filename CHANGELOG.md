@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0 - 10-07-2026]
+
 ### ADDED
 * `XYZReader` takes `keep_pos` and `keep_values` to keep only rows whose value in one column is in a given set.
 * Add new modifier 'ensure-spatial-claim' to insert the globato 'spatial-claim' hook into global hooks when 'claim-grid-filter' is present.
