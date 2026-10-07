@@ -53,9 +53,9 @@ gdal = ["gdal"]
 interpolations = ["verde", "pykrige"]
 ml = ["scikit-learn"]
 h3 = ["h3"]
-gui = ["ipyleaflet", "ipywidgets", "voila"]
+# gui = ["ipyleaflet", "ipywidgets", "voila"]
 
-full = ["globato[gmt,gdal,interpolations,ml,gui]"]
+full = ["globato[gmt,gdal,interpolations,ml]"]
 
 [dependency-groups]
 dev = [
