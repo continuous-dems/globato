@@ -17,6 +17,7 @@ schemas:
   - name: validate-parameters
 
 modifiers:
+  - name: ensure-spatial-claim
   - name: buffer-and-cut
     args:
       pct: 20
