@@ -1,5 +1,8 @@
 name: mr-globato-cudem
 description: "The standard CUDEM step-down, trim, and visualize pipeline."
+tags:
+  - globato-dem
+  - dem
 hooks:
   - preset: mr-globato
     args:

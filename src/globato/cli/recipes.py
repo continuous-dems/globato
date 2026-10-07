@@ -14,16 +14,14 @@ Discoverability and documentation for globato dem recipes.
 import click
 
 from fetchez.utils import FetchezMainGroup
-from fetchez.cli.recipes import run_recipe, list_recipes, info_recipe
+from fetchez.cli.recipes import list_recipes, info_recipe
 
 for param in list_recipes.params:
     if param.name == "search":
         param.default = "globato"
 
 
-@click.group(
-    cls=FetchezMainGroup, name="recipes", fetchez_commands=["list", "info", "run"]
-)
+@click.group(cls=FetchezMainGroup, name="recipes", fetchez_commands=["list", "info"])
 def recipes_group():
     """Discover, search, and learn about globato recipes.
 
@@ -34,6 +32,5 @@ def recipes_group():
     pass
 
 
-recipes_group.add_command(run_recipe, name="run")
 recipes_group.add_command(list_recipes, name="list")
 recipes_group.add_command(info_recipe, name="info")

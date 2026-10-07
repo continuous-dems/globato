@@ -12,6 +12,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### FIXED
 * The `nos-xyz` profile drops soundings NOS marks inactive (`active` == 0); pass `keep_pos=None` to read them all.
+* Add `is_globato_source` to utils.
+
+### CHANGED
+* Update cli to use modern fetchez imports.
 
 ## [0.3.9 - 10-02-2026]
 

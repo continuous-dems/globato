@@ -34,6 +34,29 @@ from transformez.utils import cmd_exists
 logger = logging.getLogger(__name__)
 
 
+GLOBATO_SOURCE_TAG = "glob-stream"
+GLOBATO_BUILD_TAG = "globato-dem"
+
+
+def is_globato_source(meta):
+    """Return whether a Fetchez component is suitable as a Globato DEM source."""
+    return GLOBATO_SOURCE_TAG in meta.get("tags", [])
+
+
+globato_source_p = is_globato_source
+
+
+def is_globato_hook(meta):
+    return GLOBATO_BUILD_TAG in meta.get("tags", [])
+
+
+def is_globato_build_preset(meta):
+    return GLOBATO_BUILD_TAG in meta.get("tags", [])
+
+
+globato_build_preset_p = is_globato_build_preset
+
+
 def run_cmd(cmd, data_fun=None, verbose=False, cwd="."):
     """Run a system command while optionally passing data.
 
