@@ -276,15 +276,6 @@ def build(
         },
     ]
 
-    if spatial_claim_enabled:
-        global_hooks.insert(
-            0,
-            {
-                "name": "spatial-claim",
-                "args": {"audit_output": f"{batch_outname}_spatial_claim.geojson"},
-            },
-        )
-
     # --- MultiStack ---
     stack_args = {
         "res": increment,
@@ -403,6 +394,6 @@ def build(
             outdir=outdir,
             shared_cache=shared_cache,
             refresh=refresh,
-            ignore_failures=not (fail_fast or spatial_claim_enabled),
+            ignore_failures=not fail_fast,
         )
         yield from iterations
