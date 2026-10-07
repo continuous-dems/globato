@@ -15,6 +15,7 @@ Handles Streaming (Local/Chunked) and Global (Whole-File) operations.
 import os
 import logging
 import shutil
+import hashlib
 import numpy as np
 import rasterio
 from rasterio.windows import Window
@@ -483,11 +484,20 @@ class RasterHook(FetchHook):
         raise NotImplementedError("Global-mode hooks must implement process_raster()")
 
     def _dst_fn(self, src_fn):
-        """Where to write the result for `src_fn`. Defaults to a suffixed file in tmp."""
+        """Return a unique output path for `src_fn`."""
 
-        return self.output or os.path.join(
+        if self.output:
+            return self.output
+
+        identity = hashlib.sha256(os.path.realpath(src_fn).encode("utf-8")).hexdigest()[
+            :12
+        ]
+
+        stem = os.path.splitext(os.path.basename(src_fn))[0]
+
+        return os.path.join(
             self.local_tmp,
-            f"{os.path.splitext(os.path.basename(src_fn))[0]}{self.suffix}.tif",
+            f"{stem}_{identity}{self.suffix}.tif",
         )
 
     # --- Routing and Processing ---
