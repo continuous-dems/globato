@@ -18,6 +18,8 @@ schemas:
 
 modifiers:
   - name: ensure-spatial-claim
+    args:
+      res: 1s
   - name: buffer-and-cut
     args:
       pct: 20

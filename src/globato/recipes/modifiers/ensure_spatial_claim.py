@@ -17,12 +17,10 @@ logger = logging.getLogger(__name__)
 
 class EnsureSpatialClaim(BaseModifier):
     name = "ensure-spatial-claim"
-    meta_desc = (
-        "Ensure the spatial-claim global hook is present when "
-        "claim-grid-filter is used."
-    )
-    meta_category = "Globato"
-    meta_aliases = ["ensure_spatial_claim"]
+
+    def __init__(self, res=None, **kwargs):
+        super().__init__(**kwargs)
+        self.res = res
 
     @staticmethod
     def _hook_name(hook):
@@ -36,13 +34,26 @@ class EnsureSpatialClaim(BaseModifier):
             global_hooks = []
         config["global_hooks"] = global_hooks
 
-        claim_grid_enabled = any(
-            self._hook_name(hook) == "claim-grid-filter"
-            for module in modules
-            if isinstance(module, dict)
-            for hook in module.get("hooks", [])
-            if isinstance(hook, dict)
-        )
+        claim_grid_enabled = False
+
+        for module in modules:
+            if not isinstance(module, dict):
+                continue
+
+            for hook in module.get("hooks", []):
+                if not isinstance(hook, dict):
+                    continue
+
+                if self._hook_name(hook) != "claim-grid-filter":
+                    continue
+
+                claim_grid_enabled = True
+
+                if self.res is not None:
+                    hook.setdefault("args", {}).setdefault(
+                        "res",
+                        self.res,
+                    )
 
         spatial_claim_enabled = any(
             isinstance(hook, dict) and self._hook_name(hook) == "spatial-claim"
