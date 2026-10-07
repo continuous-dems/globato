@@ -23,11 +23,7 @@ from .recipes import recipes_group
 from .gui import gui_cmd
 from .process import process_cmd
 
-try:
-    from fetchez.cli.run import run_recipe
-except ImportError:
-    from fetchez.cli.recipes import run_recipe
-
+from fetchez.cli.run import run_recipe
 from fetchez.cli import setup_logging
 from fetchez.utils import FetchezMainGroup
 

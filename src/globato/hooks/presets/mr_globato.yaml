@@ -23,14 +23,34 @@ hooks:
   # - name: side_stack_check
   #   args:
   #     res: 3s
-  #     mode: sums
   #     crs: epsg:4326+3855
 
   # - name: side_stack
   #   args:
   #     res: 3s
-  #     mode: sums
   #     crs: epsg:4326+3855
+
+  # - name: fusion_consistency
+  #   args:
+  #     hard: true
+  #     hard_threshold: 1
+  #     radius: 5
+  #     sigma: 2.5
+  #     min_residual: 10
+  #     residual_span: 200
+  #     preserve_coherence: 0.8
+  #     min_peer_cells: 4
+  #     # sigma: 4
+  #     # min_residual: 25
+  #     # residual_span: 200
+  #     # preserve_coherence: 0.60
+  #     # min_peer_cells: 8
+  #     group_by: survey_id
+  #     group_bad_fraction: 0.20
+  #     group_bias_threshold: 40
+  #     group_bias_span: 100
+  #     strategy: mixed
+  #     weight_threshold: 0.25/0.5/0.75/1.0
 
   - name: multi_stack
     args:
