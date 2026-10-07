@@ -14,7 +14,6 @@ Based on cudem.grits.flats
 """
 
 import logging
-import os
 import numpy as np
 
 from .base import RasterStreamHook
