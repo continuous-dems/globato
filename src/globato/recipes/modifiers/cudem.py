@@ -35,7 +35,6 @@ class CUDEMSchema(BaseSchema):
     def apply(cls, config):
         recipe_region = config.get("region")
         dist_region = (parse_region(recipe_region) if recipe_region else [None])[0]
-        print(recipe_region)
         if not dist_region:
             return config
 
