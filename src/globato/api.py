@@ -233,18 +233,6 @@ def build(
         res=increment,
     )
 
-    # Opt in to collection-wide spatial claiming only when a module requests
-    # the generic claim-grid filter; non-TNM builds keep upstream #239 behavior.
-    spatial_claim_enabled = any(
-        any(
-            hook.get("name") in {"claim-grid-filter", "claim_grid_filter"}
-            for hook in module.get("hooks", [])
-            if isinstance(hook, dict)
-        )
-        for module in compiled_modules
-        if isinstance(module, dict)
-    )
-
     base_outdir = os.path.abspath(outdir) if outdir else os.path.abspath(".")
 
     # --- Parse Extend ---
