@@ -60,7 +60,9 @@ class MRGlobatoAdapter:
         "dem_weights": "auto",
         "previous_tier_mode": "points",
         "previous_tier_resampling": "bilinear",
-        "bathy_max_z": -0.01,
+        "bathy_max_z": "ocean:-0.01,river:0,lake:None,wetland:0,estuary:0",
+        "algos": "raster_fill",
+        "blend_dists": "0",
     }
 
     cli_options = [
@@ -96,17 +98,27 @@ class MRGlobatoAdapter:
         {
             "param_decls": ["--previous-tier-resampling"],
             "type": click.Choice(
-                ["bilinear", "cubic", "near", "cubicspline", "lanczos", "average"],
+                ["nearest", "bilinear", "cubic", "cubic_spline", "lanczos"],
                 case_sensitive=False,
             ),
             "default": "bilinear",
             "help": "Binary CUDEM previous-tier resampling method..",
         },
         {
+            "param_decls": ["--algos"],
+            "default": None,
+            "help": "Binary CUDEM interpolation hook(s), slash-separated (default: raster_fill).",
+        },
+        {
+            "param_decls": ["--blend-dists", "--blend"],
+            "default": None,
+            "help": "Optional per-tier Binary CUDEM transition distances (default: zero).",
+        },
+        {
             "param_decls": ["--bathy-max-z"],
-            "type": float,
-            "default": -0.01,
-            "help": "Binary CUDEM max bathymetry interpolation value.",
+            "type": str,
+            "default": None,
+            "help": "Bathymetry cap (number or topology rules).",
         },
     ]
 
@@ -239,93 +251,95 @@ class MRGlobatoAdapter:
 
     @classmethod
     def compile(cls, *, increment, target_srs, nodata, options):
-        """Translate public DEM controls into hook-preset overrides."""
+        """Build fully resolved hook overrides, independently of preset YAML defaults.
 
+        The preset defines hook order and output policy. The adapter owns dynamic
+        resolutions and the standard no-blend/raster-fill interpolation policy.
+        Explicit component CLI options take precedence over these defaults.
+        """
         options = {
             **cls.defaults,
-            **(options or {}),
+            **{k: v for k, v in (options or {}).items() if v is not None},
         }
-
         overrides = {}
 
         def update(name, **args):
             overrides.setdefault(name, {}).update(args)
 
-        if increment is not None:
-            for hook_name in (
-                "provenance",
-                "source_masks",
-                "multi_stack",
-            ):
-                update(hook_name, res=increment)
+        if increment is None:
+            raise ValueError("mr-globato requires a target --increment/-E")
 
+        for hook_name in ("provenance", "source_masks", "multi_stack"):
+            update(hook_name, res=increment)
         if target_srs is not None:
             update("multi_stack", crs=target_srs)
-
         if nodata is not None:
             update("multi_stack", nodata=nodata)
 
-        # --- Resolution and Weight Tiers ---
-        resolutions = cls._auto_resolutions(increment)
+        tiers = cls._auto_resolutions(increment)
+        resolutions = "/".join(cls._format_inc(v, increment) for v in tiers)
+        steps = len(tiers) - 1
 
-        if str(options.get("stack_weights")).lower() == "auto":
-            stack_weight_list = cls._auto_stack_weights()
-        else:
-            stack_weight_list = cls._parse_weights(options.get("stack_weights"))
-
-        if stack_weight_list:
-            stack_weight_list = "/".join(map(str, stack_weight_list))
-
-        if str(options.get("dem_weights")).lower() == "auto":
-            dem_weight_list = cls._auto_dem_weights(resolutions)
-        else:
-            dem_weight_list = cls._parse_weights(options.get("dem_weights"))
-
-        resolutions = "/".join(
-            cls._format_inc(value, increment)
-            for value in cls._auto_resolutions(increment)
+        stack_weights = options["stack_weights"]
+        stack_weights = (
+            cls._auto_stack_weights()
+            if str(stack_weights).lower() == "auto"
+            else cls._parse_weights(stack_weights)
         )
+        update(
+            "multi_stack",
+            strategy=options["stack_strategy"],
+            weight_threshold="/".join(map(str, stack_weights)),
+        )
+
+        dem_weights = options["dem_weights"]
+        dem_weights = (
+            cls._auto_dem_weights(tiers)
+            if str(dem_weights).lower() == "auto"
+            else cls._parse_weights(dem_weights)
+        )
+        if len(dem_weights) != steps:
+            raise ValueError(
+                f"Expected {steps} DEM weights for {len(tiers)} tiers, got {len(dem_weights)}"
+            )
+
+        mode = options["previous_tier_mode"].lower()
+        if mode not in {"points", "raster"}:
+            raise ValueError("previous_tier_mode must be points or raster")
+
+        # Blending is opt-in for BOTH handoff modes. An explicit CLI override
+        # may supply a scalar, a single repeated value or per-tier values.
+        blend = options.get("blend_dists")
+        if blend is None:
+            blend = "0"
+        blend_values = blend.split("/") if isinstance(blend, str) else list(blend)
+        if len(blend_values) == 1:
+            blend_values *= len(tiers)
+        if len(blend_values) != len(tiers):
+            raise ValueError(
+                f"Expected 1 or {len(tiers)} blend distances, got {len(blend_values)}"
+            )
+        blend_values = [int(v) for v in blend_values]
+        if any(v < 0 for v in blend_values):
+            raise ValueError("blend distances must not be negative")
+
+        algos = options.get("algos") or "raster_fill"
+        if isinstance(algos, (tuple, list)):
+            algos = "/".join(map(str, algos))
+        if not str(algos).strip():
+            raise ValueError("algos cannot be empty")
+
         update(
             "ms_binary_cudem",
             resolutions=resolutions,
-            steps=len(resolutions.split("/")) - 1,
+            steps=steps,
+            weights=dem_weights,
+            previous_tier_mode=mode,
+            previous_tier_resampling=options["previous_tier_resampling"],
+            bathy_max_z=options["bathy_max_z"],
+            algos=algos,
+            blend_dists="/".join(map(str, blend_values)),
         )
-
-        if options.get("stack_strategy") is not None:
-            update(
-                "multi_stack",
-                strategy=options.get("stack_strategy"),
-            )
-
-        if options.get("stack_weights") is not None:
-            update(
-                "multi_stack",
-                weight_threshold=stack_weight_list,
-            )
-
-        if options.get("dem_weights") is not None:
-            update(
-                "ms_binary_cudem",
-                weights=dem_weight_list,
-            )
-
-        if options.get("previous_tier_mode") is not None:
-            update(
-                "ms_binary_cudem",
-                previous_tier_mode=options.get("previous_tier_mode"),
-            )
-
-        if options.get("previous_tier_resampling") is not None:
-            update(
-                "ms_binary_cudem",
-                previous_tier_resampling=options.get("previous_tier_resampling"),
-            )
-
-        if options.get("bathy_max_z") is not None:
-            update(
-                "ms_binary_cudem",
-                bathy_max_z=options.get("bathy_max_z"),
-            )
 
         return [{"name": name, "args": args} for name, args in overrides.items()]
 
