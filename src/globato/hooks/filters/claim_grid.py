@@ -111,6 +111,8 @@ class ClaimGridFilter(FetchHook):
                     cells, inverse = np.unique(
                         np.column_stack((cols, rows)), axis=0, return_inverse=True
                     )
+                    # numpy 2.0.0 alone returns inverse as (n, 1) when axis is given.
+                    inverse = inverse.ravel()
                     left = grid[0] + cells[:, 0] * grid[1]
                     top = grid[3] + cells[:, 1] * grid[5]
                     boxes = shapely.box(left, top + grid[5], left + grid[1], top)
