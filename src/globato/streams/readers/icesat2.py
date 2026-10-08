@@ -647,10 +647,16 @@ class ATL03Reader(IceSat2Reader):
         atl_version=None,
         bldg_tree=None,
         land_tree=None,
+        strict_aux=True,
         **kwargs,
     ):
 
         super().__init__(path, **kwargs)
+
+        # A failure to fetch or apply an ATL08 or ATL24 granule raises
+        # AuxiliaryDataError by default. With strict_aux off it is logged as a
+        # warning and the granule is read without that product, as it used to be.
+        self.strict_aux = utils.str2bool(strict_aux) is not False
 
         # Mask trees a caller has already built (see _get_bldg_tree and
         # _get_land_tree); with use_external_masks, any left as None is looked
@@ -727,6 +733,12 @@ class ATL03Reader(IceSat2Reader):
     # ==============================================
     # Fetch AUX ATL* Data (Stubbed for Fetchez)
     # ==============================================
+    def _aux_failed(self, message, cause=None):
+        """Raise AuxiliaryDataError, or with strict_aux off, warn and let the read go on."""
+        if self.strict_aux:
+            raise AuxiliaryDataError(message) from cause
+        logger.warning(f"{message} Continuing without it (strict_aux is off).")
+
     def fetch_atlxx(self, atl03_fn, short_name="ATL08"):
         """Return the path of the ATLxx granule that goes with an ATL03 granule.
 
@@ -737,7 +749,8 @@ class ATL03Reader(IceSat2Reader):
         Returns None if no such granule exists, which is routine (open ocean has no
         ATL08, and most of the world no ATL24): the ATL03 granule is then read
         without that product. Raises AuxiliaryDataError if the lookup or the
-        download fails, so that a failure is not taken for a missing granule.
+        download fails, so that a failure is not taken for a missing granule; with
+        strict_aux off, logs a warning and returns None instead.
         """
 
         try:
@@ -795,9 +808,10 @@ class ATL03Reader(IceSat2Reader):
             try:
                 fetcher.run()
             except Exception as e:
-                raise AuxiliaryDataError(
-                    f"Looking up the {short_name} granule for {bn} failed: {e}"
-                ) from e
+                self._aux_failed(
+                    f"Looking up the {short_name} granule for {bn} failed: {e}", e
+                )
+                return None
 
             if fetcher.results:
                 # Same ordering as the cache check above, so a cached file and a
@@ -817,10 +831,11 @@ class ATL03Reader(IceSat2Reader):
                 # Don't leave a partial file for the cache check to find next time.
                 if os.path.exists(dst_fn):
                     os.remove(dst_fn)
-                raise AuxiliaryDataError(
+                self._aux_failed(
                     f"Downloading {os.path.basename(dst_fn)} ({short_name} for {bn}) "
                     f"failed (status {status!r})."
                 )
+                return None
 
         # Debug, not a warning: plenty of ATL03 granules (open ocean, for one)
         # never had an ATL08 product, so this is routine.
@@ -980,10 +995,11 @@ class ATL03Reader(IceSat2Reader):
                 values_to_assign = atl08_flag[mask][valid_seg_mask][valid_idx_mask]
                 df.loc[df.index[final_indices], "ph_h_classed"] = values_to_assign
         except Exception as e:
-            raise AuxiliaryDataError(
+            self._aux_failed(
                 f"Applying ATL08 file {os.path.basename(atl08_fn)} to {laser} of "
-                f"{os.path.basename(self.fn)} failed: {e}"
-            ) from e
+                f"{os.path.basename(self.fn)} failed: {e}",
+                e,
+            )
         return df
 
     def apply_atl12_classifications(self, df, atl12_fn, laser):
@@ -1053,10 +1069,12 @@ class ATL03Reader(IceSat2Reader):
                     atl24_ellipse_h = grp["ellipse_h"][block]
                     atl24_surface_h = grp["surface_h"][block]
                 except KeyError as e:
-                    raise AuxiliaryDataError(
+                    self._aux_failed(
                         f"ATL24 file {os.path.basename(atl24_fn)} is missing a "
-                        f"dataset in {laser}: {e}"
-                    ) from e
+                        f"dataset in {laser}: {e}",
+                        e,
+                    )
+                    return df
 
                 is_bathy = atl24_class == 40
                 if self.min_bathy_confidence is not None:
@@ -1072,10 +1090,11 @@ class ATL03Reader(IceSat2Reader):
                     df["delta_time"].to_numpy(), atl24_dt, atl24_index_ph, epoch
                 )
                 if found is None:
-                    raise AuxiliaryDataError(
+                    self._aux_failed(
                         f"ATL24 photons of {os.path.basename(atl24_fn)} do not line "
                         f"up with {laser} in {os.path.basename(self.fn)}."
                     )
+                    return df
                 in_file, all_rows = found
 
                 # all_rows runs over the ATL24 photons flagged in_file, in order.
@@ -1151,10 +1170,11 @@ class ATL03Reader(IceSat2Reader):
         except AuxiliaryDataError:
             raise
         except Exception as e:
-            raise AuxiliaryDataError(
+            self._aux_failed(
                 f"Applying ATL24 file {os.path.basename(atl24_fn)} to {laser} of "
-                f"{os.path.basename(self.fn)} failed: {e}"
-            ) from e
+                f"{os.path.basename(self.fn)} failed: {e}",
+                e,
+            )
         return df
 
     def classify_outliers_algo(self, df, multiplier=3.0):

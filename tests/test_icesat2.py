@@ -1192,3 +1192,95 @@ def test_an_aux_failure_stops_reading_the_granule(tmp_path, aux_search):
 
     with pytest.raises(icesat2.AuxiliaryDataError):
         list(reader.yield_chunks())
+
+
+# ---------------------------------------------------------------------------
+# strict_aux=False: the same failures are logged as warnings and the read goes on
+# ---------------------------------------------------------------------------
+
+
+def _warnings(cap_globato):
+    return [r.getMessage() for r in cap_globato.records if r.levelno == logging.WARNING]
+
+
+@pytest.mark.parametrize("strict_aux", [False, "false"])
+def test_without_strict_aux_a_failed_lookup_warns_and_finds_nothing(
+    tmp_path, aux_search, cap_globato, strict_aux
+):
+    aux_search.run_error = RuntimeError("no network")
+    reader = _reader(tmp_path, strict_aux=strict_aux)
+
+    with cap_globato.at_level(
+        logging.WARNING, logger="globato.streams.readers.icesat2"
+    ):
+        assert reader.fetch_atlxx(reader.fn, "ATL08") is None
+    assert any("Looking up the ATL08" in m for m in _warnings(cap_globato))
+
+
+def test_without_strict_aux_a_failed_download_warns_and_leaves_no_file(
+    tmp_path, aux_search, cap_globato
+):
+    aux_search.found = ATL08
+    aux_search.download = staticmethod(lambda path: -1)
+    reader = _reader(tmp_path, strict_aux=False)
+
+    with cap_globato.at_level(
+        logging.WARNING, logger="globato.streams.readers.icesat2"
+    ):
+        assert reader.fetch_atlxx(reader.fn, "ATL08") is None
+    assert any("Downloading" in m for m in _warnings(cap_globato))
+    assert not (tmp_path / ATL08).exists()
+
+
+def test_without_strict_aux_an_unreadable_atl08_warns_and_changes_nothing(
+    tmp_path, offline, cap_globato
+):
+    atl08_fn = tmp_path / ATL08
+    atl08_fn.write_bytes(b"not an HDF5 file")
+    before = pd.DataFrame({"ph_segment_id": [1]})
+
+    with cap_globato.at_level(
+        logging.WARNING, logger="globato.streams.readers.icesat2"
+    ):
+        after = _reader(tmp_path, strict_aux=False).apply_atl08_classifications(
+            before.copy(), str(atl08_fn), "gt1l", None, None
+        )
+    pd.testing.assert_frame_equal(after, before)
+    assert any("Applying ATL08" in m for m in _warnings(cap_globato))
+
+
+def _atl24_case(tmp_path, case):
+    """An ATL24 file and an ATL03 frame that fail to join in the given way."""
+    atl03_dt = _atl03_delta_time()
+    atl24_fn = tmp_path / "ATL24_20241107234251_08052501_006_01_002_01.h5"
+    frame = _atl03_frame(atl03_dt)
+    if case == "unreadable":
+        atl24_fn.write_bytes(b"not an HDF5 file")
+    else:
+        _write_atl24(atl24_fn, atl03_dt)
+    if case == "missing-dataset":
+        with h5py.File(atl24_fn, "a") as f:
+            del f["gt1l/confidence"]
+    elif case == "not-lined-up":
+        frame = _atl03_frame(np.insert(atl03_dt, 7, atl03_dt[7]))
+    elif case == "join-error":
+        frame = frame.drop(columns=["photon_meantide"])
+    return atl24_fn, frame
+
+
+@pytest.mark.parametrize(
+    "case", ["unreadable", "missing-dataset", "not-lined-up", "join-error"]
+)
+def test_without_strict_aux_an_atl24_failure_warns_and_changes_nothing(
+    tmp_path, offline, cap_globato, case
+):
+    atl24_fn, before = _atl24_case(tmp_path, case)
+
+    with cap_globato.at_level(
+        logging.WARNING, logger="globato.streams.readers.icesat2"
+    ):
+        after = _reader(tmp_path, strict_aux=False).apply_atl24_classifications(
+            before.copy(), str(atl24_fn), "gt1l", None, None
+        )
+    pd.testing.assert_frame_equal(after, before)
+    assert any("strict_aux is off" in m for m in _warnings(cap_globato))
