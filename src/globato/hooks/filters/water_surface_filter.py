@@ -252,6 +252,8 @@ class WaterSurfaceFilter(GlobatoFilter):
             axis=0,
             return_inverse=True,
         )
+        # numpy 2.0.0 alone returns the inverse as (n, 1) when axis is given.
+        cell_indices = cell_indices.ravel()
         num_cells = len(cell_coords)
 
         z_vals = chunk["z"].astype("float64", copy=False)
