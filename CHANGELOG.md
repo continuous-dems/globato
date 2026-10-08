@@ -8,7 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### CHANGED
-* Every dependency now has a minimum version that installs on Python 3.12, globato's oldest supported Python: the first release with Python 3.12 wheels for compiled packages, or a release from around Python 3.12's own (fall 2023) for pure-Python ones. `numpy>1.24` becomes `numpy>=1.26.0` and `shapely>=2.0.0` becomes `shapely>=2.0.3`, since the older releases have no Python 3.12 wheels (and shapely 2.0.2 installs alongside numpy 2 but fails to import). CI now also runs the tests with each dependency at its minimum, and on Python 3.14.
+* Every dependency now has a minimum version that installs on Python 3.12, globato's oldest supported Python: the first release with Python 3.12 wheels for compiled packages, or a release from around Python 3.12's own (fall 2023) for pure-Python ones. `numpy>1.24` becomes `numpy>=1.26.0` and `shapely>=2.0.0` becomes `shapely>=2.0.3`, since the older releases have no Python 3.12 wheels. `shapely`, `pandas` (`>=2.1.2`), `h5py` (`>=3.11.0`) and `pyogrio` (`>=0.8.0`, up from `>=0.7.0`) are also a little past their first Python 3.12 wheels, since the earlier releases install alongside numpy 2 but fail to import. CI now also runs the tests with each dependency at its minimum, and on Python 3.14.
 
 ## [0.4.0 - 10-07-2026]
 
