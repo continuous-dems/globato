@@ -13,7 +13,6 @@ ICESat-2 Data Parser (ATL03, ATL24) ported from CUDEM for Fetchez-Globato.
 
 import os
 import glob
-import traceback
 import numpy as np
 from numpy.lib.stride_tricks import sliding_window_view
 import h5py as h5
@@ -52,6 +51,27 @@ logger = logging.getLogger(__name__)
 # index positions within one specific ATL03 release with no such check, so a
 # granule from another release can misclassify photons without raising anything.
 CROSS_RELEASE_AUX = frozenset({"ATL24"})
+
+
+class AuxiliaryDataError(RuntimeError):
+    """An auxiliary ICESat-2 granule (ATL08, ATL24) could not be fetched or applied.
+
+    Raised instead of reading the ATL03 granule without it: the photons would come
+    out without that product's classes (ground and canopy from ATL08, bathymetry
+    from ATL24), which looks the same as a granule that simply has none of them.
+    A granule for which no ATL08 or ATL24 exists at all is not an error; it is read
+    without that product, as before.
+    """
+
+
+def _readable_h5(path):
+    """Return True if path is a complete, openable HDF5 file."""
+    try:
+        with h5.File(path, "r"):
+            return True
+    except OSError:
+        return False
+
 
 # How far apart (seconds) ATL03 and ATL24 may put the same transmit pulse's
 # delta_time and still be taken as one pulse. ATL24 keeps about 2.4e-7 s of
@@ -708,7 +728,17 @@ class ATL03Reader(IceSat2Reader):
     # Fetch AUX ATL* Data (Stubbed for Fetchez)
     # ==============================================
     def fetch_atlxx(self, atl03_fn, short_name="ATL08"):
-        """Fetch associated ATLxx file."""
+        """Return the path of the ATLxx granule that goes with an ATL03 granule.
+
+        It is taken from the ATL03 file's folder or the cache if a readable copy is
+        there (an unreadable one in the cache is deleted and fetched again), and
+        otherwise looked up at NASA and downloaded into the cache.
+
+        Returns None if no such granule exists, which is routine (open ocean has no
+        ATL08, and most of the world no ATL24): the ATL03 granule is then read
+        without that product. Raises AuxiliaryDataError if the lookup or the
+        download fails, so that a failure is not taken for a missing granule.
+        """
 
         try:
             from fetchez.modules import earthdata
@@ -736,33 +766,61 @@ class ATL03Reader(IceSat2Reader):
         for d in [os.path.dirname(atl03_fn), self.cache_dir]:
             for filt in filters:
                 matches = glob.glob(os.path.join(d, f"{short_name}_{filt}*.h5"))
-                if matches:
-                    return _newest_first(matches)[0]
+                for match in _newest_first(matches):
+                    if _readable_h5(match):
+                        return match
+                    # A partial download, most likely. Only the cache is ours to
+                    # clean up; a file elsewhere is left alone.
+                    if os.path.abspath(d) == os.path.abspath(self.cache_dir):
+                        logger.warning(
+                            f"{os.path.basename(match)} in the cache is not a readable "
+                            "HDF5 file (an interrupted download?); deleting it and "
+                            "fetching it again."
+                        )
+                        os.remove(match)
+                    else:
+                        logger.warning(
+                            f"Ignoring {match}: it is not a readable HDF5 file."
+                        )
 
-        try:
-            for filt in filters:
-                fetcher = earthdata.IceSat2(
-                    src_region=None,
-                    verbose=self.verbose,
-                    outdir=os.path.abspath(self.cache_dir),
-                    short_name=short_name,
-                    filename_filter=filt,
-                    version="",
-                )
+        for filt in filters:
+            fetcher = earthdata.IceSat2(
+                src_region=None,
+                verbose=self.verbose,
+                outdir=os.path.abspath(self.cache_dir),
+                short_name=short_name,
+                filename_filter=filt,
+                version="",
+            )
+            try:
                 fetcher.run()
-                # run_fetchez([fetcher])
+            except Exception as e:
+                raise AuxiliaryDataError(
+                    f"Looking up the {short_name} granule for {bn} failed: {e}"
+                ) from e
 
-                if fetcher.results:
-                    # Same ordering as the cache check above, so a cached file
-                    # and a fresh search agree on which granule wins.
-                    fetcher.results.sort(
-                        key=lambda e: os.path.basename(e.get("dst_fn", "")),
-                        reverse=True,
-                    )
-                    fetcher.fetch_entry(fetcher.results[0], check_size=True)
-                    return fetcher.results[0]["dst_fn"]
-        except Exception as e:
-            logger.debug(f"Aux fetch failed: {e}\n{traceback.format_exc()}")
+            if fetcher.results:
+                # Same ordering as the cache check above, so a cached file and a
+                # fresh search agree on which granule wins.
+                fetcher.results.sort(
+                    key=lambda e: os.path.basename(e.get("dst_fn", "")),
+                    reverse=True,
+                )
+                entry = fetcher.results[0]
+                dst_fn = entry["dst_fn"]
+                try:
+                    status = fetcher.fetch_entry(entry, check_size=True)
+                except Exception as e:
+                    status = e
+                if status == 0 and _readable_h5(dst_fn):
+                    return dst_fn
+                # Don't leave a partial file for the cache check to find next time.
+                if os.path.exists(dst_fn):
+                    os.remove(dst_fn)
+                raise AuxiliaryDataError(
+                    f"Downloading {os.path.basename(dst_fn)} ({short_name} for {bn}) "
+                    f"failed (status {status!r})."
+                )
 
         # Debug, not a warning: plenty of ATL03 granules (open ocean, for one)
         # never had an ATL08 product, so this is routine.
@@ -922,7 +980,10 @@ class ATL03Reader(IceSat2Reader):
                 values_to_assign = atl08_flag[mask][valid_seg_mask][valid_idx_mask]
                 df.loc[df.index[final_indices], "ph_h_classed"] = values_to_assign
         except Exception as e:
-            logger.warning(f"Failed to apply ATL08 classifications: {e}")
+            raise AuxiliaryDataError(
+                f"Applying ATL08 file {os.path.basename(atl08_fn)} to {laser} of "
+                f"{os.path.basename(self.fn)} failed: {e}"
+            ) from e
         return df
 
     def apply_atl12_classifications(self, df, atl12_fn, laser):
@@ -992,11 +1053,10 @@ class ATL03Reader(IceSat2Reader):
                     atl24_ellipse_h = grp["ellipse_h"][block]
                     atl24_surface_h = grp["surface_h"][block]
                 except KeyError as e:
-                    logger.warning(
-                        f"ATL24 file {os.path.basename(atl24_fn)} has no {e} in "
-                        f"{laser}; bathymetry left unclassified"
-                    )
-                    return df
+                    raise AuxiliaryDataError(
+                        f"ATL24 file {os.path.basename(atl24_fn)} is missing a "
+                        f"dataset in {laser}: {e}"
+                    ) from e
 
                 is_bathy = atl24_class == 40
                 if self.min_bathy_confidence is not None:
@@ -1012,11 +1072,10 @@ class ATL03Reader(IceSat2Reader):
                     df["delta_time"].to_numpy(), atl24_dt, atl24_index_ph, epoch
                 )
                 if found is None:
-                    logger.warning(
-                        f"ATL24 photons do not line up with {laser} in "
-                        f"{os.path.basename(self.fn)}; bathymetry left unclassified"
+                    raise AuxiliaryDataError(
+                        f"ATL24 photons of {os.path.basename(atl24_fn)} do not line "
+                        f"up with {laser} in {os.path.basename(self.fn)}."
                     )
-                    return df
                 in_file, all_rows = found
 
                 # all_rows runs over the ATL24 photons flagged in_file, in order.
@@ -1086,23 +1145,16 @@ class ATL03Reader(IceSat2Reader):
                         converted = atl24_ortho + p_geoid_m  # ellipsoid
 
                     df.loc[matched, "photon_height"] = converted
-        # A file that cannot be opened or read is a failure that comes from
-        # outside, and a granule is still worth reading without its bathymetry.
-        except OSError as e:
-            logger.warning(
-                f"Could not read ATL24 file {os.path.basename(atl24_fn)}: {e}; "
-                "bathymetry left unclassified"
-            )
-        # Anything else raised in here is a bug. The granule still goes through
-        # without its bathymetry, but with the traceback on record, because a
-        # granule that has no bathymetry looks the same as one where this step
-        # broke, and a one-line message let a broken join go unnoticed.
-        except Exception:
-            logger.warning(
-                f"Applying ATL24 to {laser} of {os.path.basename(self.fn)} failed; "
-                "bathymetry left unclassified",
-                exc_info=True,
-            )
+        # A granule read without its bathymetry looks the same as one that has
+        # none, so a file that can't be read, or a step here that breaks, stops
+        # the read rather than leaving the seafloor unclassified unnoticed.
+        except AuxiliaryDataError:
+            raise
+        except Exception as e:
+            raise AuxiliaryDataError(
+                f"Applying ATL24 file {os.path.basename(atl24_fn)} to {laser} of "
+                f"{os.path.basename(self.fn)} failed: {e}"
+            ) from e
         return df
 
     def classify_outliers_algo(self, df, multiplier=3.0):

@@ -52,8 +52,14 @@ def offline(monkeypatch):
 
 
 def _reader(tmp_path, *names, **kwargs):
-    for name in (ATL03, *names):
-        (tmp_path / name).touch()
+    """An ATL03Reader on a placeholder ATL03 file, with the named aux files cached.
+
+    The aux files are empty but valid HDF5: a cached file that isn't is taken for
+    an interrupted download and fetched again.
+    """
+    (tmp_path / ATL03).touch()
+    for name in names:
+        h5py.File(tmp_path / name, "w").close()
     return ATL03Reader(str(tmp_path / ATL03), cache_dir=str(tmp_path), **kwargs)
 
 
@@ -387,34 +393,34 @@ def test_atl24_min_bathy_confidence_is_applied(tmp_path, offline):
     assert np.flatnonzero(df["ph_h_classed"] == 40).tolist() == SEAFLOOR_ROWS[1:]
 
 
-def test_atl24_that_does_not_line_up_changes_nothing(tmp_path, offline):
+def test_atl24_that_does_not_line_up_raises(tmp_path, offline):
+    """A join that fails would leave the seafloor unclassified without a sign."""
     atl03_dt = _atl03_delta_time()
     atl24_fn = tmp_path / "ATL24_20241107234251_08052501_006_01_002_01.h5"
     _write_atl24(atl24_fn, atl03_dt)
     reader = _reader(tmp_path)
     before = _atl03_frame(np.insert(atl03_dt, 7, atl03_dt[7]))
 
-    after = reader.apply_atl24_classifications(
-        before.copy(), str(atl24_fn), "gt1l", None, None
-    )
+    with pytest.raises(icesat2.AuxiliaryDataError, match="do not line up"):
+        reader.apply_atl24_classifications(
+            before.copy(), str(atl24_fn), "gt1l", None, None
+        )
 
-    pd.testing.assert_frame_equal(after, before)
 
-
-def test_atl24_file_that_cannot_be_read_changes_nothing(tmp_path, offline):
+def test_atl24_file_that_cannot_be_read_raises(tmp_path, offline):
     atl03_dt = _atl03_delta_time()
     atl24_fn = tmp_path / "ATL24_20241107234251_08052501_006_01_002_01.h5"
     atl24_fn.write_bytes(b"not an HDF5 file")
     before = _atl03_frame(atl03_dt)
 
-    after = _reader(tmp_path).apply_atl24_classifications(
-        before.copy(), str(atl24_fn), "gt1l", None, None
-    )
+    with pytest.raises(icesat2.AuxiliaryDataError) as raised:
+        _reader(tmp_path).apply_atl24_classifications(
+            before.copy(), str(atl24_fn), "gt1l", None, None
+        )
+    assert isinstance(raised.value.__cause__, OSError)
 
-    pd.testing.assert_frame_equal(after, before)
 
-
-def test_atl24_file_missing_a_dataset_changes_nothing(tmp_path, offline):
+def test_atl24_file_missing_a_dataset_raises(tmp_path, offline):
     atl03_dt = _atl03_delta_time()
     atl24_fn = tmp_path / "ATL24_20241107234251_08052501_006_01_002_01.h5"
     _write_atl24(atl24_fn, atl03_dt)
@@ -422,34 +428,24 @@ def test_atl24_file_missing_a_dataset_changes_nothing(tmp_path, offline):
         del f["gt1l/confidence"]
     before = _atl03_frame(atl03_dt)
 
-    after = _reader(tmp_path).apply_atl24_classifications(
-        before.copy(), str(atl24_fn), "gt1l", None, None
-    )
+    with pytest.raises(icesat2.AuxiliaryDataError, match="missing a dataset in gt1l"):
+        _reader(tmp_path).apply_atl24_classifications(
+            before.copy(), str(atl24_fn), "gt1l", None, None
+        )
 
-    pd.testing.assert_frame_equal(after, before)
 
-
-def test_atl24_errors_in_the_join_itself_are_logged_with_a_traceback(
-    tmp_path, offline, cap_globato
-):
-    # A frame without the columns the join needs is a caller's mistake. The
-    # granule still comes through, without bathymetry, but the error and where
-    # it happened go on record.
+def test_atl24_errors_in_the_join_itself_raise(tmp_path, offline):
+    """A frame without the columns the join needs is a caller's mistake; it stops the read."""
     atl03_dt = _atl03_delta_time()
     atl24_fn = tmp_path / "ATL24_20241107234251_08052501_006_01_002_01.h5"
     _write_atl24(atl24_fn, atl03_dt)
     before = _atl03_frame(atl03_dt).drop(columns=["photon_meantide"])
 
-    with cap_globato.at_level(
-        logging.WARNING, logger="globato.streams.readers.icesat2"
-    ):
-        after = _reader(tmp_path).apply_atl24_classifications(
+    with pytest.raises(icesat2.AuxiliaryDataError) as raised:
+        _reader(tmp_path).apply_atl24_classifications(
             before.copy(), str(atl24_fn), "gt1l", None, None
         )
-
-    pd.testing.assert_frame_equal(after, before)
-    (record,) = [r for r in cap_globato.records if r.exc_info is not None]
-    assert record.exc_info[0] is KeyError
+    assert isinstance(raised.value.__cause__, KeyError)
 
 
 def _span(atl03_dt):
@@ -1048,3 +1044,151 @@ def test_meta_desc_lists_every_photon_class():
     }
     assert parsed == PHOTON_CLASSES
     assert list(parsed) == list(PHOTON_CLASSES)
+
+
+# ---------------------------------------------------------------------------
+# Fetching ATL08/ATL24: a failure raises; a granule that doesn't exist does not
+# ---------------------------------------------------------------------------
+
+
+class _FakeAuxSearch:
+    """Stands in for fetchez's IceSat2 module; each test sets how it behaves."""
+
+    run_error = None  # an exception for run() to raise, standing in for a failed search
+    found = None  # the aux filename the search finds, or None
+    download = None  # callable(path) -> fetchez status, writing (or not) the file
+
+    def __init__(self, **kwargs):
+        self.outdir = kwargs["outdir"]
+        self.results = []
+
+    def run(self):
+        cls = type(self)
+        if cls.run_error is not None:
+            raise cls.run_error
+        if cls.found:
+            self.results = [
+                {
+                    "url": "https://x/" + cls.found,
+                    "dst_fn": f"{self.outdir}/{cls.found}",
+                }
+            ]
+
+    def fetch_entry(self, entry, check_size=True):
+        return type(self).download(entry["dst_fn"])
+
+
+def _valid_h5(path):
+    h5py.File(path, "w").close()
+    return 0
+
+
+@pytest.fixture
+def aux_search(monkeypatch):
+    _FakeAuxSearch.run_error = None
+    _FakeAuxSearch.found = None
+    _FakeAuxSearch.download = staticmethod(_valid_h5)
+    monkeypatch.setattr(earthdata, "IceSat2", _FakeAuxSearch)
+    return _FakeAuxSearch
+
+
+ATL08 = "ATL08_20241107234251_08052501_007_01.h5"
+
+
+def test_a_failed_lookup_raises(tmp_path, aux_search):
+    """An outage used to look the same as a granule that has no ATL08."""
+    aux_search.run_error = RuntimeError("CMR search for ATL08 failed (HTTP 503).")
+    reader = _reader(tmp_path)
+
+    with pytest.raises(icesat2.AuxiliaryDataError, match="Looking up the ATL08"):
+        reader.fetch_atlxx(reader.fn, "ATL08")
+
+
+def test_no_aux_granule_at_all_is_not_an_error(tmp_path, aux_search, cap_globato):
+    """Open ocean has no ATL08, and most of the world no ATL24: read without them."""
+    reader = _reader(tmp_path)
+
+    with cap_globato.at_level(
+        logging.WARNING, logger="globato.streams.readers.icesat2"
+    ):
+        assert reader.fetch_atlxx(reader.fn, "ATL08") is None
+        assert reader.fetch_atlxx(reader.fn, "ATL24") is None
+    assert [r for r in cap_globato.records if r.levelno >= logging.WARNING] == []
+
+
+def test_a_downloaded_aux_granule_is_returned(tmp_path, aux_search):
+    aux_search.found = ATL08
+    reader = _reader(tmp_path)
+
+    assert reader.fetch_atlxx(reader.fn, "ATL08") == str(tmp_path / ATL08)
+
+
+@pytest.mark.parametrize(
+    "download",
+    [
+        lambda path: -1,  # fetchez reports a failure and writes nothing
+        lambda path: (open(path, "wb").write(b"partial"), 0)[1],  # a truncated file
+    ],
+    ids=["failed-status", "partial-file"],
+)
+def test_a_failed_download_raises_and_leaves_no_partial_file(
+    tmp_path, aux_search, download
+):
+    """fetchez's status used to be ignored, and the path returned all the same."""
+    aux_search.found = ATL08
+    aux_search.download = staticmethod(download)
+    reader = _reader(tmp_path)
+
+    with pytest.raises(icesat2.AuxiliaryDataError, match="Downloading"):
+        reader.fetch_atlxx(reader.fn, "ATL08")
+    assert not (tmp_path / ATL08).exists()
+
+
+def test_a_corrupt_cached_file_is_fetched_again(tmp_path, aux_search, cap_globato):
+    """A file an interrupted download left in the cache used to be reused every time."""
+    (tmp_path / ATL08).write_bytes(b"partial")
+    aux_search.found = ATL08
+    reader = _reader(tmp_path)
+
+    with cap_globato.at_level(
+        logging.WARNING, logger="globato.streams.readers.icesat2"
+    ):
+        found = reader.fetch_atlxx(reader.fn, "ATL08")
+
+    assert found == str(tmp_path / ATL08)
+    assert h5py.is_hdf5(found)
+    assert "fetching it again" in cap_globato.text
+
+
+def test_a_corrupt_file_outside_the_cache_is_ignored_not_deleted(tmp_path, aux_search):
+    """Only the cache is the reader's to clean up."""
+    data_dir, cache = tmp_path / "data", tmp_path / "cache"
+    data_dir.mkdir()
+    cache.mkdir()
+    (data_dir / ATL03).touch()
+    (data_dir / ATL08).write_bytes(b"someone else's file")
+    reader = ATL03Reader(str(data_dir / ATL03), cache_dir=str(cache))
+
+    assert reader.fetch_atlxx(reader.fn, "ATL08") is None
+    assert (data_dir / ATL08).exists()
+
+
+def test_an_atl08_file_that_cannot_be_read_raises(tmp_path, offline):
+    """Without ATL08 the ground and canopy photons stay unclassified."""
+    atl08_fn = tmp_path / ATL08
+    atl08_fn.write_bytes(b"not an HDF5 file")
+    reader = _reader(tmp_path)
+
+    with pytest.raises(icesat2.AuxiliaryDataError, match="Applying ATL08"):
+        reader.apply_atl08_classifications(
+            pd.DataFrame({"ph_segment_id": [1]}), str(atl08_fn), "gt1l", None, None
+        )
+
+
+def test_an_aux_failure_stops_reading_the_granule(tmp_path, aux_search):
+    """The error reaches whoever reads the granule, rather than a granule without classes."""
+    aux_search.run_error = RuntimeError("no network")
+    reader = _reader(tmp_path, classes="1")
+
+    with pytest.raises(icesat2.AuxiliaryDataError):
+        list(reader.yield_chunks())
