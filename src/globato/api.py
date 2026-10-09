@@ -34,6 +34,7 @@ def read(
     region: Optional[Union[str, List[float]]] = None,
     shared_cache: Optional[str] = None,
     target_srs: Optional[str] = None,
+    ignore_failures: bool = False,
     **kwargs,
 ) -> GlobatoStream:
     """The unified entry point for the Globato streaming API.
@@ -41,6 +42,10 @@ def read(
     Handles local file paths, directories, fetchez modules, and recipes.
     All reader options (data_type, classes, vertical_datum, etc.) are
     forwarded via kwargs.
+
+    By default, an error a reader raises while the stream is read is raised
+    to the code iterating it. With ``ignore_failures=True`` it is logged and
+    the stream ends early instead.
     """
 
     modules = _compile_modules(
@@ -49,7 +54,12 @@ def read(
 
     parsed_region = parse_region(region)[0] if region else None
 
-    return GlobatoStream(modules=modules, region=parsed_region, target_srs=target_srs)
+    return GlobatoStream(
+        modules=modules,
+        region=parsed_region,
+        target_srs=target_srs,
+        ignore_failures=ignore_failures,
+    )
 
 
 # --- To Be Removed ---
