@@ -142,6 +142,7 @@ def read(
         sources,
         region=region,
         shared_cache=shared_cache,
+        **kwargs,
     )
 
     parsed_region = parse_region(region)[0] if region else None
@@ -151,7 +152,6 @@ def read(
         region=parsed_region,
         target_srs=target_srs,
         ignore_failures=ignore_failures,
-        **kwargs,
     )
 
 
