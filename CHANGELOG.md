@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### ADDED
+* `globato.read()` takes `ignore_failures` (#274). With fetchez's stream fix (fetchez #472), an error a reader raises while the stream is read, such as `AuxiliaryDataError`, is raised to the code iterating the stream; before, it was lost and the stream just ended early. `ignore_failures=True` keeps the old behavior: the error is logged and the stream ends early. Before this, `read()` had no way to set it.
+
 ### FIXED
 * `ClaimGridFilter` and `WaterSurfaceFilter` work with numpy 2.0.0, which returns `np.unique(..., axis=0, return_inverse=True)`'s inverse with an extra dimension. `ClaimGridFilter` failed with "non-broadcastable output operand" and `WaterSurfaceFilter` with "object too deep for desired array". Other numpy versions are unaffected.
 

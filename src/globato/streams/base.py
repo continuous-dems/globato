@@ -23,8 +23,10 @@ logger = logging.getLogger(__name__)
 class GlobatoStream(BaseStream):
     """The Globato point stream."""
 
-    def __init__(self, modules, region=None, target_srs=None, **kwargs):
-        super().__init__(modules, region=region)
+    def __init__(
+        self, modules, region=None, target_srs=None, ignore_failures=False, **kwargs
+    ):
+        super().__init__(modules, region=region, ignore_failures=ignore_failures)
         self.target_srs = target_srs
         self.stream_type = "point"
 

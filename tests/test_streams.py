@@ -38,3 +38,15 @@ def test_base_globato_reader_schema_enforcement():
     assert np.all(data["u"] == 0.1)
     assert np.all(data["classification"] == 0)
     assert np.all(data["confidence"] == 1)
+
+
+def test_read_with_ignore_failures_ends_quietly_on_a_reader_error(tmp_path):
+    """A file its reader can't open ends the stream instead of raising."""
+    import globato
+
+    broken = tmp_path / "ATL03_20220101000000_00000000_007_01.h5"
+    broken.write_bytes(b"not an HDF5 file")
+
+    stream = globato.read(str(broken), data_type="icesat-atl03", ignore_failures=True)
+
+    assert list(stream) == []
