@@ -15,7 +15,7 @@ Provides interface for streaming, processing, and accessing geospatial data.
 import os
 import yaml
 import logging
-from typing import Union, List, Optional, Generator
+from typing import Generator
 
 from fetchez.recipe import Recipe
 from fetchez.registry import HookRegistry
@@ -30,26 +30,118 @@ logger = logging.getLogger(__name__)
 
 
 def read(
-    sources: Union[str, List[str]],
-    region: Optional[Union[str, List[float]]] = None,
-    shared_cache: Optional[str] = None,
-    target_srs: Optional[str] = None,
+    sources: str | dict | list,
+    region=None,
+    shared_cache=None,
+    target_srs=None,
     ignore_failures: bool = False,
     **kwargs,
 ) -> GlobatoStream:
-    """The unified entry point for the Globato streaming API.
+    """Create a lazy Globato point-processing stream.
 
-    Handles local file paths, directories, fetchez modules, and recipes.
-    All reader options (data_type, classes, vertical_datum, etc.) are
-    forwarded via kwargs.
+    Resolve Fetchez sources and return a GlobatoStream for reading,
+    transforming, and consuming geospatial point data.
+
+    Globato uses Fetchez's module, profile, reader, and hook registries.
+    Reader configuration is provided explicitly through the stream's
+    .pipe() interface, rather than as keyword arguments to read().
 
     By default, an error a reader raises while the stream is read is raised
     to the code iterating it. With ``ignore_failures=True`` it is logged and
     the stream ends early instead.
-    """
 
+    Sources
+    -------
+    Sources may be local file paths, registered Fetchez modules,
+    bundles, module-definition dictionaries, or lists of these.
+
+    Module-specific configuration belongs in each source definition's
+    "args" mapping.
+
+    Reader configuration
+    --------------------
+    Use .pipe("stream-init", profile=..., **reader_options) to select
+    a reader and configure its behavior.
+
+    The profile selects how source data is interpreted. Additional
+    keyword arguments supplied to stream-init override the profile's
+    reader defaults for that invocation.
+
+    A single stream-init hook applies its configuration to entries
+    processed by that stream. For mixed data requiring different
+    reader configurations, use entry-specific profiles or separate
+    streams.
+
+    The stream is lazy. Source discovery, fetching, and processing
+    occur when the stream is consumed.
+
+    Parameters
+    ----------
+    sources : str, dict, or list
+        One or more Fetchez source definitions.
+    region : str, list, or Region, optional
+        Spatial region used for source discovery and processing.
+    shared_cache : str or Path, optional
+        Shared cache directory for acquired data.
+    target_srs : str, optional
+        Target spatial reference system for streamed point data.
+        When specified, Globato adds a stream-reproject hook.
+    ignore_failures : bool, optional
+        When False, raise exceptions upon reader failures, otherwise
+        ignore failures and continue the pipeline.
+
+    Returns
+    -------
+    GlobatoStream
+        A lazy point-processing stream supporting .pipe(),
+        .to_dataframe(), .to_numpy(), and .to_raster().
+
+    Examples
+    --------
+    Read ICESat-2 ATL03 photon data:
+
+    >>> stream = read(
+    ...     ["ATL03_a.h5", "ATL03_b.h5"],
+    ...     region=[-120, -119, 33, 34],
+    ... ).pipe(
+    ...     "stream-init",
+    ...     profile="atl03-xyz",
+    ...     classes="1/2/3/6/7/40/41/42",
+    ... )
+
+    >>> photons = stream.to_dataframe()
+
+    Configure a Fetchez module:
+
+    >>> stream = read({
+    ...     "module": "tnm",
+    ...     "args": {"products": "1m"},
+    ... })
+
+    Transform the output CRS:
+
+    >>> stream = read(
+    ...     "points.xyz",
+    ...     target_srs="EPSG:26911",
+    ... ).pipe(
+    ...     "stream-init"
+    ... )
+
+    Consume streamed chunks:
+
+    >>> for chunk in stream:
+    ...     process(chunk)
+
+    Convert point data to a raster stream:
+
+    >>> raster = read("points.xyz").pipe(
+    ...     "stream-init"
+    ... ).to_raster("1s")
+    """
     modules = _compile_modules(
-        sources, region=region, shared_cache=shared_cache, **kwargs
+        sources,
+        region=region,
+        shared_cache=shared_cache,
     )
 
     parsed_region = parse_region(region)[0] if region else None
@@ -59,6 +151,7 @@ def read(
         region=parsed_region,
         target_srs=target_srs,
         ignore_failures=ignore_failures,
+        **kwargs,
     )
 
 
