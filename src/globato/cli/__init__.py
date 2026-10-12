@@ -24,7 +24,7 @@ from .process import process_cmd
 
 from fetchez.cli.run import run_recipe
 from fetchez.cli import setup_logging
-from fetchez.utils import FetchezMainGroup
+from fetchez.cli.utils import FetchezMainGroup
 
 logger = logging.getLogger(__name__)
 
