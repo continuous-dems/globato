@@ -16,13 +16,13 @@ import click
 import logging
 
 from fetchez.utils import (
-    FetchezMainCommand,
     parse_hook_string,
     str2inc,
 )
 from fetchez.recipe import Recipe
 from fetchez.spatial import parse_region
 from fetchez.registry import PresetRegistry, HookRegistry
+from fetchez.cli.utils import FetchezMainCommand
 from fetchez.cli.pipeline import (
     PipelineExecutor,
     organize_pipeline_commands,
