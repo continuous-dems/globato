@@ -3,6 +3,7 @@ name: socal-crm-bathy-topo
 description: >
   Data sources for the southern california coastal relief model.
   Built for 1 arc-seconds @ epsg:4326+3855
+category: "Bathy-Topo"
 tags:
   - globato
   - bathymetry
