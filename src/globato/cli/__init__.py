@@ -23,7 +23,7 @@ from .recipes import recipes_group
 from .process import process_cmd
 
 from fetchez.cli.run import run_recipe
-from fetchez.cli import setup_logging
+from fetchez.logging import configure_logging
 from fetchez.cli.utils import FetchezMainGroup
 
 logger = logging.getLogger(__name__)
@@ -98,9 +98,9 @@ def cli(verbose, quiet):
 
     # logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
 
-    setup_logging(name="fetchez", quiet=quiet, verbose=verbose, propagate=False)
-    setup_logging(name="transformez", quiet=quiet, verbose=verbose, propagate=False)
-    setup_logging(name="globato", quiet=quiet, verbose=verbose, propagate=False)
+    configure_logging(name="fetchez", quiet=quiet, verbose=verbose, propagate=False)
+    configure_logging(name="transformez", quiet=quiet, verbose=verbose, propagate=False)
+    configure_logging(name="globato", quiet=quiet, verbose=verbose, propagate=False)
 
 
 cli.add_command(build_cmd, name="build")
