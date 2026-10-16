@@ -15,18 +15,54 @@ Provides interface for streaming, processing, and accessing geospatial data.
 import os
 import yaml
 import logging
+from pathlib import Path
 from typing import Generator
 
-from fetchez.recipe import Recipe
+from fetchez.recipe import Recipe, RecipeContext
 from fetchez.registry import HookRegistry
 from fetchez.utils import str2inc, parse_hook_string
-from fetchez.api import _compile_modules
 from fetchez.spatial import parse_region
 
 from globato.streams.base import GlobatoStream
 from globato.utils import make_recipe_config
 
 logger = logging.getLogger(__name__)
+
+
+def _normalize_read_sources(sources, module_args=None):
+    """Apply legacy read() module options without initializing components."""
+
+    module_args = module_args or {}
+
+    if isinstance(sources, (str, dict)):
+        sources = [sources]
+
+    normalized = []
+
+    for source in sources:
+        if isinstance(source, str):
+            if module_args:
+                normalized.append(
+                    {
+                        "module": source,
+                        "args": dict(module_args),
+                    }
+                )
+            else:
+                normalized.append(source)
+
+        elif isinstance(source, dict):
+            definition = dict(source)
+            definition["args"] = {
+                **source.get("args", {}),
+                **module_args,
+            }
+            normalized.append(definition)
+
+        else:
+            normalized.append(source)
+
+    return normalized
 
 
 def read(
@@ -138,17 +174,30 @@ def read(
     ...     "stream-init"
     ... ).to_raster("1s")
     """
-    modules = _compile_modules(
-        sources,
-        region=region,
-        shared_cache=shared_cache,
-        **kwargs,
-    )
 
     parsed_region = parse_region(region)[0] if region else None
 
+    sources = _normalize_read_sources(sources, kwargs)
+
+    recipe = Recipe.from_dict(
+        {
+            "project": {"name": "globato_stream"},
+            "modules": sources,
+            "global_hooks": [],
+        }
+    )
+
+    context = RecipeContext(
+        region=parsed_region,
+        name="globato_stream",
+        shared_cache=(
+            Path(shared_cache).resolve() if shared_cache is not None else None
+        ),
+    )
+
     return GlobatoStream(
-        modules=modules,
+        recipe=recipe,
+        context=context,
         region=parsed_region,
         target_srs=target_srs,
         ignore_failures=ignore_failures,
