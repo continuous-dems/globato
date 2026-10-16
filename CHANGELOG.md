@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0 - 10-07-2026]
+
 ### ADDED
 * `globato.read()` takes `ignore_failures` (#274). With fetchez's stream fix (fetchez #472), an error a reader raises while the stream is read, such as `AuxiliaryDataError`, is raised to the code iterating the stream; before, it was lost and the stream just ended early. `ignore_failures=True` keeps the old behavior: the error is logged and the stream ends early. Before this, `read()` had no way to set it.
 
