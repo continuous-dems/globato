@@ -23,13 +23,12 @@ import logging
 
 from fetchez.recipe import Recipe
 from fetchez.registry import RecipeRegistry, BundleRegistry
+from fetchez.cli.utils import FetchezMainGroup, FetchezMainCommand
 from fetchez.utils import (
     int_or,
     str2inc,
     parse_hook_string,
     compile_sources,
-    FetchezMainGroup,
-    FetchezMainCommand,
 )
 from globato.utils import globatize_modules, make_recipe_config
 from fetchez.spatial import yield_parsed_regions

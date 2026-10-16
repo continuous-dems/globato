@@ -69,6 +69,7 @@ class SpatialCrop(FetchHook):
             #     ((chunk['y'] <= region.ymax) & (chunk['y'] >= region.ymin))
             # ]
             # yield chunk
+
             mask = (
                 (chunk["x"] >= w)
                 & (chunk["x"] <= e)

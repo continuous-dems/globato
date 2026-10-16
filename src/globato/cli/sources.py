@@ -17,7 +17,8 @@ import click
 from fetchez.api import search_modules, list_modules, search_bundles, list_bundles
 from fetchez.recipe import Recipe
 from fetchez.registry import ModuleRegistry
-from fetchez.utils import truncate_string, FetchezMainGroup, FetchezMainCommand
+from fetchez.utils import truncate_string
+from fetchez.cli.utils import FetchezMainGroup, FetchezMainCommand
 
 
 @click.group(cls=FetchezMainGroup, name="sources", fetchez_commands=["list", "info"])
