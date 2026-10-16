@@ -21,18 +21,34 @@ logger = logging.getLogger(__name__)
 
 
 class GlobatoStream(BaseStream):
-    """The Globato point stream."""
-
     def __init__(
-        self, modules, region=None, target_srs=None, ignore_failures=False, **kwargs
+        self,
+        modules=None,
+        region=None,
+        target_srs=None,
+        ignore_failures=False,
+        *,
+        recipe=None,
+        context=None,
+        **kwargs,
     ):
-        super().__init__(modules, region=region, ignore_failures=ignore_failures)
+        super().__init__(
+            modules=modules,
+            region=region,
+            ignore_failures=ignore_failures,
+            recipe=recipe,
+            context=context,
+        )
+
         self.target_srs = target_srs
         self.stream_type = "point"
 
-        if self.target_srs:
+        if target_srs:
             self.pipe(
-                {"name": "stream-reproject", "args": {"dst_srs": self.target_srs}}
+                {
+                    "name": "stream-reproject",
+                    "args": {"dst_srs": target_srs},
+                }
             )
 
     def to_raster(self, increment, want_sums=False):
