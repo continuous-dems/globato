@@ -50,10 +50,9 @@ class EnsureSpatialClaim(BaseModifier):
                 claim_grid_enabled = True
 
                 if self.res is not None:
-                    hook.setdefault("args", {}).setdefault(
-                        "res",
-                        self.res,
-                    )
+                    hook_args = hook.setdefault("args", {})
+                    if hook_args.get("res") is None:
+                        hook_args["res"] = self.res
 
         spatial_claim_enabled = any(
             isinstance(hook, dict) and self._hook_name(hook) == "spatial-claim"
