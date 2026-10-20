@@ -22,6 +22,7 @@ try:
 except ImportError:
     HAS_GDAL = False
 
+from fetchez.spatial import Region
 from fetchez.utils import int_or
 from .base import BaseGlobatoReader
 
@@ -77,9 +78,12 @@ class GDALReader(BaseGlobatoReader):
         if not file_srs:
             return 0, 0, ds.RasterXSize, ds.RasterYSize
 
-        from ..spatial import Region
-
-        roi = Region(*self.req_region_bounds, epsg=4326)
+        # The requested region is in lon/lat: a Region, or [w, e, s, n].
+        # warp() changes the region it is called on, so a Region is copied.
+        if isinstance(self.req_region_bounds, Region):
+            roi = self.req_region_bounds.copy()
+        else:
+            roi = Region(*self.req_region_bounds, srs="epsg:4326")
         roi.warp(file_srs)
 
         gt = ds.GetGeoTransform()
