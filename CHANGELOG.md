@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### ADDED
+* A `py.typed` marker, so type checkers read globato's type annotations in code that uses it (#284). mypy now runs on every pull request, in a new "Typecheck" workflow.
+
 ## [0.5.0 - 10-07-2026]
 
 ### ADDED

@@ -21,7 +21,8 @@ import scipy.ndimage
 from scipy.interpolate import griddata
 
 import rasterio
-from rasterio.warp import reproject, Resampling
+from rasterio.enums import Resampling
+from rasterio.warp import reproject
 from rasterio.features import rasterize
 
 import pyogrio

@@ -28,27 +28,12 @@ from globato.hooks.filters.outlierz import OutlierZ
 from globato.hooks.filters.spatial_crop import SpatialCrop
 from globato.hooks.filters.point_raster_mask import PointRasterMask
 
+from fetchez.modules.fabdem import FABDEM as BaseFABDEM
+from fetchez.modules.copernicus import CopernicusDEM as BaseCopernicus
+from fetchez.modules.multibeam import MBDB as BaseMultibeam
+from fetchez.modules.hydronos import HydroNOS as BaseHydroNOS
+
 logger = logging.getLogger(__name__)
-
-try:
-    from fetchez.modules.fabdem import FABDEM as BaseFABDEM
-except ImportError:
-    BaseFABDEM = object
-
-try:
-    from fetchez.modules.copernicus import CopernicusDEM as BaseCopernicus
-except ImportError:
-    BaseCopernicus = object
-
-try:
-    from fetchez.modules.multibeam import MBDB as BaseMultibeam
-except ImportError:
-    BaseMultibeam = object
-
-try:
-    from fetchez.modules.hydronos import HydroNOS as BaseHydroNOS
-except ImportError:
-    BaseHydroNOS = object
 
 
 @cli.cli_opts(

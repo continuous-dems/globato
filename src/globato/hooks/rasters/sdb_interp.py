@@ -12,7 +12,8 @@ import os
 import logging
 import numpy as np
 import rasterio
-from rasterio.warp import reproject, Resampling
+from rasterio.enums import Resampling
+from rasterio.warp import reproject
 
 from .base import RasterGlobalHook
 from fetchez.core import run_fetchez

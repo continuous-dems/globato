@@ -14,10 +14,10 @@ Warp/reproject a raster dataset
 import os
 import logging
 import rasterio
+from rasterio.enums import Resampling
 from rasterio.warp import (
     calculate_default_transform,
     reproject,
-    Resampling,
     transform_bounds,
 )
 from fetchez.hooks import FetchHook
