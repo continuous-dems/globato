@@ -10,6 +10,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### ADDED
 * A `py.typed` marker, so type checkers read globato's type annotations in code that uses it (#284). mypy now runs on every pull request, in a new "Typecheck" workflow.
 
+### FIXED
+* The `glob_sdb` module failed with `ModuleNotFoundError: No module named 'globato.cli.recipe'` as soon as it started building its training DEM (#284). It now uses `fetchez.recipe.Recipe`.
+
 ## [0.5.0 - 10-07-2026]
 
 ### ADDED

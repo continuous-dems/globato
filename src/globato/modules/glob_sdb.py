@@ -48,7 +48,7 @@ class GlobSDB(FetchModule):
 
     def run(self):
         from globato.hooks.rasters.sdb_interp import SDBInterpolation
-        from globato.cli.recipe import Recipe
+        from fetchez.recipe import Recipe
 
         logger.info(
             f"Initializing SDB Super-Module. Training source: {self.train_source}"
