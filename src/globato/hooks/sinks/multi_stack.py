@@ -403,58 +403,62 @@ class MultiStackAccumulator:
         with self.lock:
             current = self.dataset.read(window=window).astype(np.float64, copy=False)
 
-            if self.strategy in {"mean", "weighted_mean"}:
-                current[:, valid_new] += incoming[:, valid_new]
-
-                accepted = valid_new
-                replaced = empty
-
-            else:
-                incoming_mean_weight = self._mean_weight(incoming)
-                current_mean_weight = self._mean_weight(current)
-
-                current_count = current[FUSION_BAND_MAP["count"] - 1]
-
-                if self.strategy == "supercede":
-                    replaced = valid_new & (
-                        (current_count == 0)
-                        | (incoming_mean_weight > current_mean_weight)
-                    )
-
-                    accepted = replaced
-
-                    if np.any(replaced):
-                        current[:, replaced] = incoming[:, replaced]
-
-                else:  # mixed
-                    incoming_tier = np.digitize(
-                        incoming_mean_weight,
-                        self.wts,
-                    )
-                    current_tier = np.digitize(
-                        current_mean_weight,
-                        self.wts,
-                    )
-
-                    current_tier[current_count == 0] = -1
-
-                    replaced = valid_new & (incoming_tier > current_tier)
-                    merged = valid_new & (incoming_tier == current_tier)
-
-                    if np.any(replaced):
-                        current[:, replaced] = incoming[:, replaced]
-
-                    if np.any(merged):
-                        current[:, merged] += incoming[:, merged]
-
-                    accepted = replaced | merged
+            result = self.reduce_state(current, incoming)
 
             self.dataset.write(current, window=window)
 
-        return StackUpdate(
-            accepted=accepted,
-            replaced=replaced,
-        )
+        return result
+
+    def reduce_state(self, current, incoming):
+        """Apply the native source policy in place; shared by streams and block rebuilds."""
+        incoming_count = incoming[FUSION_BAND_MAP["count"] - 1]
+        valid_new = incoming_count > 0
+        empty = np.zeros_like(valid_new, dtype=bool)
+        if self.strategy in {"mean", "weighted_mean"}:
+            current[:, valid_new] += incoming[:, valid_new]
+
+            accepted = valid_new
+            replaced = empty
+
+        else:
+            incoming_mean_weight = self._mean_weight(incoming)
+            current_mean_weight = self._mean_weight(current)
+
+            current_count = current[FUSION_BAND_MAP["count"] - 1]
+
+            if self.strategy == "supercede":
+                replaced = valid_new & (
+                    (current_count == 0) | (incoming_mean_weight > current_mean_weight)
+                )
+
+                accepted = replaced
+
+                if np.any(replaced):
+                    current[:, replaced] = incoming[:, replaced]
+
+            else:  # mixed
+                incoming_tier = np.digitize(
+                    incoming_mean_weight,
+                    self.wts,
+                )
+                current_tier = np.digitize(
+                    current_mean_weight,
+                    self.wts,
+                )
+
+                current_tier[current_count == 0] = -1
+
+                replaced = valid_new & (incoming_tier > current_tier)
+                merged = valid_new & (incoming_tier == current_tier)
+
+                if np.any(replaced):
+                    current[:, replaced] = incoming[:, replaced]
+
+                if np.any(merged):
+                    current[:, merged] += incoming[:, merged]
+
+                accepted = replaced | merged
+        return StackUpdate(accepted=accepted, replaced=replaced)
 
     # ------------------------------------------------------------------
     # Finalization
@@ -464,7 +468,7 @@ class MultiStackAccumulator:
     def _state_from_array(data):
         return {name: data[index] for index, name in enumerate(FUSION_BANDS)}
 
-    def finalize(self, ndv=-9999):
+    def finalize(self, ndv=-9999, *, statistics=True):
         """Derive a finalized MultiStack without mutating persisted state."""
 
         if self.dataset and not self.dataset.closed:
@@ -524,7 +528,9 @@ class MultiStackAccumulator:
                     VERSION=__version__,
                 )
 
-        # Keep statistics behavior from the existing implementation.
+        # Temporary callers can omit a full seven-band statistics scan.
+        if not statistics:
+            return self.output_fn
         with rasterio.open(self.output_fn, "r+") as dst:
             all_stats = dst.stats(approx=False)
             for index, stats in enumerate(all_stats, start=1):
@@ -602,44 +608,41 @@ class MultiStackHook(FetchHook):
         self.compress_state = str2bool(compress_state)
         self._accumulator = None
 
+    def create_accumulator(self, region, *, output, state=None, resume=False):
+        """Create an independent native state without changing this hook's lifecycle."""
+        if isinstance(self.res, str) and self.res.endswith("s"):
+            inc = float(self.res[:-1]) / 3600.0
+            x_inc, y_inc = inc, inc
+        elif "/" in str(self.res):
+            x_inc, y_inc = map(float, self.res.split("/"))
+        else:
+            inc = float(self.res)
+            x_inc, y_inc = inc, inc
+
+        return MultiStackAccumulator(
+            region=region,
+            x_inc=x_inc,
+            y_inc=y_inc,
+            output_fn=output,
+            strategy=self.strategy,
+            weight_threshold=self.weight_threshold,
+            crs=self.crs,
+            compress_state=self.compress_state,
+            state_fn=state,
+            resume=resume,
+        )
+
     def _init_accumulator(self, region):
         with INIT_LOCK:
-            if self._accumulator:
-                return
-
-            if isinstance(self.res, str) and self.res.endswith("s"):
-                inc = float(self.res[:-1]) / 3600.0
-                x_inc, y_inc = inc, inc
-            elif "/" in str(self.res):
-                x_inc, y_inc = map(float, self.res.split("/"))
-            else:
-                inc = float(self.res)
-                x_inc, y_inc = inc, inc
-
-            logger.info(
-                "Initializing MultiStack: %s @ %s,%s (%s)",
-                self.output,
-                x_inc,
-                y_inc,
-                self.strategy,
-            )
-
-            self._accumulator = MultiStackAccumulator(
-                region=region,
-                x_inc=x_inc,
-                y_inc=y_inc,
-                output_fn=self.output,
-                strategy=self.strategy,
-                weight_threshold=self.weight_threshold,
-                crs=self.crs,
-                compress_state=self.compress_state,
-                verbose=True,
-                state_fn=self.state,
-                resume=self.resume,
-            )
+            if self._accumulator is None:
+                self._accumulator = self.create_accumulator(
+                    region, output=self.output, state=self.state, resume=self.resume
+                )
 
     @staticmethod
     def _dataset_id(entry, module_weight=1.0):
+        if entry.get("_stack_qc_source_id"):
+            return f"{entry['_stack_qc_source_id']}|w={module_weight}"
         checksum = entry.get("checksum")
         if checksum:
             return f"{checksum}|w={module_weight}"

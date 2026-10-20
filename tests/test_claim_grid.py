@@ -237,3 +237,8 @@ def test_small_positive_area_overlap_still_blocks_whole_cell():
     }
     _hook().run([(SimpleNamespace(region=Region(0, 3, 0, 1)), entry)])
     assert np.concatenate(list(entry["stream"]))["x"].tolist() == [2.5]
+
+
+@pytest.mark.parametrize("value", [10, 30, "10", "30"])
+def test_numeric_claim_resolution_retains_final_zero(value):
+    assert ClaimGridFilter(res=value).res == float(value)

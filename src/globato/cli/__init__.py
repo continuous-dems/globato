@@ -22,7 +22,7 @@ from .perspecto import perspecto_hillshade
 from .recipes import recipes_group
 from .process import process_cmd
 
-from fetchez.cli.run import run_recipe
+from .run import run_recipe
 from fetchez.logging import configure_logging
 from fetchez.cli.utils import FetchezMainGroup
 

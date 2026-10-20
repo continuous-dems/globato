@@ -27,7 +27,8 @@ from rasterio.windows import Window
 
 from fetchez.hooks import FetchHook
 from fetchez.spatial import Region
-from fetchez.utils import float_or, int_or, str2inc
+from fetchez.utils import float_or, int_or
+from globato.utils import parse_increment
 
 logger = logging.getLogger(__name__)
 
@@ -490,8 +491,8 @@ class Point2PixelStream(FetchHook):
 
     def __init__(self, x_inc=None, y_inc=None, **kwargs):
         super().__init__(**kwargs)
-        self.x_inc = float_or(str2inc(x_inc))
-        self.y_inc = float_or(str2inc(y_inc))
+        self.x_inc = float_or(parse_increment(x_inc))
+        self.y_inc = float_or(parse_increment(y_inc))
 
     def _stream_wrapper(self, input_stream, entry=None, region=None):
         count = 0

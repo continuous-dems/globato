@@ -28,10 +28,46 @@ from rasterio.features import shapes
 from rasterio.windows import Window
 
 from fetchez.hooks import FetchHook
-from fetchez.utils import str2inc, str2bool, int_or
-from ..transforms.point_pixels import PointPixels
+from fetchez.utils import str2bool, int_or
+from pyproj import CRS
+from globato.utils import parse_increment
+from ..transforms.point_pixels import FUSION_BAND_MAP, FUSION_BANDS, PointPixels
 
 logger = logging.getLogger(__name__)
+
+
+def fusion_coverage(stream, target):
+    """Pass native state through and expose accepted count > 0 on the same grid.
+
+    Metadata records coverage, not point centroids reconstructed from source
+    statistics. Refuse mismatched grids rather than silently misplacing cells.
+    """
+    profile = next(stream)
+    if (
+        profile.get("count") != len(FUSION_BANDS)
+        or any(profile.get(k) != target[k] for k in ("width", "height", "transform"))
+        or not CRS.from_user_input(profile["crs"])
+        .to_2d()
+        .equals(CRS.from_user_input(target["crs"]).to_2d(), ignore_axis_order=True)
+    ):
+        raise ValueError(
+            "FusionState coverage needs the same horizontal CRS, bounds and "
+            "resolution as the final stack; set provenance/source_masks.res "
+            "to multi_stack.res"
+        )
+    yield profile, None, None
+    for chunk in stream:
+        window, _, data, *_ = chunk
+        if data.ndim != 3 or data.shape != (
+            len(FUSION_BANDS),
+            int(window.height),
+            int(window.width),
+        ):
+            raise ValueError("Invalid FusionState coverage chunk")
+        count = data[FUSION_BAND_MAP["count"] - 1]
+        if np.any(~np.isfinite(count)) or np.any(count < 0):
+            raise ValueError("Invalid FusionState coverage count")
+        yield chunk, window, count > 0
 
 
 class ProvenanceHook(FetchHook):
@@ -49,7 +85,7 @@ class ProvenanceHook(FetchHook):
 
     def __init__(self, res="1s", output="provenance.tif", **kwargs):
         super().__init__(**kwargs)
-        self.res = str2inc(res)
+        self.res = parse_increment(res)
         self.output = output
         self._initialized = False
         self.lock = threading.Lock()
@@ -96,6 +132,7 @@ class ProvenanceHook(FetchHook):
         with rasterio.open(self.output, "w", **profile) as dst:
             dst.set_band_description(1, "Module_Bitmask")
 
+        self.profile = profile
         self._initialized = True
         logger.debug(f"Initialized Provenance Mask: {self.output}")
 
@@ -127,10 +164,14 @@ class ProvenanceHook(FetchHook):
                 self._init_raster(region)
 
         for mod, entry in entries:
-            if self.is_point_stream(entry):
+            fusion = (
+                self.is_raster_stream(entry)
+                and entry.get("data_type") == "fusion-state"
+            )
+            if self.is_point_stream(entry) or fusion:
                 stream = entry.get("stream")
                 bit_val = self._get_module_bit(mod.name)
-                entry["stream"] = self._intercept(stream, bit_val)
+                entry["stream"] = self._intercept(stream, bit_val, fusion=fusion)
 
                 entry.setdefault("artifacts", {})[self.name] = os.path.abspath(
                     self.output
@@ -138,9 +179,14 @@ class ProvenanceHook(FetchHook):
 
         return entries
 
-    def _intercept(self, stream, bit_val):
+    def _intercept(self, stream, bit_val, *, fusion=False):
         """Pass-through stream to update mask."""
-
+        if fusion:
+            for chunk, window, coverage in fusion_coverage(stream, self.profile):
+                if coverage is not None:
+                    self._update_cells(window, coverage, bit_val)
+                yield chunk
+            return
         for chunk in stream:
             self._update_mask(chunk, bit_val)
             yield chunk
@@ -165,6 +211,9 @@ class ProvenanceHook(FetchHook):
         col_off, row_off, w, h = sub_win
         window = Window(col_off, row_off, w, h)
 
+        self._update_cells(window, has_data, bit_val)
+
+    def _update_cells(self, window, has_data, bit_val):
         with self.lock:
             with rasterio.open(self.output, "r+") as dst:
                 mask_data = dst.read(1, window=window)
@@ -179,11 +228,9 @@ class ProvenanceHook(FetchHook):
 
         if self._initialized:
             with rasterio.open(self.output, "r+") as dst:
-                for name, idx in self.module_bits.items():
-                    tags = {
-                        f"MOD_{name}": str(bit)
-                        for name, bit in self.module_bits.items()
-                    }
+                tags = {
+                    f"MOD_{name}": str(bit) for name, bit in self.module_bits.items()
+                }
                 dst.update_tags(bidx=1, **tags)
             logger.debug("Finalized Provenance Mask.")
 
@@ -191,6 +238,8 @@ class ProvenanceHook(FetchHook):
 def source_id(entry):
     """Return the same stable source identity used by persistent stack state."""
 
+    if entry.get("_stack_qc_source_id"):
+        return str(entry["_stack_qc_source_id"])
     checksum = entry.get("checksum")
     if checksum:
         return str(checksum)
@@ -815,7 +864,7 @@ class SourceMasks(FetchHook):
     ):
         super().__init__(**kwargs)
 
-        self.res = str2inc(res)
+        self.res = parse_increment(res)
         self.output = output
         self.output_dir = output_dir
         self.vector_output = vector_output
@@ -861,7 +910,11 @@ class SourceMasks(FetchHook):
             return entries
 
         for mod, entry in entries:
-            if not self.is_point_stream(entry):
+            fusion = (
+                self.is_raster_stream(entry)
+                and entry.get("data_type") == "fusion-state"
+            )
+            if not self.is_point_stream(entry) and not fusion:
                 continue
 
             dataset_id = source_id(entry)
@@ -897,13 +950,20 @@ class SourceMasks(FetchHook):
                 stream,
                 path,
                 mod.region,
+                fusion=fusion,
             )
 
             entry.setdefault("artifacts", {})[self.name] = path
 
         return entries
 
-    def _intercept(self, stream, path, region):
+    def _intercept(self, stream, path, region, *, fusion=False):
+        if fusion:
+            for chunk, window, coverage in fusion_coverage(stream, self._masks.profile):
+                if coverage is not None:
+                    MaskSet.update(path, window, coverage)
+                yield chunk
+            return
         pixel_binner = PointPixels(
             src_region=region,
             x_size=self._masks.xcount,
