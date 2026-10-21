@@ -62,6 +62,15 @@ full = ["globato[gmt,gdal,interpolations,ml]"]
 dev = [
     "pre-commit",
     "mypy",
+    # Type stubs for dependencies that ship no type information of their own.
+    "pandas-stubs",
+    "scipy-stubs",
+    "types-geopandas",
+    "types-pyogrio",
+    "types-PyYAML",
+    "types-rasterio",
+    "types-shapely",
+    "types-tqdm",
 ]
 test = [
     "pytest",
@@ -151,7 +160,11 @@ exclude = [
 mypy_path = "src"
 packages = ["globato"]
 python_version = "3.12"
-exclude = ["^build/", "^dist/", "^\\.venv/"]
+exclude = [
+    "^build/",
+    "^dist/",
+    "^\\.venv/",
+]
 disable_error_code = ["import-untyped"]
 # strict = true
 
@@ -171,6 +184,7 @@ module = [
     "h5netcdf.*",
     "polars",
     "netCDF4",
+    "fiona",
 ]
 ignore_missing_imports = true
 # follow_untyped_imports = true

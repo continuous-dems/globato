@@ -345,7 +345,7 @@ def _atl24_release_shift(times, differences, at, window=1.0, min_count=10):
 # region (gigabytes of GeoJSON for a city), so each tree is built once per region.
 # A city's tree is on the order of a gigabyte, so only the most recent few regions
 # are kept: enough for the readers of one run, small enough for a laptop.
-_MASK_TREE_CACHE = {}
+_MASK_TREE_CACHE: dict[tuple, STRtree | None] = {}
 _MASK_TREE_CACHE_SIZE = 4
 
 

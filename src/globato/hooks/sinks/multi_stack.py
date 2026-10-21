@@ -641,22 +641,32 @@ class MultiStackHook(FetchHook):
 
     @staticmethod
     def _dataset_id(entry, module_weight=1.0):
-        if entry.get("_stack_qc_source_id"):
-            return f"{entry['_stack_qc_source_id']}|w={module_weight}"
+        """Identify an input, optionally scoped to a named processing branch.
+
+        Separate class-selection branches can read the same physical file at
+        the same weight. Keep their registrations independent while preserving
+        the historical identifiers for entries without a partition label.
+        """
         checksum = entry.get("checksum")
-        if checksum:
-            return f"{checksum}|w={module_weight}"
+        if entry.get("_stack_qc_source_id"):
+            dataset_id = f"{entry['_stack_qc_source_id']}|w={module_weight}"
+        elif checksum:
+            dataset_id = f"{checksum}|w={module_weight}"
+        else:
+            url = entry.get("url", "")
+            dst_fn = entry.get("dst_fn")
+            if url and not url.startswith("file://"):
+                dataset_id = f"{url}|w={module_weight}"
+            elif dst_fn and os.path.exists(dst_fn):
+                size = os.path.getsize(dst_fn)
+                dataset_id = f"{os.path.basename(dst_fn)}|{size}B|w={module_weight}"
+            else:
+                dataset_id = os.path.basename(dst_fn or url or "unknown_dataset")
 
-        url = entry.get("url", "")
-        dst_fn = entry.get("dst_fn")
-
-        if url and not url.startswith("file://"):
-            return f"{url}|w={module_weight}"
-
-        if dst_fn and os.path.exists(dst_fn):
-            size = os.path.getsize(dst_fn)
-            return f"{os.path.basename(dst_fn)}|{size}B|w={module_weight}"
-        return os.path.basename(dst_fn or url or "unknown_dataset")
+        partition = entry.get("stack_partition")
+        if partition is not None:
+            dataset_id += "|partition=" + json.dumps(str(partition), ensure_ascii=True)
+        return dataset_id
 
     @staticmethod
     def _is_fusion_state_chunk(chunk):
@@ -827,10 +837,15 @@ class MultiStackHook(FetchHook):
             self._accumulator.mark_registered(dataset_id)
 
     def teardown(self):
-        if not self._accumulator:
+        if self._accumulator is None:
             return
 
         logger.debug("Streams finished. Finalizing MultiStack...")
 
-        self._accumulator.finalize()
-        self._accumulator = None
+        accumulator = self._accumulator
+
+        try:
+            accumulator.finalize()
+        finally:
+            accumulator.close()
+            self._accumulator = None

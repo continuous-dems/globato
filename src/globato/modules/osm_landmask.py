@@ -29,10 +29,7 @@ from fetchez.core import Fetch, urlencode, CUDEM_USER_AGENT
 from fetchez.cli import cli_opts
 from fetchez.utils import str2bool
 
-try:
-    from fetchez.modules.gmrt import gmrt_fetch_point
-except ImportError:
-    gmrt_fetch_point = None
+from fetchez.modules.gmrt import gmrt_fetch_point
 
 logger = logging.getLogger(__name__)
 
@@ -293,8 +290,6 @@ class OSMLandmaskModule(FetchModule):
         return (sum(votes) / len(votes)) >= threshold
 
     def _is_land_by_gmrt(self, poly):
-        if not gmrt_fetch_point:
-            return False
         try:
             pt = poly.centroid
             val = float(gmrt_fetch_point(latitude=pt.y, longitude=pt.x))
@@ -306,11 +301,10 @@ class OSMLandmaskModule(FetchModule):
         w, e, s, n = region
         cx, cy = (w + e) / 2, (s + n) / 2
         is_land = False
-        if gmrt_fetch_point:
-            try:
-                is_land = float(gmrt_fetch_point(latitude=cy, longitude=cx)) >= 0
-            except Exception:
-                pass
+        try:
+            is_land = float(gmrt_fetch_point(latitude=cy, longitude=cx)) >= 0
+        except Exception:
+            pass
 
         poly = box(w, s, e, n)
         features = []

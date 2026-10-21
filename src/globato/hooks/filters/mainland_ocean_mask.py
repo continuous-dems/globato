@@ -104,7 +104,7 @@ class MainlandOceanMask(GlobatoFilter):
     meta_desc = (
         "Fill enclosed ocean-mask holes and select ocean or remaining mainland points."
     )
-    meta_aliases = []
+    meta_aliases: list[str] = []
 
     def __init__(
         self,

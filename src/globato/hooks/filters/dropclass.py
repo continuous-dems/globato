@@ -28,9 +28,23 @@ class DropClass(GlobatoFilter):
     meta_desc = "Drop specified classes from the point stream"
     meta_aliases = ["drop_class"]
 
-    def __init__(self, classes="7/12", **kwargs):
+    def __init__(self, classes="7/12", stack_partition=None, **kwargs):
         super().__init__(**kwargs)
         self.target_classes = [int(x) for x in str(classes).split("/")]
+        self.stack_partition = (
+            str(stack_partition).strip() if stack_partition is not None else None
+        )
+        if self.stack_partition == "":
+            raise ValueError("stack_partition must be a nonempty label")
+
+    def run(self, entries):
+        # Tag the lazy stream before the sink checks its duplicate registry.
+        # Unlabelled global class cleanup must preserve a local branch label.
+        if self.stack_partition is not None:
+            for _mod, entry in entries:
+                if self.is_point_stream(entry):
+                    entry["stack_partition"] = self.stack_partition
+        return super().run(entries)
 
     def filter_chunk(self, chunk):
         mask = np.isin(chunk["classification"], self.target_classes)
