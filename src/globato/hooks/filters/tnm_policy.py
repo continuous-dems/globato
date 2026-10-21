@@ -10,6 +10,7 @@ coverage to have already been attached by the appropriate generic footprint hook
 
 from __future__ import annotations
 
+from typing import List, Any, Dict
 from dataclasses import dataclass
 from datetime import date
 from pathlib import PurePosixPath
@@ -213,11 +214,11 @@ class TNMPolicy(FetchHook):
             geometry if current is None else shapely.union_all([current, geometry])
         )
 
-    def _one_meter_project_masks(self, entries):
-        rows = []
-        entry_bounds = {}
-        original_by_project = {}
-        project_claim_names: dict[str, set[str]] = {}
+    def _one_meter_project_masks(self, entries) -> List:
+        rows: List[Any] = []
+        entry_bounds: Dict[Any, Any] = {}
+        original_by_project: Dict[Any, Any] = {}
+        project_claim_names: Dict[str, set[str]] = {}
 
         for mod, entry in entries:
             project = self._project(entry)
@@ -254,7 +255,7 @@ class TNMPolicy(FetchHook):
 
         masks = {project: None for _, project, _ in rows}
         exclusions = {project: None for _, project, _ in rows}
-        claimed_by_project = {}
+        claimed_by_project: Dict[Any, Any] = {}
         claimed = None
 
         # Equal-year projects see the same pre-year claim and therefore never
@@ -262,8 +263,8 @@ class TNMPolicy(FetchHook):
         # in that year have been evaluated.
         for year in sorted({year for year, _, _ in rows}, reverse=True):
             same_year = [row for row in rows if row[0] == year]
-            year_geometries = []
-            year_by_project = {}
+            year_geometries: List[Any] = []
+            year_by_project: Dict[Any, Any] = {}
             for _, project, geometry in same_year:
                 allowed = geometry if claimed is None else geometry.difference(claimed)
                 if not allowed.is_empty:
@@ -290,7 +291,7 @@ class TNMPolicy(FetchHook):
             for project, geometry in year_by_project.items():
                 self._add_geometry(claimed_by_project, project, geometry)
 
-        selected = []
+        selected: List[Any] = []
         for mod, entry in entries:
             project = self._project(entry)
             source = entry_bounds[id(entry)]
