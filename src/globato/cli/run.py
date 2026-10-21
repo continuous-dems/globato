@@ -17,9 +17,34 @@ from globato.qc.stack.pipeline import StackQCRecipe as Recipe
 
 @click.command("run", cls=type(fetchez_run), params=fetchez_run.params)
 def run_recipe(
-    name, region, region_srs, outdir, shared_cache, modifier, schema, refresh, fail_fast
+    name,
+    region,
+    region_srs,
+    outdir,
+    shared_cache,
+    modifier,
+    schema,
+    refresh,
+    fail_fast,
+    ignore_failures=None,
 ):
     """Execute a Globato recipe from a YAML file or the recipe registry."""
+    if ignore_failures is None:
+        # fetchez before #500 has no --ignore-failures option and keeps
+        # going past failures unless --fail-fast is given.
+        ignore_failures = not fail_fast
+    else:
+        if fail_fast and ignore_failures:
+            raise click.UsageError(
+                "--fail-fast and --ignore-failures cannot be used together."
+            )
+        if fail_fast:
+            click.secho(
+                "Warning: --fail-fast is deprecated; "
+                "strict failure handling is now the default.",
+                fg="yellow",
+                err=True,
+            )
     RecipeRegistry.load_all()
     try:
         if Path(name).is_file():
@@ -49,7 +74,7 @@ def run_recipe(
             outdir=outdir,
             shared_cache=shared_cache,
             refresh=refresh,
-            ignore_failures=not fail_fast,
+            ignore_failures=ignore_failures,
         ):
             pass
     except Exception as exc:
