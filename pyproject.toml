@@ -183,6 +183,7 @@ module = [
     "h5netcdf.*",
     "polars",
     "netCDF4",
+    "fiona",
 ]
 ignore_missing_imports = true
 # follow_untyped_imports = true
