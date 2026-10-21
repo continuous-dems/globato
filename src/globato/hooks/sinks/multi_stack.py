@@ -824,10 +824,15 @@ class MultiStackHook(FetchHook):
             self._accumulator.mark_registered(dataset_id)
 
     def teardown(self):
-        if not self._accumulator:
+        if self._accumulator is None:
             return
 
         logger.debug("Streams finished. Finalizing MultiStack...")
 
-        self._accumulator.finalize()
-        self._accumulator = None
+        accumulator = self._accumulator
+
+        try:
+            accumulator.finalize()
+        finally:
+            accumulator.close()
+            self._accumulator = None
