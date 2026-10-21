@@ -12,8 +12,6 @@ Fetches a reference raster (e.g. GEBCO) and filters points that deviate from it.
 :license: MIT, see LICENSE for more details.
 """
 
-import json
-import hashlib
 import logging
 from pathlib import Path
 import threading
@@ -24,10 +22,7 @@ from scipy.ndimage import map_coordinates
 import fetchez
 from fetchez.utils import str2inc, parse_arg_to_list
 
-try:
-    from fetchez.entry import entry_id
-except ImportError:  # pragma: no cover - compatibility with older Fetchez
-    entry_id = None
+from fetchez.entry import entry_id
 
 from .base import GlobatoFilter
 
@@ -327,27 +322,17 @@ class ReferenceQuality(GlobatoFilter):
             "builder": self.builder,
         }
 
-        # Use Fetchez's canonical entry identity machinery whenever available.
-        if entry_id is not None:
-            return entry_id(
-                {
-                    "url": "globato://rq-reference",
-                    "dst_fn": "rq-reference.tif",
-                    "data_type": "raster",
-                    "profile": "rq/v1",
-                    "src_srs": self.wgs_region.srs,
-                    "metadata": state,
-                }
-            )
-
-        # Compatibility fallback for older Fetchez installations.
-        payload = json.dumps(
-            state,
-            sort_keys=True,
-            separators=(",", ":"),
-            ensure_ascii=True,
+        # Use Fetchez's canonical entry identity machinery.
+        return entry_id(
+            {
+                "url": "globato://rq-reference",
+                "dst_fn": "rq-reference.tif",
+                "data_type": "raster",
+                "profile": "rq/v1",
+                "src_srs": self.wgs_region.srs,
+                "metadata": state,
+            }
         )
-        return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
     @staticmethod
     def _reference_is_valid(path):

@@ -19,7 +19,8 @@ import numpy as np
 import rasterio
 import scipy.ndimage
 from fetchez.utils import remove_glob2, str2inc
-from rasterio.warp import calculate_default_transform, reproject, Resampling
+from rasterio.enums import Resampling
+from rasterio.warp import calculate_default_transform, reproject
 from rasterio.fill import fillnodata
 
 from .fill import RasterFill

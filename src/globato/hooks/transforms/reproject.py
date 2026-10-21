@@ -39,9 +39,6 @@ class StreamReproject(FetchHook):
         self._cache = {}
 
     def _get_pipeline(self, entry_src_srs, region=None):
-        if not SRSParser:
-            return None
-
         actual_src = self.forced_src_srs or entry_src_srs or "EPSG:4326"
         if not actual_src:
             return None
