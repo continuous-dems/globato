@@ -163,12 +163,6 @@ exclude = [
     "^build/",
     "^dist/",
     "^\\.venv/",
-    # Not registered in globato's CLI, and both import names that current
-    # fetchez and transformez don't have (fetchez.utils.yield_parsed_regions,
-    # transformez.definitions). Left unchecked until it is decided whether they
-    # should be deleted.
-    "^src/globato/cli/fetch\\.py$",
-    "^src/globato/cli/transform\\.py$",
 ]
 disable_error_code = ["import-untyped"]
 # strict = true
@@ -189,7 +183,6 @@ module = [
     "h5netcdf.*",
     "polars",
     "netCDF4",
-    "fiona",
 ]
 ignore_missing_imports = true
 # follow_untyped_imports = true
