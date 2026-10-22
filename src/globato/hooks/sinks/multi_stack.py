@@ -34,6 +34,7 @@ from rasterio.enums import ColorInterp
 from rasterio.windows import Window
 
 from fetchez.hooks import FetchHook
+from fetchez.entry import dataset_id
 from fetchez.spatial import Region
 from fetchez.utils import BOLD, CYAN, colorize, format_dataset_id, str2bool
 
@@ -296,22 +297,22 @@ class MultiStackAccumulator:
     # Provenance registry
     # ------------------------------------------------------------------
 
-    def is_registered(self, dataset_id):
-        if not dataset_id or not hasattr(self, "dataset") or self.dataset.closed:
+    def is_registered(self, contribution_key):
+        if not contribution_key or not hasattr(self, "dataset") or self.dataset.closed:
             return False
 
         with self.lock:
             registry = json.loads(self.dataset.tags().get(self.PROVENANCE_TAG, "[]"))
-            return dataset_id in registry
+            return contribution_key in registry
 
-    def mark_registered(self, dataset_id):
-        if not dataset_id:
+    def mark_registered(self, contribution_key):
+        if not contribution_key:
             return
 
         with self.lock:
             registry = json.loads(self.dataset.tags().get(self.PROVENANCE_TAG, "[]"))
-            if dataset_id not in registry:
-                registry.append(dataset_id)
+            if contribution_key not in registry:
+                registry.append(contribution_key)
                 self.dataset.update_tags(**{self.PROVENANCE_TAG: json.dumps(registry)})
 
     # ------------------------------------------------------------------
@@ -321,7 +322,7 @@ class MultiStackAccumulator:
     def update(
         self,
         points,
-        dataset_id=None,
+        contribution_key=None,
         *,
         source_weight=1.0,
         source_uncertainty=0.0,
@@ -344,12 +345,12 @@ class MultiStackAccumulator:
         result = self.update_state(
             state,
             Window(col_off, row_off, width, height),
-            dataset_id=dataset_id,
+            contribution_key=contribution_key,
         )
 
         return result
 
-    def update_raster_state(self, chunk, dataset_id=None):
+    def update_raster_state(self, chunk, contribution_key=None):
         """Reduce one FusionState raster-stream chunk without re-pixelizing it."""
 
         if not isinstance(chunk, tuple) or len(chunk) < 3:
@@ -367,7 +368,7 @@ class MultiStackAccumulator:
             name: np.asarray(data[index], dtype=np.float64)
             for index, name in enumerate(FUSION_BANDS)
         }
-        result = self.update_state(state, window, dataset_id=dataset_id)
+        result = self.update_state(state, window, contribution_key=contribution_key)
         return result
 
     @staticmethod
@@ -387,7 +388,7 @@ class MultiStackAccumulator:
         with np.errstate(divide="ignore", invalid="ignore"):
             return np.where(count > 0, weight_sum / count, 0.0)
 
-    def update_state(self, state, window, dataset_id=None):
+    def update_state(self, state, window, contribution_key=None):
         incoming = self._state_to_array(state)
         incoming_count = incoming[FUSION_BAND_MAP["count"] - 1]
         valid_new = incoming_count > 0
@@ -639,33 +640,6 @@ class MultiStackHook(FetchHook):
             )
 
     @staticmethod
-    def _dataset_id(entry, module_weight=1.0):
-        """Identify an input, optionally scoped to a named processing branch.
-
-        Separate class-selection branches can read the same physical file at
-        the same weight. Keep their registrations independent while preserving
-        the historical identifiers for entries without a partition label.
-        """
-        checksum = entry.get("checksum")
-        if checksum:
-            dataset_id = f"{checksum}|w={module_weight}"
-        else:
-            url = entry.get("url", "")
-            dst_fn = entry.get("dst_fn")
-            if url and not url.startswith("file://"):
-                dataset_id = f"{url}|w={module_weight}"
-            elif dst_fn and os.path.exists(dst_fn):
-                size = os.path.getsize(dst_fn)
-                dataset_id = f"{os.path.basename(dst_fn)}|{size}B|w={module_weight}"
-            else:
-                dataset_id = os.path.basename(dst_fn or url or "unknown_dataset")
-
-        partition = entry.get("stack_partition")
-        if partition is not None:
-            dataset_id += "|partition=" + json.dumps(str(partition), ensure_ascii=True)
-        return dataset_id
-
-    @staticmethod
     def _is_fusion_state_chunk(chunk):
         return (
             isinstance(chunk, tuple)
@@ -691,16 +665,15 @@ class MultiStackHook(FetchHook):
             self._init_accumulator(region)
 
         for mod, entry in entries:
-            dataset_id = self._dataset_id(
+            contribution_key = dataset_id(
                 entry,
                 module_weight=getattr(mod, "weight", 1.0),
             )
-            # dataset_id = self._dataset_id(entry)
 
-            if self._accumulator and self._accumulator.is_registered(dataset_id):
+            if self._accumulator and self._accumulator.is_registered(contribution_key):
                 logger.debug(
                     "Dataset %r already inside stack. Skipping.",
-                    dataset_id,
+                    contribution_key,
                 )
 
                 entry.pop("stream", None)
@@ -709,7 +682,7 @@ class MultiStackHook(FetchHook):
             elif self.has_stream(entry):
                 entry["stream"] = self._intercept(
                     entry.get("stream"),
-                    dataset_id,
+                    contribution_key,
                 )
 
             entry.setdefault("artifacts", {})[self.name] = self.output
@@ -718,7 +691,7 @@ class MultiStackHook(FetchHook):
 
         return entries
 
-    def _intercept(self, stream, dataset_id):
+    def _intercept(self, stream, contribution_key):
         """Feed point or FusionState chunks into the accumulator and pass through."""
 
         count = 0
@@ -729,7 +702,7 @@ class MultiStackHook(FetchHook):
         u_min = float("inf")
         u_max = float("-inf")
 
-        dataset_str = format_dataset_id(dataset_id)
+        dataset_str = format_dataset_id(contribution_key)
         logger.debug("Streaming data from: %s", dataset_str)
 
         for chunk in stream:
@@ -751,7 +724,7 @@ class MultiStackHook(FetchHook):
                     u_max = max(u_max, float(np.nanmax(final.uncertainty[valid])))
 
                 if self._accumulator:
-                    self._accumulator.update_raster_state(chunk, dataset_id)
+                    self._accumulator.update_raster_state(chunk, contribution_key)
 
             elif (
                 isinstance(chunk, np.ndarray)
@@ -785,7 +758,7 @@ class MultiStackHook(FetchHook):
                         u_max = max(u_max, float(np.max(valid_u)))
 
                 if self._accumulator:
-                    self._accumulator.update(chunk_to_stack, dataset_id)
+                    self._accumulator.update(chunk_to_stack, contribution_key)
 
             else:
                 logger.debug(
@@ -830,8 +803,8 @@ class MultiStackHook(FetchHook):
             colorize(f"({stats_str})", CYAN),
         )
 
-        if self._accumulator and dataset_id:
-            self._accumulator.mark_registered(dataset_id)
+        if self._accumulator and contribution_key:
+            self._accumulator.mark_registered(contribution_key)
 
     def teardown(self):
         if self._accumulator is None:

@@ -1,0 +1,183 @@
+name: mr-globato
+description: "The standard Multi-Resolution Global Bathymetry and Topography pipeline."
+tags:
+  - globato-dem
+  - dem
+hooks:
+  - name: spatial-crop
+  - name: audit
+  - name: enrich
+  - name: transfer_log
+  - name: drop_class
+  - name: provenance
+    args:
+      res: 3s
+      output: "%name%_%batch_name%_provenance.tif"
+
+  - name: source_masks
+    args:
+      res: 3s
+      output: "%name%_%batch_name%_sources.vrt"
+
+  # Side-stack testing, not default for now.
+  - name: side_stack_check
+    args:
+      res: 3s
+      crs: epsg:4326+3855
+
+  - name: side_stack
+    args:
+      res: 3s
+      crs: epsg:4326+3855
+
+  # - name: fusion_consistency
+  #   args:
+  #     hard: true
+  #     hard_threshold: 1
+  #     radius: 5
+  #     sigma: 2.5
+  #     min_residual: 10
+  #     residual_span: 200
+  #     preserve_coherence: 0.8
+  #     min_peer_cells: 4
+  #     # sigma: 4
+  #     # min_residual: 25
+  #     # residual_span: 200
+  #     # preserve_coherence: 0.60
+  #     # min_peer_cells: 8
+  #     group_by: survey_id
+  #     group_bad_fraction: 0.20
+  #     group_bias_threshold: 40
+  #     group_bias_span: 100
+  #     strategy: mixed
+  #     weight_threshold: 0.25/0.5/0.75/1.0
+
+  - name: stack_combine
+    args:
+      res: 3s
+      crs: epsg:4326+3855
+      output: "%name%_%batch_name%_stack.tif"
+
+  # - name: multi_stack
+  #   args:
+  #     res: 3s
+  #     crs: epsg:4326+3855
+  #     strategy: mixed
+  #     nodata: -9999.0
+  #     weight_threshold: 3/2/1/.75/.5/.4/.3/.2/.1
+  #     output: "%name%_%batch_name%_stack.tif"
+  #     # state_fn: "%name%_%batch_name%_state.tif"
+
+  # - name: stack_provenance
+  #   args:
+  #     storage: disk
+  #     output: "%name%_%batch_name%_stack_sources.vrt"
+  #     vector_output: "%name%_%batch_name%_sm.gpkg"
+  #     group_by: MODULE/WEIGHT
+
+  - name: focus_sink
+    args:
+      target: multi_stack
+
+  - name: raster_stream
+    args:
+      stream_type: raster
+      chunk_size: 2048
+      stage: collection
+
+  # --- Testing MS-QUALITY ---
+  # - name: ms_support_weight
+  #   args:
+  #     radius: 5
+  #     floor: 0.6
+  #     power: 0.5
+  #     min_neighbors: 4
+
+  # - name: ms_consistency_weight
+  #   args:
+  #     radius: 5
+  #     method: mad
+  #     min_count: 1
+  #     max_count: 4
+  #     sigma: 3
+  #     max_residual: 20
+  #     floor: 0.6
+  #     min_neighbors: 8
+
+  # --- Testing BLEND ---
+  # - name: ms_blend
+  #   args:
+  #     weight_threshold: 1.0
+  #     blend_dist: 60
+
+  # - name: ms_blend
+  #   args:
+  #     weight_threshold: 0.5
+  #     blend_dist: 60
+
+  # - name: ms_blend
+  #   args:
+  #     weight_threshold: 0.25
+  #     blend_dist: 60
+
+  # # Save the blended stack without breaking the active raster stream.
+  # - name: raster_write
+  #   args:
+  #     suffix: _final_blend
+  #     artifact_id: blended_checkpoint
+
+  # - name: focus_sink
+  #   args:
+  #     target: blended_checkpoint
+
+  - name: ms_binary_cudem
+    args:
+      resolutions: 3s/9s/15s
+      weights:
+        - 0.25
+        - 0.1
+      steps: 2
+      blend_dists: 0/0/0
+      barrier: osm
+      previous_tier_resampling: "cubic_spline"
+      bathy_max_z: "ocean:-0.01,river:0,lake:None,wetland:None,estuary:0"
+      # algos: interp_gmt
+      # algos: "interp_gmt:tension=1/interp_gmt:tension=.75/interp_gmt:tension=.35"
+      # algos: raster_fill/interp_rbf
+      # algos: raster_fill:max_distance=6/raster_fill:max_distance=12/interp_gmt:tension=.95
+      algos: raster_fill
+      output: "%name%_%batch_name%.tif"
+
+  - name: focus_sink
+    args: {target: "ms_binary_cudem"}
+
+  - name: raster_metadata
+    args:
+      tags: "Project=Coastal Relief Model,Version=6,Author=NCEI"
+      bands: "Elevation (meters)"
+
+  - name: format_cog
+    args:
+      overviews: 2/4/8/16/32
+      resampling: average
+
+  - name: viz_geoshade
+    args:
+      output: "%name%_%batch_name%_hs.tif"
+      cmap: coastal_relief
+      cog: true
+
+  - name: cleanup_tmp
+    args: {"target_dir": "tmp"}
+
+  - name: copy_artifact
+    args:
+      target_dir: "%outdir%/delivery"
+      match:
+        - "%name%_%batch_name%.tif"
+
+  - name: copy_artifact
+    args:
+      target_dir: "%outdir%/delivery/hs"
+      match:
+        - "%name%_%batch_name%_hs.tif"

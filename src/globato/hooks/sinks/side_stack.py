@@ -235,7 +235,7 @@ def _resolve_grid(region: Any, res: Any, crs: Any) -> dict[str, Any]:
     xcount, ycount, gt = region.geo_transform(
         x_inc=inc,
         y_inc=inc,
-        node="pixel",
+        node="grid",
     )
 
     transform = rasterio.transform.from_origin(
@@ -623,6 +623,10 @@ class SideStackGenerate(FetchHook):
                 cache_dir,
                 digest,
             )
+
+            if Path(cache_path).exists():
+                entry.setdefault("artifacts", {})["side-stack"] = cache_path
+                continue
 
             logger.debug(
                 "Side-stack miss; generating %s",

@@ -477,9 +477,18 @@ class GlobatoPipelineExecutor(PipelineExecutor):
     help="Force fresh API fetch, bypassing local cache.",
 )
 @click.option(
+    "--ignore-failures",
+    is_flag=True,
+    default=False,
+    help="Continue processing after recoverable failures. "
+    "Failed entries are reported instead of aborting the pipeline.",
+)
+@click.option(
     "--fail-fast",
     is_flag=True,
-    help="Raise on the first failure instead of continuing through failures.",
+    default=False,
+    hidden=True,
+    help="Deprecated: strict failure handling is now the default.",
 )
 @click.pass_context
 def build_cmd(
@@ -498,6 +507,7 @@ def build_cmd(
     shared_cache,
     export,
     refresh,
+    ignore_failures,
     fail_fast,
 ):
     """Build and optionally execute a reproducible coastal DEM workflow.
@@ -547,8 +557,22 @@ def process_build(
     shared_cache,
     export,
     refresh,
+    ignore_failures,
     fail_fast,
 ):
+
+    if fail_fast and ignore_failures:
+        raise click.UsageError(
+            "--fail-fast and --ignore-failures cannot be used together."
+        )
+
+    if fail_fast:
+        click.secho(
+            "Warning: --fail-fast is deprecated; "
+            "strict failure handling is now the default.",
+            fg="yellow",
+            err=True,
+        )
 
     HookRegistry.load_all()
     PresetRegistry.load_all()
@@ -659,6 +683,6 @@ def process_build(
                 shared_cache=shared_cache,
                 outdir=outdir,
                 refresh=refresh,
-                ignore_failures=not fail_fast,
+                ignore_failures=ignore_failures,
             )
         ]
