@@ -29,6 +29,7 @@ from rasterio.windows import Window
 
 from fetchez.hooks import FetchHook
 from fetchez.utils import str2inc, str2bool, int_or
+from fetchez.entry import dataset_id
 from ..transforms.point_pixels import PointPixels
 
 logger = logging.getLogger(__name__)
@@ -188,29 +189,9 @@ class ProvenanceHook(FetchHook):
             logger.debug("Finalized Provenance Mask.")
 
 
-def source_id(entry):
-    """Return the same stable source identity used by persistent stack state."""
-
-    checksum = entry.get("checksum")
-    if checksum:
-        return str(checksum)
-
-    url = entry.get("url", "")
-    dst_fn = entry.get("dst_fn")
-
-    if url and not url.startswith("file://"):
-        return url
-
-    if dst_fn and os.path.exists(dst_fn):
-        size = os.path.getsize(dst_fn)
-        return f"{os.path.basename(dst_fn)}|{size}B"
-
-    return os.path.basename(dst_fn or url or "unknown_dataset")
-
-
-def source_token(dataset_id, length=12):
+def source_token(contribution_key, length=12):
     """Filesystem-safe stable token without encoding an entire URL/path."""
-    return hashlib.sha256(dataset_id.encode("utf-8")).hexdigest()[:length]
+    return hashlib.sha256(contribution_key.encode("utf-8")).hexdigest()[:length]
 
 
 class MaskSet:
@@ -297,14 +278,14 @@ class MaskSet:
             "tiled": True,
         }
 
-        # dataset_id -> tif path
+        # contribution_key -> tif path
         self.masks = {}
 
-    def _path(self, dataset_id):
-        token = source_token(dataset_id)
+    def _path(self, contribution_key):
+        token = source_token(contribution_key)
         return os.path.join(self.output_dir, f"{token}_mask.tif")
 
-    def _validate(self, path, dataset_id):
+    def _validate(self, path, contribution_key):
         with rasterio.open(path) as src:
             if src.width != self.xcount or src.height != self.ycount:
                 return False
@@ -319,18 +300,20 @@ class MaskSet:
             if tags.get(self.TYPE_TAG) != self.mask_type:
                 return False
 
-            if tags.get(self.SOURCE_TAG) != dataset_id:
+            if tags.get(self.SOURCE_TAG) != contribution_key:
                 return False
 
         return True
 
-    def register(self, dataset_id, *, description=None, tags=None):
+    def register(self, contribution_key, *, description=None, tags=None):
         """Create or resume a source mask and return its path."""
 
-        path = self._path(dataset_id)
+        path = self._path(contribution_key)
 
         reuse = (
-            self.resume and os.path.exists(path) and self._validate(path, dataset_id)
+            self.resume
+            and os.path.exists(path)
+            and self._validate(path, contribution_key)
         )
 
         if not reuse:
@@ -348,11 +331,11 @@ class MaskSet:
                         }
                     )
                 metadata[self.TYPE_TAG] = self.mask_type
-                metadata[self.SOURCE_TAG] = dataset_id
+                metadata[self.SOURCE_TAG] = contribution_key
 
                 dst.update_tags(**metadata)
 
-        self.masks[dataset_id] = path
+        self.masks[contribution_key] = path
         return path
 
     @staticmethod
@@ -371,8 +354,8 @@ class MaskSet:
         if mask is None or not np.any(mask):
             return
 
-        for dataset_id, path in self.masks.items():
-            if dataset_id == current_id or not os.path.exists(path):
+        for contribution_key, path in self.masks.items():
+            if contribution_key == current_id or not os.path.exists(path):
                 continue
 
             with rasterio.open(path, "r+") as dst:
@@ -386,7 +369,7 @@ class MaskSet:
     def _valid_masks(self):
         valid = []
 
-        for dataset_id, path in sorted(self.masks.items()):
+        for contribution_key, path in sorted(self.masks.items()):
             if not os.path.exists(path):
                 continue
 
@@ -397,7 +380,7 @@ class MaskSet:
                 # Empty accepted masks are common and harmless.
                 continue
 
-            valid.append((dataset_id, path))
+            valid.append((contribution_key, path))
 
         return valid
 
@@ -741,7 +724,7 @@ class MaskSet:
         records = []
 
         logger.info(f"building vector output: {self.vector_output}")
-        for dataset_id, path in self._valid_masks():
+        for contribution_key, path in self._valid_masks():
             geom = self._footprint(path)
             if geom is None or geom.is_empty:
                 continue
@@ -750,7 +733,7 @@ class MaskSet:
                 tags = src.tags()
 
             record = {
-                "SOURCE_ID": dataset_id,
+                "SOURCE_ID": contribution_key,
                 "geometry": geom,
             }
             record.update(tags)
@@ -864,8 +847,8 @@ class SourceMasks(FetchHook):
             if not self.is_point_stream(entry):
                 continue
 
-            dataset_id = source_id(entry)
-            src_name = os.path.basename(entry.get("dst_fn", dataset_id))
+            contribution_key = dataset_id(entry)
+            src_name = os.path.basename(entry.get("dst_fn", contribution_key))
             base = os.path.splitext(src_name)[0]
 
             tags = {
@@ -887,7 +870,7 @@ class SourceMasks(FetchHook):
                 tags.update({str(k).upper(): v for k, v in entry["metadata"].items()})
 
             path = self._masks.register(
-                dataset_id,
+                contribution_key,
                 description=base,
                 tags=tags,
             )

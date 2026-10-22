@@ -64,8 +64,8 @@ def _drain(entry):
     list(entry["stream"])
 
 
-def _mask_data(hook, dataset_id):
-    path = hook._final_masks.masks[dataset_id]
+def _mask_data(hook, contribution_key):
+    path = hook._final_masks.masks[contribution_key]
     assert os.path.exists(path)
     with rasterio.open(path) as src:
         return src.read(1)
@@ -174,10 +174,10 @@ def test_disk_and_memory_backends_materialize_identical_masks(tmp_path):
     disk, _, _ = _run_mixed_case(tmp_path / "disk_run", "disk")
     memory, _, _ = _run_mixed_case(tmp_path / "memory_run", "memory")
 
-    for dataset_id in ("source-a", "source-b"):
+    for contribution_key in ("source-a", "source-b"):
         np.testing.assert_array_equal(
-            _mask_data(disk, dataset_id),
-            _mask_data(memory, dataset_id),
+            _mask_data(disk, contribution_key),
+            _mask_data(memory, contribution_key),
         )
 
 
