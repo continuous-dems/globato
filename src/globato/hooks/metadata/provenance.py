@@ -180,6 +180,7 @@ class ProvenanceHook(FetchHook):
 
         if self._initialized:
             with rasterio.open(self.output, "r+") as dst:
+                tags = {}
                 for name, idx in self.module_bits.items():
                     tags = {
                         f"MOD_{name}": str(bit)
