@@ -378,7 +378,7 @@ def test_stack_provenance_uses_exact_fusion_state_grid(tmp_path):
         assert stack_window is not None
 
         # Persist the numerical stack.
-        acc.update(points, dataset_id="boundary-source")
+        acc.update(points, contribution_key="boundary-source")
         acc.mark_registered("boundary-source")
 
     finally:
@@ -470,7 +470,7 @@ def test_stack_provenance_uses_exact_multistack_grid_for_boundary_points(tmp_pat
 
         # Put the same points into the real FusionState so stack_provenance
         # initializes from exactly the grid multi_stack produced.
-        acc.update(points, dataset_id="boundary-source")
+        acc.update(points, contribution_key="boundary-source")
         acc.mark_registered("boundary-source")
 
     finally:
@@ -535,7 +535,7 @@ def test_every_stacked_pixel_has_stack_provenance(tmp_path, storage):
 
         points = _point_chunk(xs, ys, weight=0.5)
 
-        acc.update(points, dataset_id="boundary-source")
+        acc.update(points, contribution_key="boundary-source")
         acc.mark_registered("boundary-source")
 
     finally:
