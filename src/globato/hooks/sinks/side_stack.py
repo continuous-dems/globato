@@ -29,7 +29,6 @@ from rasterio.crs import CRS
 
 from fetchez.hooks import FetchHook
 from fetchez.utils import float_or, str2bool, str2inc
-from fetchez.entry import source_id
 
 from globato.hooks.transforms.point_pixels import (
     FUSION_BAND_MAP,
@@ -262,20 +261,6 @@ def _resolve_grid(region: Any, res: Any, crs: Any) -> dict[str, Any]:
         "crs": canonical_crs,
         "resolution": [abs(float(transform.a)), abs(float(transform.e))],
     }
-
-
-def sidestack_provenance(entry):
-    metadata = entry.get("metadata") or {}
-    survey_id = entry.get("survey_id") or metadata.get("survey_id")
-
-    tags = {
-        "GLOBATO_SOURCE_ID": source_id(entry),
-    }
-
-    if survey_id is not None and str(survey_id).strip():
-        tags["GLOBATO_SURVEY_ID"] = str(survey_id)
-
-    return tags
 
 
 @dataclass(frozen=True)
@@ -638,10 +623,6 @@ class SideStackGenerate(FetchHook):
                 cache_dir,
                 digest,
             )
-
-            if Path(cache_path).exists():
-                entry.setdefault("artifacts", {})["side-stack"] = cache_path
-                continue
 
             logger.debug(
                 "Side-stack miss; generating %s",
