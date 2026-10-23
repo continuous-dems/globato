@@ -114,12 +114,19 @@ def _replay_manifest_hooks(module, qc, entries):
     return entries
 
 
-def grid_sources(qc, module, entries, region, res, threads):
-    """Seven-band QC-grid side-stacks for every collected entry (cached)."""
+def grid_sources(qc, module, entries, region, res, threads, *, collected=True):
+    """Seven-band QC-grid side-stacks for every selected entry (cached).
+
+    ``collected`` entries have been through their stream stage; manifest-stage
+    entries have not, so they need no source-CRS restoration.
+    """
     clone = copy.copy(module)
     clone.region = region
     clone.internal_hooks, clone.external_hooks = _source_hooks(module, qc)
     fresh = [_fresh(e) for _, e in entries]
+    if not collected:
+        for e in fresh:
+            e["_stack_qc_restored_srs"] = True
     if not all(e["_stack_qc_restored_srs"] for e in fresh):
         # No recorded manifest-time CRS: rebuild it from the module's hooks.
         fresh = [
@@ -372,17 +379,27 @@ def write_accepted(rec, masks, target, signature, path):
 
 
 def prepare(qc, module, entries, *, threads):
-    """Filter one module's collected entries in place and return them."""
+    """Filter one module's selected entries in place and return them.
+
+    At the manifest stage (``multi_stack`` recipes) each filtered entry gets
+    its accepted measurements as a FusionState stream on the DEM grid, which
+    the normal stream stage hands to ``multi_stack``. At the collection stage
+    (``side_stack`` + ``stack_combine`` recipes) the entry's ``side-stack``
+    artifact is pointed at the accepted side-stack instead.
+    """
     from .resampling import nested_region, output_grid
 
+    manifest = qc.stage == "manifest"
     if not entries:
-        logger.info("Stack QC %s: no collected sources; nothing to filter", module.name)
+        logger.info("Stack QC %s: no selected sources; nothing to filter", module.name)
         return entries
-    if any("multi_stack" in (e.get("artifacts") or {}) for _, e in entries):
+    if not manifest and any(
+        "multi_stack" in (e.get("artifacts") or {}) for _, e in entries
+    ):
         raise ValueError(
-            "stack_qc runs on side-stacks before stack_combine; this recipe "
-            "already stacked the sources with multi_stack. Use side_stack + "
-            "stack_combine in place of multi_stack."
+            "stack_qc at the collection stage filters side-stacks before "
+            "stack_combine, but this recipe already stacked the sources with "
+            "multi_stack. Use stage: manifest with multi_stack."
         )
     region = module.region
     if region is None:
@@ -395,7 +412,21 @@ def prepare(qc, module, entries, *, threads):
     if qc.qc_increment is not None:
         qc_stack = qc.stack_hook(qc.qc_increment)
         qc_region, _ = nested_region(region, qc_stack, target)
-        prepared = grid_sources(qc, module, entries, qc_region, qc_stack.res, threads)
+        prepared = grid_sources(
+            qc,
+            module,
+            entries,
+            qc_region,
+            qc_stack.res,
+            threads,
+            collected=not manifest,
+        )
+    elif manifest:
+        # Nothing is gridded yet: grid on the DEM grid itself.
+        qc_stack, qc_region = dem_stack, region
+        prepared = grid_sources(
+            qc, module, entries, qc_region, qc_stack.res, threads, collected=False
+        )
     else:
         # The module's own DEM-grid side-stacks are the QC grids.
         qc_stack, qc_region, prepared = dem_stack, region, entries
@@ -455,7 +486,7 @@ def prepare(qc, module, entries, *, threads):
             reused=reused,
         ),
     )
-    stream_target = target if qc.qc_increment is not None else None
+    stream_target = target if qc_stack is not dem_stack else None
     by_index = {r["index"]: r for r in records}
     written = 0
     with FileLock(str(cache / ".accepted.lock")):
@@ -463,8 +494,8 @@ def prepare(qc, module, entries, *, threads):
             rec = by_index.get(i)
             artifacts = entry.setdefault("artifacts", {})
             if rec is None:
-                # No measurements on the QC grid, so none on the DEM grid.
-                if artifacts.get("side-stack"):
+                if not manifest and artifacts.get("side-stack"):
+                    # No measurements on the QC grid, so none on the DEM grid.
                     artifacts["stack_qc_original_side_stack"] = artifacts.pop(
                         "side-stack"
                     )
@@ -477,15 +508,18 @@ def prepare(qc, module, entries, *, threads):
                 cache / f"accepted_{tag}" / (io.digest(rec["source_id"])[:24] + ".tif"),
             )
             written += 1
-            if artifacts.get("side-stack"):
-                artifacts["stack_qc_original_side_stack"] = artifacts["side-stack"]
-            artifacts["side-stack"] = str(accepted)
             artifacts["stack_qc"] = str(receipt)
             artifacts["stack_qc_mask"] = masks[rec["source_id"]]["mask"]
             entry["_stack_qc_signature"] = signature
+            if manifest:
+                _attach_accepted(entry, accepted, rec, signature)
+            else:
+                if artifacts.get("side-stack"):
+                    artifacts["stack_qc_original_side_stack"] = artifacts["side-stack"]
+                artifacts["side-stack"] = str(accepted)
     logger.info(
         "Stack QC %s: %s; %d passes; %s source cells rejected, %s restored; "
-        "%d accepted side-stacks (QC grid %s, DEM grid %s); "
+        "%d accepted sources (QC grid %s, DEM grid %s); "
         "QC grids %.1f min, filter %.1f min, accepted side-stacks %.1f min",
         module.name,
         "cached result reused" if reused else "filtered",
@@ -500,3 +534,31 @@ def prepare(qc, module, entries, *, threads):
         (time.monotonic() - filtered) / 60,
     )
     return entries
+
+
+def _attach_accepted(entry, accepted, rec, signature):
+    """Give a manifest-stage entry its accepted measurements as a FusionState stream.
+
+    The stream stage then skips reading the source (an entry that already has a
+    stream is not read again; point transforms skip raster streams) and
+    multi_stack stacks it. The contribution id keeps the filtered contribution
+    distinct from an unfiltered one in multi_stack's registered datasets. Any
+    side-stack lookup made for the unfiltered source is dropped, and the QC
+    result joins the entry's processing record, so a side-stack cache can never
+    mix filtered and unfiltered data.
+    """
+    from fetchez.entry import set_contribution_id
+    from globato.hooks.sinks.side_stack import read_fusion_state_stream
+
+    for key in [k for k in entry if k.startswith("_sidestack")]:
+        entry.pop(key)
+    entry["artifacts"].pop("side-stack", None)
+    entry["artifacts"]["stack_qc_accepted"] = str(accepted)
+    entry["stream"] = read_fusion_state_stream(str(accepted))
+    entry["stream_type"] = "raster-stream"
+    entry["data_type"] = "fusion-state"
+    entry["src_srs"] = rec["src_srs"]
+    set_contribution_id(entry, "stack_qc", signature[:16])
+    entry["hooks"] = list(entry.get("hooks", []) or []) + [
+        dict(name="stack_qc_result", signature=signature)
+    ]

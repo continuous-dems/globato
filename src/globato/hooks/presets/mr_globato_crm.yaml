@@ -3,11 +3,8 @@ description: "The standard CRM step-down, trim, and visualize pipeline."
 tags:
   - globato-dem
   - dem
-# Stacks through side-stacks and stack_combine (not multi_stack), so that
-# collection-stage filters such as stack_qc (on mbdb in crm-bathy-topo) can
-# replace a source's side-stack before the stack is assembled.
 hooks:
-  - preset: mr-globato-ss
+  - preset: mr-globato
     args:
       - name: ms_binary_cudem
         args:
@@ -32,12 +29,10 @@ hooks:
         args:
           res: 1s
           crs: "EPSG:4326+3855"
-      - name: stack_combine
+      - name: multi_stack
         args:
           res: 1s
           crs: "EPSG:4326+3855"
-          strategy: mixed
-          weight_threshold: 3/2/1/.75/.5/.4/.3/.2/.1
       - name: source_masks
         args:
           res: 1s
@@ -51,3 +46,30 @@ hooks:
         args:
           z_min: -3000
           z_max: 1000
+
+  # Multibeam (mbdb) filtering, in place of rq (see crm-bathy-topo). Listed
+  # after the mr-globato preset so it runs after that preset's global manifest
+  # hooks (file selection) and before multi_stack. It filters on a 1/9" grid
+  # and stacks the accepted measurements on the 1" grid. The interpolation
+  # block is its working-DEM ladder, written for the 1" grid like
+  # ms_binary_cudem above; keep the two in step.
+  - name: stack_qc
+    args:
+      modules: mbdb
+      stage: manifest
+      res: 1s
+      crs: "EPSG:4326+3855"
+      qc_res: 1/9s
+      aggressiveness: 2
+      terrain_restoration: 2
+      max_passes: 5
+      stop_when_stable: false
+      interpolation:
+        steps: 3
+        resolutions: 1s/3s/9s/15s
+        weights: [0.6, 0.4, 0.2]
+        algos: raster_fill/raster_fill/raster_fill/interp_gmt:tension=1
+        blend_dists: 32/16/8/4
+        barrier: osm
+        previous_tier_resampling: cubic_spline
+        bathy_max_z: "ocean:-0.01,river:0,lake:None,wetland:None,estuary:0"

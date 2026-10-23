@@ -5,43 +5,45 @@ inconsistent cells, and restores original contributions supported by the
 surrounding terrain and survey evidence. Source files are unchanged;
 decisions are recorded as 0/1 masks on each source's grid.
 
-`stack_qc` is a standard collection-stage hook. It works in recipes that stack
-with `side_stack` and `stack_combine` (for example the `mr-globato-ss`,
-`mr-globato-crm` and `mr-globato-cudem` presets): the normal stream stage writes
-each source's side-stack, `stack_qc` replaces a module's side-stacks with
-filtered ones, and `stack_combine` assembles the MultiStack. It refuses a
-recipe that stacks with `multi_stack`, which has already consumed the
-unfiltered streams by the collection stage.
+`stack_qc` is a standard hook that works with either way of stacking.
 
-Attach it to a module, after the module's source transforms:
+**`multi_stack` recipes (default, `stage: manifest`).** List it in
+`global_hooks` with `modules:`, after any global manifest hooks that select
+files, so only files that will be stacked are filtered. The CRM and CUDEM
+presets append it after the `mr-globato` preset:
 
 ```yaml
-- module: mbdb
-  hooks:
-    - name: set-srs
-      args: {srs: "EPSG:4326+vdatum:msl"}
-    - name: stream_data
-    - name: stream_reproject
-      args: {dst_srs: "EPSG:4326+3855"}
-    - name: stack_qc
-      args:
-        res: 1s
-        crs: "EPSG:4326+3855"
-        qc_res: 1/9s
-        max_passes: 5
-        stop_when_stable: false
-        interpolation:
-          steps: 3
-          resolutions: 1s/3s/9s/15s
-          weights: [0.6, 0.4, 0.2]
-          algos: raster_fill/raster_fill/raster_fill/interp_gmt:tension=1
-          blend_dists: 32/16/8/4
-          barrier: osm
+global_hooks:
+  - preset: mr-globato
+  - name: stack_qc
+    args:
+      modules: mbdb
+      res: 1s
+      crs: "EPSG:4326+3855"
+      qc_res: 1/9s
+      max_passes: 5
+      stop_when_stable: false
+      interpolation:
+        steps: 3
+        resolutions: 1s/3s/9s/15s
+        weights: [0.6, 0.4, 0.2]
+        algos: raster_fill/raster_fill/raster_fill/interp_gmt:tension=1
+        blend_dists: 32/16/8/4
+        barrier: osm
 ```
 
-Or list it in `global_hooks`, before `stack_combine`, with `modules: mbdb` (or
-several module names). Use the global form when global manifest hooks drop
-files you do not want in the filter (module hooks run before them).
+Each filtered file's accepted measurements reach the stream stage as a
+FusionState stream on the DEM grid; `multi_stack`, `provenance`,
+`source_masks` and `stack_provenance` consume it like any other source. The
+entry is marked with `entry.set_contribution_id("stack_qc", ...)`, so
+`multi_stack` registers it separately from the unfiltered file. As a
+module-level hook it would run before global selection hooks, so prefer the
+global form.
+
+**`side_stack` + `stack_combine` recipes (`stage: collection`).** Attach it to
+the module (or list it globally before `stack_combine`): it filters the
+module's side-stacks and points each entry's `side-stack` artifact at the
+filtered one. It refuses a recipe that already stacked with `multi_stack`.
 
 The optional `stack_qc_review` hook writes an HTML review with before/after
 hillshades. Put it in `global_hooks` after the final interpolation (see
@@ -53,8 +55,10 @@ Grid and working DEM:
 
 | Setting | Default | Purpose |
 | --- | --- | --- |
-| `res` | `1s` | DEM grid of the accepted side-stacks; equal to `stack_combine.res` |
-| `crs` | `EPSG:4326+3855` | Stack CRS; equal to `stack_combine.crs` |
+| `res` | `1s` | DEM grid of the accepted measurements; equal to the stack's `res` |
+| `crs` | `EPSG:4326+3855` | Stack CRS; equal to the stack's `crs` |
+| `stage` | `manifest` | `manifest` for `multi_stack`, `collection` for `stack_combine` |
+| `modules` | all | Modules to filter when used as a global hook |
 | `qc_res` | none | Optional finer QC grid, `res / N` (e.g. `1/9s` for a 1s DEM) |
 | `stack_strategy` | `mixed` | Working-DEM MultiStack strategy |
 | `stack_weight_threshold` | `3/2/1/.75/.5/.4/.3/.2/.1` | Working-DEM MultiStack weight tiers |
@@ -182,8 +186,9 @@ A factor of nine means up to 81 times the working cells; finer QC costs more.
 
 ## Provenance
 
-`provenance` and `source_masks` run in the stream stage, before Stack QC, so
-they record each source's coverage before filtering.
+With `stage: manifest`, `provenance`, `source_masks` and `stack_provenance`
+see the filtered measurements. With `stage: collection` they run in the
+stream stage, before Stack QC, and record coverage before filtering.
 
 ## Review pages
 
