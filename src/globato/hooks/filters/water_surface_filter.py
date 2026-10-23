@@ -53,11 +53,13 @@ class WaterSurfaceFilter(GlobatoFilter):
         soft=False,
         skip_entry=None,
         hard_clip_below=None,
+        barrier_res=None,
         **kwargs,
     ):
         super().__init__(**kwargs)
         self.barrier = barrier
         self.res = str2inc(res)
+        self.barrier_res = self.res if barrier_res is None else str2inc(barrier_res)
 
         # Roughness is used only to decide whether a cell is trustworthy enough
         # to estimate water level. It is NOT a terrain classifier.
@@ -109,7 +111,7 @@ class WaterSurfaceFilter(GlobatoFilter):
             self.barrier,
             region=region,
             outdir=os.path.join(cache_dir, "auto_barriers"),
-            res=self.res,
+            res=self.barrier_res,
             include_rivers=True,
             include_lakes=True,
             include_breakwaters=True,
