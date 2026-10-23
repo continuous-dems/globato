@@ -139,7 +139,9 @@ def _process(inventory, settings, cache, build, pool, workers=1):
         log(
             "Stack QC: assessing original survey evidence for terrain recovery/coverage"
         )
-        quality = survey_coverage.original_quality(pool, cache / "survey_quality.json")
+        quality = survey_coverage.original_quality(
+            pool, cache / "survey_quality.json", workers=workers
+        )
         restored = (
             cache
             / "restoration"

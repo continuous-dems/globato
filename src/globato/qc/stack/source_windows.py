@@ -1,12 +1,11 @@
 """Bounded native-window QC. Original arrays and interpolation are never edited."""
 
-import multiprocessing
-from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 import numpy as np
 import rasterio
 from scipy import ndimage as ndi
 from .io import log, windows, raster_window, mm
+from .parallel import process_pool
 from .sources import MaskWriter
 from . import geometry as detector, plane as terrain_protection, surveys as se
 
@@ -58,8 +57,7 @@ def geometry(dem, out, levels, settings=None, workers=1):
         np.save(out / "VALID.npy", valid)
         paths = {i: str(out / f"L{i}.npy") for i in masks}
         tasks = [blocks[i::workers] for i in range(workers)]
-        context = multiprocessing.get_context("spawn")
-        with ProcessPoolExecutor(max_workers=workers, mp_context=context) as pool:
+        with process_pool(workers) as pool:
             done = 0
             for count in pool.map(
                 _geometry_blocks,
@@ -221,11 +219,10 @@ def reject(pool, parent, dem, out, level, consensus=False, settings=None, worker
             if hasattr(a, "flush"):
                 a.flush()
         paths = {i: str(out / "GEOMETRY" / f"L{i}.npy") for i in g}
-        executor = ProcessPoolExecutor(
-            max_workers=workers,
-            mp_context=multiprocessing.get_context("spawn"),
-            initializer=_init_reject_worker,
-            initargs=(pool.inv, paths, parent, level, consensus, tolerance),
+        executor = process_pool(
+            workers,
+            _init_reject_worker,
+            (pool.inv, paths, parent, level, consensus, tolerance),
         )
         results = executor.map(_reject_worker_block, blocks, chunksize=4)
     else:

@@ -174,14 +174,10 @@ def restore(
     blocks = list(windows(pool.shape, CORE, halo))
     executor = None
     if workers > 1 and len(blocks) > 1:
-        import multiprocessing
-        from concurrent.futures import ProcessPoolExecutor
+        from .parallel import process_pool
 
-        executor = ProcessPoolExecutor(
-            max_workers=workers,
-            mp_context=multiprocessing.get_context("spawn"),
-            initializer=_init_worker,
-            initargs=(pool.inv, parent, sets, spacing, evaluated, scales),
+        executor = process_pool(
+            workers, _init_worker, (pool.inv, parent, sets, spacing, evaluated, scales)
         )
         results = executor.map(_worker_block, blocks, chunksize=4)
     else:

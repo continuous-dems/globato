@@ -15,28 +15,71 @@ from .sources import MaskWriter
 CORE = 256
 
 
-def original_quality(pool, out):
+def _quality_block(pool, block):
+    """Integer evidence counts for one block, per survey group."""
+    s, b, inner = block
+    values, unknown = pool.values(b)
+    ev = se.evidence(values, unknown)
+    counts = []
+    for gi, _ in enumerate(pool.groups):
+        v = np.isfinite(values[gi][inner])
+        a = ev["good"][gi][inner]
+        bad = ev["bad"][gi][inner]
+        blocks = occupied = 0
+        for ss, _, _ in windows(v.shape, 32):
+            blocks += int((a[ss] | bad[ss]).any())
+            occupied += int(v[ss].any())
+        counts.append((int(v.sum()), int(a.sum()), int(bad.sum()), blocks, occupied))
+    return counts
+
+
+_WORKER: dict = {}
+
+
+def _init_quality_worker(inventory):
+    import atexit
+
+    from .sources import SourcePool
+
+    pool = SourcePool(inventory)
+    atexit.register(pool.close)
+    _WORKER["pool"] = pool
+
+
+def _quality_worker_block(block):
+    return _quality_block(_WORKER["pool"], block)
+
+
+def original_quality(pool, out, workers=1):
+    """Per-survey evidence totals; sums of integers, so any block order is exact."""
     if Path(out).exists():
         return read(out)
     acc = {
         g: dict(observed=0, good=0, bad=0, blocks=0, occupied=0) for g in pool.groups
     }
-    for n, (s, b, inner) in enumerate(windows(pool.shape, CORE, 1), 1):
-        values, unknown = pool.values(b)
-        ev = se.evidence(values, unknown)
-        for gi, g in enumerate(pool.groups):
-            v = np.isfinite(values[gi][inner])
-            a = ev["good"][gi][inner]
-            bad = ev["bad"][gi][inner]
-            q = acc[g]
-            q["observed"] += int(v.sum())
-            q["good"] += int(a.sum())
-            q["bad"] += int(bad.sum())
-            for ss, _, _ in windows(v.shape, 32):
-                q["blocks"] += int((a[ss] | bad[ss]).any())
-                q["occupied"] += int(v[ss].any())
-        if n % 128 == 0:
-            log(f"Original survey evidence blocks complete: {n}")
+    blocks = list(windows(pool.shape, CORE, 1))
+    executor = None
+    if workers > 1 and len(blocks) > 1:
+        from .parallel import process_pool
+
+        executor = process_pool(workers, _init_quality_worker, (pool.inv,))
+        results = executor.map(_quality_worker_block, blocks, chunksize=8)
+    else:
+        results = (_quality_block(pool, block) for block in blocks)
+    try:
+        for n, counts in enumerate(results, 1):
+            for g, (observed, good, bad, blocks_, occupied) in zip(pool.groups, counts):
+                q = acc[g]
+                q["observed"] += observed
+                q["good"] += good
+                q["bad"] += bad
+                q["blocks"] += blocks_
+                q["occupied"] += occupied
+            if n % 128 == 0:
+                log(f"Original survey evidence blocks complete: {n}")
+    finally:
+        if executor is not None:
+            executor.shutdown(cancel_futures=True)
     result = {
         g: dict(
             se.quality(a["observed"], a["good"], a["bad"], a["blocks"]),
