@@ -34,8 +34,7 @@ def test_different_source_and_output_grids_require_aggregation():
 
 
 def test_qc_geometry_plane_neighborhoods_are_in_cells_not_metres():
-    # Do not refactor these fixed scientific windows as part of a docs/IO change.
+    # Windows are cell counts; the defaults keep the original fixed windows.
     assert plane.PLANE_RADIUS == 4
-    source = __import__("inspect").getsource(geometry.evidence)
-    assert "size=9" in source
-    assert "size=25" in source
+    assert geometry.DEFAULT_WINDOWS == (3, 9, 25)
+    assert geometry.DEFAULT_FLANKS == (4, 6, 9, 12)

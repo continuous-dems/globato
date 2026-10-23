@@ -10,9 +10,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### ADDED
 * A `py.typed` marker, so type checkers read globato's type annotations in code that uses it (#284). mypy now runs on every pull request, in a new "Typecheck" workflow.
 * Added `stack_combine` hook to combine multiple fusion-state stack files into a multi-stack.
+* `stack_qc` hook: Stack QC source filtering and terrain restoration (from #285) as a standard hook. By default (`stage: manifest`, a global hook with `modules:`) it runs after global file selection and hands each file's accepted measurements to `multi_stack` as a FusionState stream, recorded with `entry.set_contribution_id`; with `stage: collection` it filters side-stacks for `stack_combine`. It filters optionally on a finer `qc_res` grid, against working DEMs built in the same process. Detection thresholds, window sizes, plane tolerance and restoration scales, and the working-DEM settings, are hook arguments. Results are cached on the filter's own inputs only.
+* `stack_qc_review` hook: optional HTML review (before/after hillshades) of Stack QC results, written after the final DEM.
 
 ### CHANGED
 * Updated `globato build` to use `ignore-failures` instead of `fail-fast`
+* `mr-globato-crm` and `mr-globato-cudem` add `stack_qc` for multibeam (after the base preset's global manifest hooks, before `multi_stack`).
+* `multi_stack` dataset ids include an entry's `contribution_id` when it has one; ids of other entries are unchanged.
+* Requires fetchez 0.12.1.
+* `crm-bathy-topo` no longer runs `rq` on NCEI multibeam (`mbdb`); the CRM preset filters it with `stack_qc` (1/9" QC for the 1" DEM) and the CUDEM preset on its own 1/9" grid. Other recipes using `global-bathy-topo` keep `rq`.
+* `mr-globato-crm` tier weights are 0.6/0.4/0.2 (were 1/0.5/0.25), so multibeam (stack weights ~0.8-0.95) is gridded at 1" instead of 3". On the 330 Southern California CRM tiles no other dataset changed tier (module weights are >= 1 or <= 0.5).
 
 ### FIXED
 * The `glob_sdb` module failed with `ModuleNotFoundError: No module named 'globato.cli.recipe'` as soon as it started building its training DEM (#284). It now uses `fetchez.recipe.Recipe`.

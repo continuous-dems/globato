@@ -30,17 +30,17 @@ def changes(before, after):
     return dict(maximum_absolute_change_m=largest, coverage_changed_cells=coverage)
 
 
-def process(inventory, settings, cache, build):
+def process(inventory, settings, cache, build, workers=1):
     cache = Path(cache)
     cache.mkdir(parents=True, exist_ok=True)
     pool = SourcePool(inventory)
     try:
-        return _process(inventory, settings, cache, build, pool)
+        return _process(inventory, settings, cache, build, pool, workers)
     finally:
         pool.close()
 
 
-def _process(inventory, settings, cache, build, pool):
+def _process(inventory, settings, cache, build, pool, workers=1):
     memo = {}
     verified = {}
 
@@ -91,6 +91,8 @@ def _process(inventory, settings, cache, build, pool):
                 folder,
                 settings.aggressiveness,
                 settings.consensus,
+                settings=settings,
+                workers=workers,
             )
         # A context DEM is useful only if another QC pass can consume it.
         # The final mask goes directly to the normal global build interpolation.
@@ -137,7 +139,9 @@ def _process(inventory, settings, cache, build, pool):
         log(
             "Stack QC: assessing original survey evidence for terrain recovery/coverage"
         )
-        quality = survey_coverage.original_quality(pool, cache / "survey_quality.json")
+        quality = survey_coverage.original_quality(
+            pool, cache / "survey_quality.json", workers=workers
+        )
         restored = (
             cache
             / "restoration"
@@ -157,6 +161,11 @@ def _process(inventory, settings, cache, build, pool):
                 [settings.terrain_restoration],
                 quality,
                 settings.survey_exclusion,
+                scales=(
+                    settings.restoration_length_scale,
+                    settings.restoration_fit_scale,
+                ),
+                workers=workers,
             )
             final_path, final = branches[settings.terrain_restoration]
             write(done, dict(manifest=str(final_path)))

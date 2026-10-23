@@ -9,18 +9,19 @@ The repository contains four complete recipes in `examples/stack_qc/`:
 | `la_canyons_1_9.yaml` | LA Canyons, 1/9 arcsecond |
 | `la_canyons_1s.yaml` | LA Canyons, 1 arcsecond |
 
-All use NAD83 geographic bounds (EPSG:4269) and the same five established
-settings. They omit optional qc_res so QC follows each final grid. Use separate
-output folders and stock Fetchez, with the normal Globato command:
+All use NAD83 geographic bounds (EPSG:4269) and the same filter settings. They
+stack with side_stack + stack_combine (stack_qc filters side-stacks before they
+are combined) and end with stack_qc_review. They omit optional qc_res so QC
+follows each final grid. Use separate output folders:
 
 ```bash
 globato run examples/stack_qc/redondo_1s.yaml \
-  --outdir /path/to/redondo_1s --shared-cache /path/to/data --fail-fast
+  --outdir /path/to/redondo_1s --shared-cache /path/to/data
 ```
 
 To evaluate finer QC on the 1s final grid, copy a 1s recipe and add
-`qc_res: "1/9s"` to its module's stack_qc args. Keep multi_stack and the final
-interpolation settings unchanged. See the Stack QC user guide for units,
+`qc_res: "1/9s"` to its module's stack_qc args (the interpolation ladder stays
+written for the 1s grid; it is scaled down automatically). See the Stack QC user guide for units,
 integer nesting, processing bounds and optional coverage consumers.
 
 ## Separate reproduction package

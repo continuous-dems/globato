@@ -47,3 +47,23 @@ hooks:
         args:
           z_min: -2000
           z_max: 1000
+
+  # Multibeam (mbdb) filtering on the 1/9" CUDEM grid itself, in place of rq
+  # (see crm-bathy-topo). Runs after the mr-globato preset's global manifest
+  # hooks and before multi_stack. The interpolation block mirrors
+  # ms_binary_cudem above.
+  - name: stack_qc
+    args:
+      modules: mbdb
+      stage: manifest
+      res: .1111111s
+      crs: "EPSG:4269+5703"
+      interpolation:
+        steps: 5
+        resolutions: .1111111s/.3333333s/1s/3s/9s/15s
+        weights: [2.0, 1.0, 0.5, 0.25, 0.1]
+        algos: raster_fill/raster_fill/raster_fill/raster_fill/raster_fill/interp_gmt:tension=.95
+        blend_dists: 64/32/16/8/4/2
+        barrier: osm
+        previous_tier_resampling: cubic_spline
+        bathy_max_z: "ocean:-0.01,river:0,lake:None,wetland:None,estuary:0"

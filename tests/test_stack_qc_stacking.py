@@ -10,7 +10,8 @@ from fetchez.spatial import Region
 from globato.hooks.sinks.multi_stack import MultiStackHook
 from globato.hooks.transforms.point_pixels import FUSION_BANDS
 from globato.qc.stack import io
-from globato.qc.stack.native import NativeBuilder, masked_stream
+from globato.qc.stack.context import WorkingSurface
+from globato.qc.stack.native import masked_stream
 from globato.qc.stack.stacking import rebuild
 
 
@@ -114,8 +115,9 @@ def reference(stack, region, records, manifest, path):
 
 
 @pytest.mark.parametrize("strategy", ["mean", "weighted_mean", "mixed", "supercede"])
+@pytest.mark.parametrize("workers", [1, 3])
 def test_rebuilt_all_bands_exactly_match_native_replay_and_reuse_unchanged_blocks(
-    tmp_path, strategy
+    tmp_path, strategy, workers
 ):
     stack, region, records = fixture(tmp_path, strategy)
     a = stack.create_accumulator(
@@ -123,7 +125,7 @@ def test_rebuilt_all_bands_exactly_match_native_replay_and_reuse_unchanged_block
         output=str(tmp_path / "base.tif"),
         state=str(tmp_path / "base.state.tif"),
     )
-    details = rebuild(a, records, None)
+    details = rebuild(a, records, None, workers=workers)
     a.finalize(statistics=False)
     previous = dict(**details, state=a.state_fn, masks=None)
     current = mask(tmp_path, records, "one", source=2)
@@ -132,7 +134,7 @@ def test_rebuilt_all_bands_exactly_match_native_replay_and_reuse_unchanged_block
         output=str(tmp_path / "update.tif"),
         state=str(tmp_path / "update.state.tif"),
     )
-    updated = rebuild(b, records, current, previous)
+    updated = rebuild(b, records, current, previous, workers=workers)
     b.finalize(statistics=False)
     assert updated["timings"]["rebuilt_blocks"] == 1
     assert updated["timings"]["changed_blocks"] == 1
@@ -151,7 +153,13 @@ def test_rebuilt_all_bands_exactly_match_native_replay_and_reuse_unchanged_block
         output=str(tmp_path / "moved.tif"),
         state=str(tmp_path / "moved.state.tif"),
     )
-    more = rebuild(c, records, moved, dict(**updated, state=b.state_fn, masks=current))
+    more = rebuild(
+        c,
+        records,
+        moved,
+        dict(**updated, state=b.state_fn, masks=current),
+        workers=workers,
+    )
     c.finalize(statistics=False)
     assert more["timings"]["rebuilt_blocks"] == 2
     expected = reference(stack, region, records, moved, tmp_path / "reference2.tif")
@@ -159,13 +167,25 @@ def test_rebuilt_all_bands_exactly_match_native_replay_and_reuse_unchanged_block
         np.testing.assert_array_equal(actual.read(), wanted.read())
 
 
+def interpolators():
+    from globato.hooks.rasters.binary_cudem import BinaryCudemStepDown
+
+    return [
+        BinaryCudemStepDown(
+            steps=1,
+            resolutions="3/9",
+            weights=".5",
+            algos="raster_fill/raster_fill",
+            barrier=None,
+            inland_decay_dist=0,
+        )
+    ]
+
+
 def test_unchanged_winning_state_skips_native_interpolation(tmp_path):
     # In supercede mode the lower-weight source is hidden by better observations.
-    from test_stack_qc_native import setup
-
-    _, _, hooks = setup(tmp_path)
     stack, region, records = fixture(tmp_path, "supercede")
-    builder = NativeBuilder(stack, [hooks[-1]], records, region)
+    builder = WorkingSurface(stack, interpolators, records, region, tmp_path)
     baseline = builder(None, tmp_path / "baseline")
     manifest = tmp_path / "manifest.json"
     io.write(manifest, mask(tmp_path, records, "loser"))
@@ -180,11 +200,8 @@ def test_unchanged_winning_state_skips_native_interpolation(tmp_path):
 
 
 def test_changed_fusion_state_invalidates_cached_context(tmp_path):
-    from test_stack_qc_native import setup
-
-    _, _, hooks = setup(tmp_path)
     stack, region, records = fixture(tmp_path, "mean")
-    builder = NativeBuilder(stack, [hooks[-1]], records, region)
+    builder = WorkingSurface(stack, interpolators, records, region, tmp_path)
     builder(None, tmp_path / "baseline")
     with Path(builder.previous["state"]).open("ab") as stream:
         stream.write(b"changed")

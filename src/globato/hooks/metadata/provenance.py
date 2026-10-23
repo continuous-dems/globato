@@ -238,8 +238,6 @@ class ProvenanceHook(FetchHook):
 def source_id(entry):
     """Return the same stable source identity used by persistent stack state."""
 
-    if entry.get("_stack_qc_source_id"):
-        return str(entry["_stack_qc_source_id"])
     checksum = entry.get("checksum")
     if checksum:
         return str(checksum)

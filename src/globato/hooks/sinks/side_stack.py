@@ -420,7 +420,6 @@ class SideStackCheck(FetchHook):
 
     name = "side_stack_check"
     meta_stage = "manifest"
-    defer_to_preparation = True
 
     def __init__(self, res="1s", crs="EPSG:4326", cache_dir=None, **kwargs):
         super().__init__(**kwargs)

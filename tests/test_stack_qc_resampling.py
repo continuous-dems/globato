@@ -1,6 +1,5 @@
 """Independent QC resolution: exact additive statistics and native delivery."""
 
-from pathlib import Path
 from types import SimpleNamespace
 import copy
 import numpy as np
@@ -188,40 +187,6 @@ def test_nine_to_one_matches_existing_experiment_with_float_roundoff_only(tmp_pa
     np.testing.assert_array_equal(actual[1], expected[1])
 
 
-def test_native_fine_qc_delivers_coarse_dem_and_reuses_source_cache(
-    tmp_path, monkeypatch
-):
-    from test_stack_qc_native import setup, run_plan
-    from globato.qc.stack import io
-
-    monkeypatch.chdir(tmp_path)
-    masks = []
-    times = {}
-    for iteration in range(2):
-        mod, qc, hooks = setup(tmp_path)
-        qc.qc_res = 1.0
-        result = run_plan([mod], global_hooks=hooks)
-        assert Path(result[0][1]["dst_fn"]).is_file()
-        context = next((tmp_path / "qc").glob("*/SOURCES.json"))
-        inventory = io.read(context)
-        assert inventory["grid"]["shape"] == [192, 192]
-        report = io.read(next(context.parent.glob("result_*.json")))
-        mask_path = next(iter(io.read(report["manifest"])["masks"].values()))["mask"]
-        with rasterio.open(mask_path) as ds:
-            masks.append(ds.read(1))
-        with rasterio.open(tmp_path / "normal_dem.tif") as ds:
-            assert ds.shape == (64, 64) and ds.transform.a == 3
-            assert ds.read(1, masked=True).max() < -90
-        assert hooks[0].res == "3" and hooks[-1].resolutions[0] == 3
-        paths = list((tmp_path / "source_cache").rglob("*sidestack.tif"))
-        assert paths
-        if iteration == 0:
-            times = {str(p): p.stat().st_mtime_ns for p in paths}
-        else:
-            assert all(Path(p).stat().st_mtime_ns == t for p, t in times.items())
-    np.testing.assert_array_equal(*masks)
-
-
 def test_numeric_resolution_ending_in_zero_and_real_nad83_nesting():
     from globato.qc.stack.resampling import resolution
 
@@ -234,48 +199,6 @@ def test_numeric_resolution_ending_in_zero_and_real_nad83_nesting():
     source_grid = output_grid(fine, region)
     ds = SimpleNamespace(transform=source_grid["transform"], crs=source_grid["crs"])
     assert alignment(ds, target) == ((9, 9), (0, 0))
-
-
-def test_native_fine_qc_with_ordinary_module_preserves_both_sources(
-    tmp_path, monkeypatch
-):
-    from test_stack_qc_native import setup, run_plan
-    from fetchez.modules.local_fs import LocalFS
-    from globato.qc.stack import io
-
-    monkeypatch.chdir(tmp_path)
-    mod, qc, hooks = setup(tmp_path)
-    qc.qc_res = 1.0
-    data = np.loadtxt(mod.path)
-    data[:, 2] = -50.0
-    path = tmp_path / "ordinary.xyz"
-    np.savetxt(path, data)
-    ordinary = LocalFS(
-        path=str(path),
-        data_type="xyz",
-        src_region=mod.region,
-        outdir=str(tmp_path / "ordinary_cache"),
-    )
-    ordinary.run()
-    for entry in ordinary.results:
-        entry["src_srs"] = "EPSG:32611"
-    run_plan([mod, ordinary], global_hooks=hooks)
-    inventory = io.read(next((tmp_path / "qc").glob("*/SOURCES.json")))
-    report = io.read(next((tmp_path / "qc").glob("*/result_*.json")))
-    manifest = io.read(report["manifest"])
-    record = inventory["sources"][0]
-    with (
-        rasterio.open(record["path"]) as src,
-        rasterio.open(manifest["masks"][record["source_id"]]["mask"]) as mask,
-    ):
-        fine_count = src.read(2)
-        fine_count[mask.read(1) == 1] = 0
-        expected_count = fine_count.reshape(64, 3, 64, 3).sum(axis=(1, 3)) + 1
-    with rasterio.open(hooks[0].output) as ds:
-        assert ds.shape == (64, 64)
-        np.testing.assert_array_equal(ds.read(2), expected_count)
-    with rasterio.open(tmp_path / "normal_dem.tif") as ds:
-        assert ds.shape == (64, 64)
 
 
 def test_sparse_occupied_index_skips_empty_fine_reads(tmp_path, monkeypatch):
@@ -394,21 +317,6 @@ def test_nesting_error_explains_the_actual_dem_grid(value, ratio):
     assert "positive integer" in text and "never coarser" in text
 
 
-@pytest.mark.parametrize("value", [3, "0.4s"])
-def test_invalid_qc_grid_fails_before_source_preparation(value, monkeypatch):
-    from globato.qc.stack import preparation
-
-    def unexpected_fetch(*args, **kwargs):
-        pytest.fail("Invalid QC grid must fail before fetching/processing sources")
-
-    monkeypatch.setattr(preparation, "fetch_sources", unexpected_fetch)
-    module = SimpleNamespace(results=[{}])
-    stack = MultiStackHook(res="1s", crs="EPSG:4269")
-    interp = BinaryCudemStepDown(resolutions="1s/3s", weights=".5")
-    with pytest.raises(ValueError, match="qc_res"):
-        preparation.prepare(StackQC(qc_res=value), module, [stack, interp], threads=1)
-
-
 def test_projected_nesting_uses_native_linear_units():
     stack = MultiStackHook(res=30, crs="EPSG:32611")
     interp = BinaryCudemStepDown(resolutions="30/90", weights=".5")
@@ -431,49 +339,6 @@ def test_native_owners_preserve_numeric_increments_ending_in_zero(value):
     assert grid["resolution"] == [expected, expected]
     interp = BinaryCudemStepDown(resolutions=f"{value}/{expected * 3}")
     assert interp.resolutions == [expected, expected * 3]
-
-
-def test_native_factor_two_uses_final_dem_bounds_for_awkward_aoi(tmp_path, monkeypatch):
-    from test_stack_qc_native import setup, run_plan
-    from globato.qc.stack import io
-
-    monkeypatch.chdir(tmp_path)
-    mod, qc, hooks = setup(tmp_path)
-    # Requested AOI is 192m wide/high. Final native rounding makes 6 coarse
-    # cells (180m); QC must use exactly 12 fine cells, not independently round to 13.
-    qc.qc_res = 15
-    hooks[0].res = 30
-    hooks[-1] = BinaryCudemStepDown(
-        steps=1,
-        resolutions="30/90",
-        weights=".5",
-        algos="raster_fill/raster_fill",
-        barrier=None,
-        inland_decay_dist=0,
-        output=str(tmp_path / "normal_dem.tif"),
-    )
-    run_plan([mod], global_hooks=hooks)
-    context = next((tmp_path / "qc").glob("*/SOURCES.json"))
-    inventory = io.read(context)
-    assert inventory["grid"]["shape"] == [12, 12]
-    report = io.read(next(context.parent.glob("result_*.json")))
-    masks = io.read(report["manifest"])["masks"]
-    rec = inventory["sources"][0]
-    with (
-        rasterio.open(rec["path"]) as src,
-        rasterio.open(masks[rec["source_id"]]["mask"]) as mask,
-    ):
-        counts = src.read(2)
-        counts[mask.read(1) == 1] = 0
-        expected = counts[:12, :12].reshape(6, 2, 6, 2).sum(axis=(1, 3))
-        fine_bounds = src.bounds
-    with rasterio.open(hooks[0].output) as dst:
-        assert dst.shape == (6, 6) and dst.transform.a == 30
-        np.testing.assert_array_equal(dst.read(2), expected)
-        assert dst.bounds.left == fine_bounds.left and dst.bounds.top == fine_bounds.top
-        assert dst.bounds == fine_bounds
-    with rasterio.open(tmp_path / "normal_dem.tif") as dem:
-        assert dem.shape == (6, 6) and dem.transform.a == 30
 
 
 def test_geographic_half_arcsecond_grid_has_identical_outer_dem_bounds():
@@ -517,44 +382,6 @@ def test_accepted_decimal_spelling_uses_exact_final_grid_subdivision():
     decimal, post = context_hooks(stack, [interp], ".111111111111s")
     assert decimal.res == fraction.res == (1 / 3600) / 9
     assert post[0].resolutions[0] == decimal.res
-
-
-@pytest.mark.parametrize("aoi_crs", [None, "EPSG:4326"])
-def test_incompatible_aoi_crs_fails_before_source_preparation(aoi_crs, monkeypatch):
-    from globato.qc.stack import preparation
-
-    monkeypatch.setattr(
-        preparation, "fetch_sources", lambda *a, **kw: pytest.fail("must not fetch")
-    )
-    module = SimpleNamespace(
-        results=[{}], region=Region(-118.55, -118.5, 33.77, 33.81, srs=aoi_crs)
-    )
-    stack = MultiStackHook(res="1s", crs="EPSG:4269+5703")
-    interp = BinaryCudemStepDown(resolutions="1s/3s", weights=".5")
-    with pytest.raises(ValueError, match="AOI CRS must match"):
-        preparation.prepare(StackQC(qc_res="1/9s"), module, [stack, interp], threads=1)
-
-
-@pytest.mark.parametrize("value", [3, "0.4s"])
-def test_invalid_qc_request_fails_before_provider_discovery(
-    tmp_path, value, monkeypatch
-):
-    from globato.qc.stack.pipeline import StackQCPlan
-
-    monkeypatch.chdir(tmp_path)
-    qc = StackQC(qc_res=value)
-    module = SimpleNamespace(
-        name="fixture",
-        hooks=[qc],
-        region=Region(-118.55, -118.5, 33.77, 33.81, srs="EPSG:4269"),
-        run=lambda: pytest.fail("Discovery must not run"),
-    )
-    stack = MultiStackHook(res="1s", crs="EPSG:4269")
-    interp = BinaryCudemStepDown(resolutions="1s/3s", weights=".5")
-    with pytest.raises(ValueError, match="qc_res"):
-        StackQCPlan(
-            config={}, modules=[module], threads=1, global_hooks=[stack, interp]
-        ).execute()
 
 
 @pytest.mark.parametrize("requested", ["1s", "1/9s"])

@@ -137,31 +137,46 @@ def test_html_links_to_both_review_geotiffs(tmp_path):
 
 
 def test_failed_review_does_not_leave_stale_success_page(tmp_path, monkeypatch):
-    from types import SimpleNamespace
-    from globato.qc.stack.review.publisher import ReviewPublisher
+    import json
+    from globato.hooks.filters.stack_qc_review import StackQCReview
     import globato.qc.stack.review.visualize as visualization
 
     final = tmp_path / "normal_final.tif"
     final.write_bytes(b"production result already finished")
-    publisher = ReviewPublisher(
-        cache=tmp_path,
-        result={},
-        stack=None,
-        region=None,
-        interpolator=SimpleNamespace(output=str(final)),
-        module_name="mbdb",
+    cache = tmp_path / ("c" * 64)
+    cache.mkdir()
+    receipt = cache / "review.json"
+    receipt.write_text(
+        json.dumps(
+            dict(
+                cache=str(cache),
+                result={},
+                module="mbdb",
+                region=[0, 1, 0, 1],
+                region_srs="EPSG:4326",
+                stack=dict(
+                    res="1s", crs="EPSG:4326", strategy="mean", weight_threshold="1"
+                ),
+                dem_res="1s",
+            )
+        )
     )
-    (tmp_path / "review.html").write_text("old run - do not show")
-    (tmp_path / "review_ERROR.txt").write_text("old error")
+    review = StackQCReview(dem=str(final), output=str(tmp_path / "out"))
+    run = tmp_path / "out" / ("mbdb_" + cache.name[:12])
+    run.mkdir(parents=True)
+    (run / "review.html").write_text("old run - do not show")
+    (run / "review_ERROR.txt").write_text("old error")
 
     def fail(*args, **kwargs):
         raise ValueError("intentional failed review")
 
     monkeypatch.setattr(visualization, "completed", fail)
-    original = [("module", dict(dst_fn=str(final)))]
-    assert publisher.run(original) == original
-    assert not (tmp_path / "review.html").exists()
-    assert "intentional failed review" in (tmp_path / "review_ERROR.txt").read_text()
+    original = [
+        ("module", dict(dst_fn=str(final), artifacts=dict(stack_qc=str(receipt))))
+    ]
+    assert review.run(original) == original
+    assert not (run / "review.html").exists()
+    assert "intentional failed review" in (run / "review_ERROR.txt").read_text()
     assert final.read_bytes() == b"production result already finished"
 
     def pass_review(run, **kwargs):
@@ -169,6 +184,6 @@ def test_failed_review_does_not_leave_stale_success_page(tmp_path, monkeypatch):
         return []
 
     monkeypatch.setattr(visualization, "completed", pass_review)
-    assert publisher.run(original) == original
-    assert (tmp_path / "review.html").read_text() == "current review"
-    assert not (tmp_path / "review_ERROR.txt").exists()
+    assert review.run(original) == original
+    assert (run / "review.html").read_text() == "current review"
+    assert not (run / "review_ERROR.txt").exists()

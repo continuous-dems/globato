@@ -644,13 +644,12 @@ class MultiStackHook(FetchHook):
         """Identify an input, optionally scoped to a named processing branch.
 
         Separate class-selection branches can read the same physical file at
-        the same weight. Keep their registrations independent while preserving
-        the historical identifiers for entries without a partition label.
+        the same weight, and a filter can change what a file contributes
+        (``contribution_id``). Keep their registrations independent while
+        preserving the historical identifiers for plain entries.
         """
         checksum = entry.get("checksum")
-        if entry.get("_stack_qc_source_id"):
-            dataset_id = f"{entry['_stack_qc_source_id']}|w={module_weight}"
-        elif checksum:
+        if checksum:
             dataset_id = f"{checksum}|w={module_weight}"
         else:
             url = entry.get("url", "")
@@ -666,6 +665,13 @@ class MultiStackHook(FetchHook):
         partition = entry.get("stack_partition")
         if partition is not None:
             dataset_id += "|partition=" + json.dumps(str(partition), ensure_ascii=True)
+        # Hooks that change what an entry contributes record it with fetchez's
+        # entry.set_contribution_id; entries without one keep their historical id.
+        contribution = entry.get("contribution_id")
+        if contribution:
+            dataset_id += "|contribution=" + json.dumps(
+                contribution, sort_keys=True, separators=(",", ":"), default=str
+            )
         return dataset_id
 
     @staticmethod

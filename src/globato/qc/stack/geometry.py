@@ -31,7 +31,37 @@ def shift(a, dy, dx):
     return out
 
 
-def evidence(z, valid=None):
+DEFAULT_WINDOWS = (3, 9, 25)
+DEFAULT_FLANKS = (4, 6, 9, 12)
+
+
+def scaled_levels(scale=1.0):
+    """Detection cutoffs with the metre thresholds scaled; similarity is fixed."""
+    if scale == 1.0:
+        return LEVELS
+    return {
+        level: dict(
+            t,
+            local9=t["local9"] * scale,
+            local25=t["local25"] * scale,
+            flank=t["flank"] * scale,
+        )
+        for level, t in LEVELS.items()
+    }
+
+
+def halo(windows=DEFAULT_WINDOWS, flanks=DEFAULT_FLANKS):
+    """Cells of context every evidence operator needs around a block."""
+    small, mid, large = windows
+    return max(large // 2, mid // 2, max(flanks) + small // 2)
+
+
+def evidence(
+    z, valid=None, levels=None, windows=DEFAULT_WINDOWS, flanks=DEFAULT_FLANKS
+):
+    """Window sizes are in grid cells; thresholds in ``levels`` are metres."""
+    levels = LEVELS if levels is None else levels
+    small, mid, large = windows
     z = np.asarray(z, dtype="float32")
     valid = (
         np.isfinite(z)
@@ -48,24 +78,24 @@ def evidence(z, valid=None):
         filled = z[tuple(locations)]
     else:
         filled = z
-    m3 = ndi.median_filter(filled, size=3, mode="nearest")
-    m9 = ndi.median_filter(filled, size=9, mode="nearest")
-    m25 = ndi.median_filter(filled, size=25, mode="nearest")
+    m3 = ndi.median_filter(filled, size=small, mode="nearest")
+    m9 = ndi.median_filter(filled, size=mid, mode="nearest")
+    m25 = ndi.median_filter(filled, size=large, mode="nearest")
     residual = filled - m25
-    coherent_hits = {i: np.zeros(z.shape, dtype="uint8") for i in LEVELS}
+    coherent_hits = {i: np.zeros(z.shape, dtype="uint8") for i in levels}
     for dr, dc in ((0, 1), (1, 0), (1, 1), (1, -1)):
-        for distance in (4, 6, 9, 12):
+        for distance in flanks:
             lf = shift(m3, dr * distance, dc * distance)
             rt = shift(m3, -dr * distance, -dc * distance)
             offset = np.abs(filled - 0.5 * (lf + rt))
             flank_agreement = np.abs(lf - rt)
-            for level, t in LEVELS.items():
+            for level, t in levels.items():
                 hit = (offset >= t["flank"]) & (
                     flank_agreement <= t["flank_similarity"]
                 )
                 coherent_hits[level] += hit.astype("uint8")
     masks = {}
-    for level, t in LEVELS.items():
+    for level, t in levels.items():
         local = (np.abs(filled - m9) >= t["local9"]) & (
             np.abs(residual) >= t["local25"]
         )

@@ -264,7 +264,16 @@ def test_final_requested_pass_hands_mask_to_build_without_context_interpolation(
         builds.append(read(manifest)["rejected_source_cells"])
         return baseline
 
-    def reject(pool, parent, parent_dem, folder, detector_level, consensus):
+    def reject(
+        pool,
+        parent,
+        parent_dem,
+        folder,
+        detector_level,
+        consensus,
+        settings=None,
+        workers=1,
+    ):
         with rasterio.open(parent["masks"]["s0"]["mask"]) as ds:
             previous = ds.read(1).astype(bool)
         mask = previous.copy()
@@ -339,3 +348,112 @@ def test_survey_exclusion_preserves_unique_coverage_and_requires_replacement(tmp
         else:
             assert not mask[:, 48:96].any()  # Too much unique coverage for 95% gate.
     p.close()
+
+
+def test_parallel_restoration_matches_serial(tmp_path):
+    """Worker processes compute blocks; writing stays in block order."""
+    y, x = np.indices((600, 600))
+    z = (-200.0 + 0.6 * abs(x - 300) + 0.04 * y).astype("float32")
+    removed = (abs(x - 300) <= 2) & (abs(y - 300) <= 250)
+    p, b = pool(tmp_path, z)
+    writer = MaskWriter(tmp_path / "removed", p)
+    writer.put(p.records[0], (slice(0, 600), slice(0, 600)), removed)
+    _, parent = writer.finish(
+        dict(source_counts={"s0": dict(observed=z.size, rejected=int(removed.sum()))})
+    )
+    quality = {"g0": dict(poor=False, occupied_blocks=9)}
+    serial = recovery.restore(p, parent, b, tmp_path / "serial", [2], quality)
+    parallel = recovery.restore(
+        p, parent, b, tmp_path / "parallel", [2], quality, workers=3
+    )
+    assert serial[2][1]["restored_source_cells"] > 0
+    assert serial[2][1]["signature"] == parallel[2][1]["signature"]
+    assert (
+        serial[2][1]["restored_source_cells"] == parallel[2][1]["restored_source_cells"]
+    )
+    p.close()
+
+
+def test_parallel_rejection_pass_matches_serial(tmp_path):
+    """Worker processes evaluate blocks; masks are written in block order."""
+    from globato.qc.stack import source_windows
+
+    rng = np.random.default_rng(11)
+    y, x = np.indices((600, 600))
+    z = (-200.0 + 0.05 * x + 0.03 * y).astype("float32")
+    spikes = rng.random(z.shape) < 0.002
+    z[spikes] += 40
+    p, b = pool(tmp_path, z, groups=2)
+    _, parent = zero_masks(p, tmp_path / "zero")
+    _, serial = source_windows.reject(p, parent, b, tmp_path / "serial", 2)
+    _, parallel = source_windows.reject(
+        p, parent, b, tmp_path / "parallel", 2, workers=3
+    )
+    assert serial["rejected_source_cells"] > 0
+    assert serial["signature"] == parallel["signature"]
+    assert serial["source_counts"] == parallel["source_counts"]
+    p.close()
+
+
+def test_parallel_survey_quality_matches_serial(tmp_path):
+    from globato.qc.stack import survey_coverage
+
+    rng = np.random.default_rng(5)
+    y, x = np.indices((600, 600))
+    z = (-200.0 + 0.05 * x + 0.03 * y + rng.normal(0, 0.5, (600, 600))).astype(
+        "float32"
+    )
+    p, _ = pool(tmp_path, z, groups=3)
+    serial = survey_coverage.original_quality(p, tmp_path / "serial.json")
+    parallel = survey_coverage.original_quality(
+        p, tmp_path / "parallel.json", workers=3
+    )
+    assert serial == parallel
+    p.close()
+
+
+def test_pool_workers_stop_when_the_build_is_killed(tmp_path):
+    """A killed build must not leave orphaned Stack QC workers behind."""
+    import os
+    import signal
+    import subprocess
+    import sys
+    import time
+
+    script = tmp_path / "parent.py"
+    script.write_text(
+        "import os, sys, time\n"
+        "from globato.qc.stack.parallel import process_pool\n"
+        "def worker_pid(_):\n"
+        "    return os.getpid()\n"
+        "if __name__ == '__main__':\n"
+        "    with process_pool(2) as pool:\n"
+        "        pids = set(pool.map(worker_pid, range(8)))\n"
+        "        print(' '.join(map(str, pids)), flush=True)\n"
+        "        time.sleep(60)\n"
+    )
+    proc = subprocess.Popen(
+        [sys.executable, str(script)], stdout=subprocess.PIPE, text=True
+    )
+    pids = [int(v) for v in proc.stdout.readline().split()]
+    assert pids
+    proc.send_signal(signal.SIGKILL)
+    proc.wait()
+    deadline = time.monotonic() + 20
+    alive = pids
+    while alive and time.monotonic() < deadline:
+        time.sleep(0.2)
+        alive = []
+        for pid in pids:
+            try:
+                os.kill(pid, 0)
+            except ProcessLookupError:
+                continue
+            # A zombie still answers kill(0); check its state.
+            try:
+                state = open(f"/proc/{pid}/stat").read().split()[2]
+            except FileNotFoundError:
+                continue
+            if state != "Z":
+                alive.append(pid)
+    assert not alive, f"orphaned workers: {alive}"
