@@ -348,3 +348,27 @@ def test_survey_exclusion_preserves_unique_coverage_and_requires_replacement(tmp
         else:
             assert not mask[:, 48:96].any()  # Too much unique coverage for 95% gate.
     p.close()
+
+
+def test_parallel_restoration_matches_serial(tmp_path):
+    """Worker processes compute blocks; writing stays in block order."""
+    y, x = np.indices((600, 600))
+    z = (-200.0 + 0.6 * abs(x - 300) + 0.04 * y).astype("float32")
+    removed = (abs(x - 300) <= 2) & (abs(y - 300) <= 250)
+    p, b = pool(tmp_path, z)
+    writer = MaskWriter(tmp_path / "removed", p)
+    writer.put(p.records[0], (slice(0, 600), slice(0, 600)), removed)
+    _, parent = writer.finish(
+        dict(source_counts={"s0": dict(observed=z.size, rejected=int(removed.sum()))})
+    )
+    quality = {"g0": dict(poor=False, occupied_blocks=9)}
+    serial = recovery.restore(p, parent, b, tmp_path / "serial", [2], quality)
+    parallel = recovery.restore(
+        p, parent, b, tmp_path / "parallel", [2], quality, workers=3
+    )
+    assert serial[2][1]["restored_source_cells"] > 0
+    assert serial[2][1]["signature"] == parallel[2][1]["signature"]
+    assert (
+        serial[2][1]["restored_source_cells"] == parallel[2][1]["restored_source_cells"]
+    )
+    p.close()

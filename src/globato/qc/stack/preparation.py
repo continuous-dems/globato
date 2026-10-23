@@ -23,6 +23,7 @@ import copy
 import inspect
 import json
 import logging
+import time
 from pathlib import Path
 
 import rasterio
@@ -385,6 +386,7 @@ def prepare(qc, module, entries, *, threads):
     target = output_grid(dem_stack, region)
     for i, (_, entry) in enumerate(entries):
         entry[INDEX] = i
+    started = time.monotonic()
     if qc.qc_increment is not None:
         qc_stack = qc.stack_hook(qc.qc_increment)
         qc_region, _ = nested_region(region, qc_stack, target)
@@ -417,7 +419,9 @@ def prepare(qc, module, entries, *, threads):
             working=working,
         ),
     )
+    gridded = time.monotonic()
     result, reused = run_filter(qc, module, records, qc_region, cache, qc_stack)
+    filtered = time.monotonic()
     masks = io.read(result["manifest"])["masks"]
     signature = result["signature"]
     tag = io.digest(
@@ -476,7 +480,8 @@ def prepare(qc, module, entries, *, threads):
             entry["_stack_qc_signature"] = signature
     logger.info(
         "Stack QC %s: %s; %d passes; %s source cells rejected, %s restored; "
-        "%d accepted side-stacks (QC grid %s, DEM grid %s)",
+        "%d accepted side-stacks (QC grid %s, DEM grid %s); "
+        "QC grids %.1f min, filter %.1f min, accepted side-stacks %.1f min",
         module.name,
         "cached result reused" if reused else "filtered",
         result["passes_completed"],
@@ -485,5 +490,8 @@ def prepare(qc, module, entries, *, threads):
         written,
         qc_stack.res,
         dem_stack.res,
+        (gridded - started) / 60,
+        (filtered - gridded) / 60,
+        (time.monotonic() - filtered) / 60,
     )
     return entries

@@ -66,11 +66,11 @@ class StackQCReview(FetchHook):
             if path and path not in receipts:
                 receipts.append(path)
         if not receipts:
-            logger.info("stack_qc_review: no Stack QC results in this build")
+            logger.info("No Stack QC results in this build")
             return entries
         final = self._final_dem(entries)
         if final is None or not final.is_file():
-            logger.warning("stack_qc_review: final DEM not found; no review written")
+            logger.warning("Final DEM not found; no review written")
             return entries
         base = Path(self.output) if self.output else final.parent / "stack_qc_review"
         for path in receipts:
@@ -97,9 +97,7 @@ class StackQCReview(FetchHook):
                     final=final,
                 )
                 (run / "review_ERROR.txt").unlink(missing_ok=True)
-                logger.info(
-                    "stack_qc_review: %d figures; %s", len(images), run / "review.html"
-                )
+                logger.info("%d figures; %s", len(images), run / "review.html")
             except Exception:
                 (run / "review_ERROR.txt").write_text(
                     "Stack QC review failed; the DEM is unchanged.\n\n"

@@ -163,6 +163,7 @@ def _process(inventory, settings, cache, build, pool, workers=1):
                     settings.restoration_length_scale,
                     settings.restoration_fit_scale,
                 ),
+                workers=workers,
             )
             final_path, final = branches[settings.terrain_restoration]
             write(done, dict(manifest=str(final_path)))
