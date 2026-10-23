@@ -59,9 +59,7 @@ class WaterSurfaceFilter(GlobatoFilter):
         super().__init__(**kwargs)
         self.barrier = barrier
         self.res = str2inc(res)
-        self.barrier_res = (
-            self.res if barrier_res is None else str2inc(barrier_res)
-        )
+        self.barrier_res = self.res if barrier_res is None else str2inc(barrier_res)
 
         # Roughness is used only to decide whether a cell is trustworthy enough
         # to estimate water level. It is NOT a terrain classifier.
