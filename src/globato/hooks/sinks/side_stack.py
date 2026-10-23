@@ -235,7 +235,7 @@ def _resolve_grid(region: Any, res: Any, crs: Any) -> dict[str, Any]:
     xcount, ycount, gt = region.geo_transform(
         x_inc=inc,
         y_inc=inc,
-        node="pixel",
+        node="grid",
     )
 
     transform = rasterio.transform.from_origin(
