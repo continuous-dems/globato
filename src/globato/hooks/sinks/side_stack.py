@@ -25,10 +25,12 @@ from typing import Any, Mapping
 
 import numpy as np
 import rasterio
+from filelock import FileLock
 from rasterio.crs import CRS
 
 from fetchez.hooks import FetchHook
-from fetchez.utils import float_or, str2bool, str2inc
+from fetchez.utils import float_or, str2bool
+from globato.utils import parse_increment
 
 from globato.hooks.transforms.point_pixels import (
     FUSION_BAND_MAP,
@@ -42,6 +44,7 @@ logger = logging.getLogger(__name__)
 SIDESTACK_DATATYPE = "FUSION_STATE"
 SIDESTACK_HASH_TAG = "GLOBATO_SIDESTACK_HASH"
 SIDESTACK_IDENTITY_TAG = "GLOBATO_SIDESTACK_IDENTITY"
+SIDESTACK_CACHE_VERSION = 2
 
 NON_FUSION_HOOKS = {
     "side_stack_check",
@@ -137,7 +140,7 @@ def _hook_affects_fusion_state(hook: Any) -> bool:
     return _hook_name(hook) not in NON_FUSION_HOOKS
 
 
-def _hook_identity(hook: Any) -> dict[str, Any]:
+def hook_identity(hook: Any, entry: Mapping[str, Any] | None = None) -> dict[str, Any]:
     """Return deterministic configuration identity for one upstream hook."""
 
     name = _hook_name(hook)
@@ -162,6 +165,9 @@ def _hook_identity(hook: Any) -> dict[str, Any]:
             continue
         config[key] = value
 
+    entry_identity = getattr(hook, "sidestack_entry_identity", None)
+    if entry is not None and callable(entry_identity):
+        config["entry_context"] = entry_identity(entry)
     return {"name": name, "config": _stable_value(config)}
 
 
@@ -172,7 +178,7 @@ def processing_identity(mod: Any, entry: Mapping[str, Any]) -> list[dict[str, An
     entry_hooks = list(entry.get("hooks", []) or [])
 
     hooks = [
-        _hook_identity(hook)
+        hook_identity(hook, entry)
         for hook in module_hooks + entry_hooks
         if _hook_affects_fusion_state(hook)
     ]
@@ -186,6 +192,7 @@ def processing_identity(mod: Any, entry: Mapping[str, Any]) -> list[dict[str, An
                     "module_uncertainty": getattr(mod, "uncertainty", None),
                     "entry_weight": entry.get("weight"),
                     "entry_uncertainty": entry.get("uncertainty"),
+                    "source_crs": entry.get("src_srs"),
                 }
             ),
         }
@@ -228,13 +235,16 @@ def source_identity(entry: Mapping[str, Any]) -> dict[str, Any]:
 def _resolve_grid(region: Any, res: Any, crs: Any) -> dict[str, Any]:
     """Resolve the exact raster grid used by Point2PixelStream."""
 
-    inc = float_or(str2inc(res))
+    inc = float_or(parse_increment(res))
     if inc is None:
         raise ValueError(f"Unable to resolve side-stack resolution {res!r}")
 
     xcount, ycount, gt = region.geo_transform(
         x_inc=inc,
         y_inc=inc,
+        # Match Point2PixelStream._stream_wrapper exactly, including its
+        # node convention. A different convention can miss by one cell on
+        # geographic grids and invalidate every otherwise correct cache hit.
         node="grid",
     )
 
@@ -291,6 +301,7 @@ class SideStackIdentity:
 
     def canonical(self) -> dict[str, Any]:
         return {
+            "side_stack_version": SIDESTACK_CACHE_VERSION,
             "source": _stable_value(self.source),
             "processing": _stable_value(self.processing),
             "grid": _stable_value(self.grid),
@@ -409,6 +420,7 @@ class SideStackCheck(FetchHook):
 
     name = "side_stack_check"
     meta_stage = "manifest"
+    defer_to_preparation = True
 
     def __init__(self, res="1s", crs="EPSG:4326", cache_dir=None, **kwargs):
         super().__init__(**kwargs)
@@ -520,6 +532,28 @@ class SideStackGenerate(FetchHook):
         """Write FusionState atomically while yielding identical chunks onward."""
 
         profile = next(raster_stream)
+        expected_crs = (
+            CRS.from_wkt(identity.grid["crs"]) if identity.grid["crs"] else None
+        )
+        if CRS.from_user_input(profile["crs"]) != expected_crs:
+            raise ValueError(
+                "Side-stack source CRS differs from the build CRS. Apply "
+                "stream_reproject before side_stack or stack_qc; changing a CRS label is not a transformation."
+            )
+        if (
+            profile["width"],
+            profile["height"],
+            profile["transform"],
+            profile["count"],
+        ) != (
+            identity.grid["width"],
+            identity.grid["height"],
+            _identity_transform(identity),
+            len(FUSION_BANDS),
+        ):
+            raise ValueError(
+                "Side-stack input must use the build's exact native FusionState grid"
+            )
         yield profile
 
         cache_dir = os.path.dirname(os.path.abspath(cache_path))
@@ -540,19 +574,21 @@ class SideStackGenerate(FetchHook):
 
         completed = False
         try:
-            with rasterio.open(tmp_path, "w", **creation_profile) as dst:
+            with rasterio.open(tmp_path, "w+", **creation_profile) as dst:
                 for name, idx in FUSION_BAND_MAP.items():
                     dst.set_band_description(idx, name)
 
                 dst.update_tags(
                     GLOBATO_DATATYPE=SIDESTACK_DATATYPE,
                     GLOBATO_FUSION_VERSION=str(FUSION_STATE_VERSION),
+                    GLOBATO_SIDESTACK_VERSION=str(SIDESTACK_CACHE_VERSION),
                     **{
                         SIDESTACK_HASH_TAG: digest,
                         SIDESTACK_IDENTITY_TAG: identity.json(),
                     },
                 )
 
+                point_count = 0
                 for chunk in raster_stream:
                     window, buff_win, data, ndv, transform = chunk
 
@@ -563,10 +599,22 @@ class SideStackGenerate(FetchHook):
                             f"{len(FUSION_BANDS)} bands; got {data.shape!r}"
                         )
 
-                    dst.write(data, window=window)
+                    # Point chunks can revisit the same cells. FusionState is
+                    # additive; overwriting would silently discard earlier
+                    # soundings on cache reuse.
+                    dst.write(dst.read(window=window) + data, window=window)
+                    point_count += int(np.sum(data[FUSION_BAND_MAP["count"] - 1]))
                     yield window, buff_win, data, ndv, transform
+                dst.update_tags(GLOBATO_POINT_COUNT=str(point_count))
 
-            os.replace(tmp_path, cache_path)
+            # Concurrent misses may have produced this same immutable identity.
+            # Publish once so another build's source fingerprint stays stable.
+            with FileLock(cache_path + ".lock"):
+                valid, _ = validate_sidestack(cache_path, identity, digest)
+                if valid:
+                    os.remove(tmp_path)
+                else:
+                    os.replace(tmp_path, cache_path)
             completed = True
             logger.debug("Side-stack cached: %s", os.path.basename(cache_path))
 
@@ -581,8 +629,19 @@ class SideStackGenerate(FetchHook):
         cached_json = entry.get("_sidestack_identity")
         if cached_json:
             payload = json.loads(cached_json)
+            source = dict(payload["source"])
+            # Manifest lookup precedes download. Bind the published cache to
+            # the now-materialized ORIGINAL source, retaining the pre-transform
+            # processing receipt and source metadata captured by the lookup.
+            original = entry.get("_sidestack_source_dst_fn")
+            if "checksum" not in source and original and Path(original).is_file():
+                raw = Path(original)
+                stat = raw.stat()
+                source.update(
+                    basename=raw.name, size=stat.st_size, mtime_ns=stat.st_mtime_ns
+                )
             return SideStackIdentity(
-                source=payload["source"],
+                source=source,
                 processing=tuple(payload["processing"]),
                 grid=payload["grid"],
                 fusion_version=int(payload["fusion"]["version"]),
@@ -607,7 +666,21 @@ class SideStackGenerate(FetchHook):
                 continue
 
             region = getattr(mod, "region", None)
-            if not region or not self.is_point_stream(entry):
+            if not region:
+                continue
+
+            if self.is_point_stream(entry):
+                fusion_stream = point_to_state._stream_wrapper(
+                    entry["stream"],
+                    entry=entry,
+                    region=region,
+                )
+            elif (
+                self.is_raster_stream(entry)
+                and entry.get("data_type") == "fusion-state"
+            ):
+                fusion_stream = entry["stream"]
+            else:
                 continue
 
             cache_dir = self.cache_dir or getattr(
@@ -617,22 +690,21 @@ class SideStackGenerate(FetchHook):
             )
 
             identity = self._identity_for_entry(mod, entry, region)
-            digest = entry.get("_sidestack_hash") or identity.digest()
-            cache_path = entry.get("_sidestack_path") or sidestack_path(
+            digest = identity.digest()
+            cache_path = sidestack_path(
                 entry,
                 cache_dir,
                 digest,
             )
 
+            entry.update(
+                _sidestack_hash=digest,
+                _sidestack_identity=identity.json(),
+                _sidestack_path=cache_path,
+            )
             logger.debug(
                 "Side-stack miss; generating %s",
                 os.path.basename(cache_path),
-            )
-
-            fusion_stream = point_to_state._stream_wrapper(
-                entry["stream"],
-                entry=entry,
-                region=region,
             )
 
             entry["stream"] = self._cache_stream(
