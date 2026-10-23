@@ -369,3 +369,38 @@ def test_side_stacks_are_written_sparse(tmp_path):
             dst.read(window=Window(0, 0, 256, 256)) + 1, window=Window(0, 0, 256, 256)
         )
     assert stacking.written_blocks(path)[2] == {(0, 0)}
+
+
+def test_same_grid_accepted_stream_reads_only_blocks_with_data(tmp_path):
+    """Skipping blocks without source data gives the same accepted state."""
+    rec = _sparse_source(tmp_path / "a.tif", [(0, 0), (2, 3)])
+    mask_path = tmp_path / "mask.tif"
+    with rasterio.open(rec["path"]) as src:
+        profile = dict(src.profile, count=1, dtype="uint8", compress="deflate")
+    flags = np.zeros((1024, 1024), "uint8")
+    flags[10:20, 10:20] = 1  # some rejected cells in block (0, 0)
+    with rasterio.open(mask_path, "w", **profile) as dst:
+        dst.write(flags, 1)
+
+    def collect(stream):
+        out = np.zeros((7, 1024, 1024))
+        next(stream)
+        n = 0
+        for win, _, data, *_ in stream:
+            out[
+                :,
+                win.row_off : win.row_off + win.height,
+                win.col_off : win.col_off + win.width,
+            ] = data
+            n += 1
+        return out, n
+
+    full, n_full = collect(masked_stream(rec["path"], mask_path))
+    fast, n_fast = collect(
+        masked_stream(
+            rec["path"], mask_path, active_blocks=["0,0", "2,3"], source_offset=(0, 0)
+        )
+    )
+    np.testing.assert_array_equal(full, fast)
+    assert n_fast == 2 < n_full
+    assert full[1, 10:20, 10:20].sum() == 0  # rejected cells zeroed

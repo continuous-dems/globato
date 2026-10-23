@@ -308,7 +308,12 @@ def _accepted_stream(rec, masks, target):
 
     mask = masks[rec["source_id"]]["mask"]
     if target is None:
-        return masked_stream(rec["path"], mask)
+        return masked_stream(
+            rec["path"],
+            mask,
+            active_blocks=rec.get("active_blocks"),
+            source_offset=rec.get("offset", (0, 0)),
+        )
     return aggregate(
         rec["path"],
         mask,
