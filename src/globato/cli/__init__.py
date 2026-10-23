@@ -21,7 +21,6 @@ from .pointz import dump
 from .perspecto import perspecto_hillshade
 from .recipes import recipes_group
 from .process import process_cmd
-from .sidestack import sidestack_group
 
 from fetchez.cli.run import run_recipe
 from fetchez.logging import configure_logging
@@ -73,7 +72,6 @@ class GlobatoMainGroup(FetchezMainGroup):
             "dump",
             "hillshade",
             "process",
-            "sidestack",
         ],
         "Discovery": [
             "recipes",
@@ -112,7 +110,6 @@ cli.add_command(dump, name="dump")
 cli.add_command(perspecto_hillshade, name="hillshade")
 cli.add_command(recipes_group, name="recipes")
 cli.add_command(process_cmd, name="process")
-cli.add_command(sidestack_group, name="sidestack")
 
 
 if __name__ == "__main__":
