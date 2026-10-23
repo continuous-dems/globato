@@ -648,9 +648,7 @@ class MultiStackHook(FetchHook):
         the historical identifiers for entries without a partition label.
         """
         checksum = entry.get("checksum")
-        if entry.get("_stack_qc_source_id"):
-            dataset_id = f"{entry['_stack_qc_source_id']}|w={module_weight}"
-        elif checksum:
+        if checksum:
             dataset_id = f"{checksum}|w={module_weight}"
         else:
             url = entry.get("url", "")

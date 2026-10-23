@@ -1,78 +1,124 @@
-# Stack QC — module-attached source quality control
+# Stack QC — source quality control before stacking
 
-Stack QC evaluates gridded elevation-source contributions, removes inconsistent cells,
-and restores original contributions supported by the surrounding terrain and survey evidence.
-It runs **before** Globato's normal final stacking and interpolation. Source files are
-unchanged; accepted/rejected contributions are recorded as masks.
+Stack QC evaluates each source's gridded elevation contributions, removes
+inconsistent cells, and restores original contributions supported by the
+surrounding terrain and survey evidence. Source files are unchanged;
+decisions are recorded as 0/1 masks on each source's grid.
 
-Add it to the source module's `hooks:` list after coordinate conversion:
+`stack_qc` is a standard collection-stage hook. It works in recipes that stack
+with `side_stack` and `stack_combine` (for example the `mr-globato-ss`,
+`mr-globato-crm` and `mr-globato-cudem` presets): the normal stream stage writes
+each source's side-stack, `stack_qc` replaces a module's side-stacks with
+filtered ones, and `stack_combine` assembles the MultiStack. It refuses a
+recipe that stacks with `multi_stack`, which has already consumed the
+unfiltered streams by the collection stage.
+
+Attach it to a module, after the module's source transforms:
 
 ```yaml
-- name: stack_qc
-  args:
-    aggressiveness: 2
-    terrain_restoration: 2
-    max_passes: 5
-    stop_when_stable: false
-    review: true
+- module: mbdb
+  hooks:
+    - name: set-srs
+      args: {srs: "EPSG:4326+vdatum:msl"}
+    - name: stream_data
+    - name: stream_reproject
+      args: {dst_srs: "EPSG:4326+3855"}
+    - name: stack_qc
+      args:
+        res: 1s
+        crs: "EPSG:4326+3855"
+        qc_res: 1/9s
+        max_passes: 5
+        stop_when_stable: false
+        interpolation:
+          steps: 3
+          resolutions: 1s/3s/9s/15s
+          weights: [0.6, 0.4, 0.2]
+          algos: raster_fill/raster_fill/raster_fill/interp_gmt:tension=1
+          blend_dists: 32/16/8/4
+          barrier: osm
 ```
+
+Or list it in `global_hooks`, before `stack_combine`, with `modules: mbdb` (or
+several module names). Use the global form when global manifest hooks drop
+files you do not want in the filter (module hooks run before them).
+
+The optional `stack_qc_review` hook writes an HTML review with before/after
+hillshades. Put it in `global_hooks` after the final interpolation (see
+[Review pages](#review-pages)).
+
+## Settings
+
+Grid and working DEM:
+
+| Setting | Default | Purpose |
+| --- | --- | --- |
+| `res` | `1s` | DEM grid of the accepted side-stacks; equal to `stack_combine.res` |
+| `crs` | `EPSG:4326+3855` | Stack CRS; equal to `stack_combine.crs` |
+| `qc_res` | none | Optional finer QC grid, `res / N` (e.g. `1/9s` for a 1s DEM) |
+| `stack_strategy` | `mixed` | Working-DEM MultiStack strategy |
+| `stack_weight_threshold` | `3/2/1/.75/.5/.4/.3/.2/.1` | Working-DEM MultiStack weight tiers |
+| `interpolation` | CRM 1" ladder | `ms_binary_cudem` arguments for the working DEMs |
+
+The working DEMs are the surfaces each pass compares source cells with. They
+are built from the module's own sources only, in the build's own process, with
+an ordinary MultiStack and `ms_binary_cudem`. Write `interpolation` as you
+would for the final DEM grid; with `qc_res`, its resolution ladder is scaled
+down so the first tier is the QC grid. Keep it in step with the final
+`ms_binary_cudem` if the filter should see the same surface.
+
+Filtering:
 
 | Setting | Values | Default | Purpose |
 | --- | --- | --- | --- |
 | `aggressiveness` | `1`, `2`, `3` | `2` | Strength of anomaly filtering |
-| `terrain_restoration` | `0`–`3` | `2` | Restore supported original terrain, or turn off at `0` |
+| `terrain_restoration` | `0`–`3` | `2` | Restore supported original terrain, or off at `0` |
 | `max_passes` | `1`–`10` | `4` | Maximum rejection passes |
-| `stop_when_stable` | boolean | `true` | Stop when scientific changes stabilize |
-| `qc_res` | Positive grid increment | DEM increment | Optional finer QC/source grid; e.g. `1/9s` for 1/9 arcsecond |
-| `review` | boolean | `false` | Generate HTML, figures, measured surfaces and Perspecto GIS hillshades |
+| `stop_when_stable` | boolean | `true` | Stop when passes stop changing |
+| `consensus` | boolean | `false` | Also reject cells that disagree with other surveys |
+| `survey_exclusion` | `off`, `near-complete`, `redundant` | `off` | Optional whole-survey exclusion |
+| `stable_changed_fraction`, `stable_dem_change_m`, `stable_consecutive_passes` | numbers | `1e-5`, `0.05`, `2` | What counts as stable |
 
-The hook reads the native `multi_stack` grid and **automatically manages
-seven-band side-stacks**. No `side_stack` or `side_stack_check` YAML hooks are needed.
-Cache reuse is validated against source identity and grid settings. A matching
-raw-data cache does not guarantee that every upstream discovery API is offline-ready.
+Detection and restoration tuning (defaults are the original constants):
 
-Examples: `examples/stack_qc/redondo_1_9.yaml` and the other three recipes
-in that directory (under `examples/` in the release ZIP). Region CRS belongs to the Globato/Fetchez recipe, not Stack QC.
-All four samples specify NAD83 geographic (`EPSG:4269`).
+| Setting | Default | Purpose |
+| --- | --- | --- |
+| `threshold_scale` | `1.0` | Multiply the detection thresholds (metres) |
+| `median_windows` | `3/9/25` | Small/mid/large median windows, in QC cells |
+| `flank_distances` | `4/6/9/12` | Flank distances, in QC cells |
+| `plane_tolerance` | `1.75` | Metres a local plane may miss by and still protect a cell |
+| `restoration_length_scale` | `1.0` | Multiply the restoration distances |
+| `restoration_fit_scale` | `1.0` | Multiply the restoration fit tolerance |
 
-The `review.html` output includes rejection/restoration views and separate
-GIS-resolution products; it does **not** alter the scientific DEM. Color hillshades
-are display products. Globato's final interpolated DEM can combine multiple modules;
-the module-only review surfaces must not be confused with it.
+Windows and flank distances are counted in grid cells, so the same values
+cover nine times the ground on a 1" grid as on a 1/9" grid. In tests, filtering
+directly on a 1" grid with the default constants removed real relief; either
+filter on a finer `qc_res` or scale the thresholds up and the windows down.
 
-**Limitations:** decisions apply to source grid cells, not individual sonar beams.
-Cell-based neighborhoods change physical size with grid resolution, so QC at
-1/9″ and 1″ is not interchangeable. Memory and runtime on full quarter-degree
-tiles and validation against original soundings remain important checks.
+Execution (results do not depend on these): `threads` (source gridding),
+`workers` (processes for the geometry step, default 4), `cache_dir` (default
+`<module cache>/stack_qc`), `side_stack_cache`.
 
-Run with `globato run recipe.yaml --shared-cache /path/to/cache --outdir /path/to/build --fail-fast`.
-Use stock Fetchez; `fetchez run` does not perform Globato's collection preparation.
-The native context needs one global `multi_stack` and one global `ms_binary_cudem`.
-Source readers/transforms run before QC; put source consumers (stacking and
-provenance) in `global_hooks` so they receive accepted contributions once.
-Unknown deferred manifest hooks fail before discovery; the native side-stack
-lookup runs after selection and before source reading.
+## Caching
 
-QC recipes rebuild final stacking/provenance consumers, even when their normal
-`resume` option is true: additive final states cannot remove an older QC decision.
-Raw downloads, source side-stacks and QC contexts still reuse matching caches.
-Use separate output folders for comparisons. Do not run concurrent builds into
-the same final-output folder.
+Each module's results are cached under `<cache_dir>/<key>/`. The key covers
+only what can change the decisions: the module's sources (side-stack identity
+and checksum, which include the module's own processing hooks), the module
+weight, the region, the QC grid, the detection and restoration tuning, the
+working-DEM settings and the Stack QC code. Changing another dataset, its
+weight, or the final DEM's tiers reuses the cached decisions. Pass results are
+cached per pass, so raising `max_passes` continues from the last cached pass,
+and a different `aggressiveness` or `terrain_restoration` reuses the shared
+working DEMs where it can. The accepted side-stacks are cached in the same
+folder.
 
-For Python recipe execution use `globato.qc.stack.pipeline.StackQCRecipe`.
-Ordinary recipes compiled by this class return stock Fetchez's unchanged plan.
-`globato.read`, `globato.build`, and direct `fetchez.recipe.Recipe` execution do
-not opt in to module collection preparation; the supported entry point is
-`globato run`. This PR does not change the streaming Python API.
-
-Review publication runs after the production DEM. A display failure is recorded
-in `review_ERROR.txt` and logged; inspect that file if `review.html` is missing.
-It does not invalidate the DEM or change masks. A missing final DEM is an error.
+The QC-grid side-stacks used with `qc_res` are cached as ordinary side-stacks
+next to the module's other side-stacks.
 
 ## Choose the QC grid
 
-First choose the normal final DEM grid (`multi_stack.res` and the first
-`ms_binary_cudem.resolutions` increment). Then either omit `qc_res` to use that
+First choose the normal final DEM grid (`stack_combine.res`, the first
+`ms_binary_cudem.resolutions` increment, and `stack_qc.res`). Then either omit `qc_res` to use that
 grid, or set it to an equal or finer **integer subdivision**:
 
 **QC increment = final DEM increment / N, where N = 1, 2, 3, ...**
@@ -91,7 +137,6 @@ grid, or set it to an equal or finer **integer subdivision**:
 
 This is a rule, not a fixed menu of supported resolutions. Any positive integer
 subdivision is allowed, subject to matching grid geometry and practical cost.
-The five existing controls keep their meaning.
 
 For geographic grids, always use an explicit arcsecond suffix, such as
 `qc_res: "1/9s"`. Decimal arcseconds such as `"0.5s"` also work. Bare numbers are
@@ -107,8 +152,8 @@ The resolved final DEM grid owns the bounds and origin. Native Globato may round
 an arbitrary requested AOI to whole final-grid cells. QC uses **those resolved
 bounds**, rather than independently rounding the original AOI at the finer
 resolution. Its working width and height are exactly N times the DEM grid's
-width and height. Preparation uses a module copy; discovery and the ordinary
-final build retain the original recipe module.
+width and height. QC uses a module copy; the ordinary final build keeps the
+original recipe module.
 
 Both grids must share the same CRS and north-up orientation. The AOI reference
 must match the stack's horizontal CRS. Source side-stacks must exactly match
@@ -117,45 +162,47 @@ cells. For factor two, cell **edges** nest; coarse and fine cell centres do not
 coincide. The algorithm sums cell contributions and does not require shared
 sample centres. It does not interpolate or warp misaligned masks to repair them.
 
-Explicit requests are checked before provider discovery. Invalid units, ratios or AOI CRS fail with instructions
-to correct the request. Actual side-stack geometry is checked before QC; an
+Invalid units or ratios fail when the hook is created, before any data is
+fetched. Actual side-stack geometry is checked before QC; an
 incompatible artifact raises an error. Only floating-point serialization noise
 is tolerated in the subdivision ratio; accepted increments are canonicalized
 as final increment / N to avoid accumulated edge drift.
 
 ## How accepted measurements reach the DEM
 
-QC and restoration operate on the original fine source grids. The private QC
-context interpolation ladder scales by 1/N; weights, algorithms and tier count
-stay configured. Its first resolution matches the QC grid exactly. Final stack
-and interpolation hooks stay unchanged.
+QC and restoration operate on each source's QC-grid side-stack. Accepted
+seven-band statistics are summed **per source** into complete DEM cells and
+written as a side-stack on the DEM grid; the entry's `side-stack` artifact then
+points to it (the original is recorded as `stack_qc_original_side_stack`).
+`stack_combine` reduces the accepted side-stacks of all modules as usual. One
+survey may be rejected while an overlapping survey remains. Interpolated
+working-DEM values never enter the stack.
 
-Accepted seven-band statistics are summed **per source** into complete final DEM
-cells before ordinary source reduction. One survey may be rejected while an
-overlapping survey remains. Fine interpolated DEM values are never averaged
-back into the measured stack. Optional review measured surfaces use the QC grid
-and are labelled separately from the final DEM.
+A factor of nine means up to 81 times the working cells; finer QC costs more.
 
-A factor of nine means up to 81 times the working cells. Reads are bounded and
-empty source blocks can be skipped, but finer QC still costs more. New additive
-aggregation reference tests allow documented floating-point roundoff; default
-QC remains unchanged. Changing qc_res can change decisions and does not prove
-accuracy. Original-sounding and cached-field validation remain separate gates.
+## Provenance
 
-Fraction spelling is implemented for `stack_qc.args.qc_res`; other native hooks
-retain their existing increment syntax.
+`provenance` and `source_masks` run in the stream stage, before Stack QC, so
+they record each source's coverage before filtering.
 
-The aligned bounds are DEM/QC **processing bounds**. This change does not add an
-extra external QC buffer or change the normal final output rounding/crop policy.
-An arbitrary AOI is accepted; the resolved native grid supplies the cell edges.
+## Review pages
 
+```yaml
+global_hooks:
+  # ... ms_binary_cudem, focus_sink ...
+  - name: stack_qc_review
+    args: {dem: "%name%_%batch_name%.tif"}
+```
 
-## Optional provenance
+For each Stack QC result in the build, `stack_qc_review` writes
+`stack_qc_review/<module>_<key>/review.html` next to the DEM (or under
+`output`): hillshades of the module's working DEM before filtering and after
+each pass, removal footprints, restored terrain, and the final combined DEM,
+with GeoTIFF downloads. It reads only cached results and never changes the
+DEM; a failure is logged and written to `review_ERROR.txt`. Production builds
+can leave it out. It needs matplotlib.
 
-Put `provenance` and `source_masks` in `global_hooks` before `multi_stack`,
-with their `res` equal to the final stack increment. They record accepted
-measured coverage (`count > 0`) on the final grid, including sources aggregated
-from a finer QC grid. They do not treat interpolated cells as observations.
-`stack_provenance` belongs after `multi_stack`; it records sources surviving
-native weight-tier reduction. Coverage grids must match the final stack's
-horizontal CRS, bounds and resolution; incompatible raster streams fail loudly.
+## Limitations
+
+Decisions apply to source grid cells, not individual sonar beams. Original
+-sounding validation and memory/runtime on full tiles remain important checks.

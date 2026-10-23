@@ -3,8 +3,9 @@ description: "The standard CUDEM step-down, trim, and visualize pipeline."
 tags:
   - globato-dem
   - dem
+# Side-stacks and stack_combine (not multi_stack); see mr-globato-crm.
 hooks:
-  - preset: mr-globato
+  - preset: mr-globato-ss
     args:
       - name: ms_binary_cudem
         args:
@@ -24,16 +25,18 @@ hooks:
           # interp_gmt:tension=1,verbose=True
       - name: side_stack_check
         args:
-          res: .11111111s
+          res: .1111111s
           crs: "EPSG:4269+5703"
       - name: side_stack
         args:
-          res: .11111111s
+          res: .1111111s
           crs: "EPSG:4269+5703"
-      - name: multi_stack
+      - name: stack_combine
         args:
           res: .1111111s
           crs: "EPSG:4269+5703"
+          strategy: mixed
+          weight_threshold: 3/2/1/.75/.5/.4/.3/.2/.1
       - name: source_masks
         args:
           res: .1111111s

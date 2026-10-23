@@ -3,17 +3,24 @@ description: "The standard CRM step-down, trim, and visualize pipeline."
 tags:
   - globato-dem
   - dem
+# Stacks through side-stacks and stack_combine (not multi_stack), so that
+# collection-stage filters such as stack_qc (on mbdb in crm-bathy-topo) can
+# replace a source's side-stack before the stack is assembled.
 hooks:
-  - preset: mr-globato
+  - preset: mr-globato-ss
     args:
       - name: ms_binary_cudem
         args:
           steps: 3
           resolutions: 1s/3s/9s/15s
+          # Multibeam stack weights are ~0.8-0.95, so a top tier of 0.6 grids it
+          # at 1" (with 1/0.5/0.25 it was gridded at 3"). Other datasets keep
+          # their tiers (module weights are >= 1 or <= 0.5; checked on the 330
+          # Southern California CRM tiles).
           weights:
-            - 1
-            - 0.5
-            - 0.25
+            - 0.6
+            - 0.4
+            - 0.2
           # algos: raster_fill
           algos: raster_fill/raster_fill/raster_fill/interp_gmt:tension=1,verbose=True
           blend_dists: 32/16/8/4
@@ -25,10 +32,12 @@ hooks:
         args:
           res: 1s
           crs: "EPSG:4326+3855"
-      - name: multi_stack
+      - name: stack_combine
         args:
           res: 1s
           crs: "EPSG:4326+3855"
+          strategy: mixed
+          weight_threshold: 3/2/1/.75/.5/.4/.3/.2/.1
       - name: source_masks
         args:
           res: 1s

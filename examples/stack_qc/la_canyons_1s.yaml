@@ -1,5 +1,5 @@
 # NAD83 geographic study bounds in west/east/south/north order.
-# Stack QC automatically manages its source side-stacks.
+# Side-stacks are combined with stack_combine so stack_qc can filter them.
 project:
   name: stack_qc_la_canyons_1s
 region:
@@ -26,20 +26,37 @@ modules:
       dst_srs: EPSG:4269+5703
   - name: stack_qc
     args:
+      res: 1s
+      crs: EPSG:4269+5703
       aggressiveness: 2
       terrain_restoration: 2
       max_passes: 5
       stop_when_stable: false
-      review: true
+      interpolation:
+        steps: 3
+        resolutions: 1s/3s/9s/15s
+        weights: 2/1/.5
+        blend_dists: 64/32/16/8
+        algos: raster_fill/raster_fill/raster_fill/interp_gmt:tension=.95
+        previous_tier_resampling: cubic_spline
+        barrier: null
+        inland_decay_dist: 0
 global_hooks:
 - name: spatial_crop
-- name: multi_stack
+- name: side_stack_check
+  args:
+    res: 1s
+    crs: EPSG:4269+5703
+- name: side_stack
+  args:
+    res: 1s
+    crs: EPSG:4269+5703
+- name: stack_combine
   args:
     res: 1s
     crs: EPSG:4269+5703
     strategy: mixed
     weight_threshold: 3/2/1/.75/.5/.4/.3/.2/.1
-    resume: false
     output: source_stack.tif
 - name: focus_sink
   args:
@@ -60,3 +77,6 @@ global_hooks:
     inland_decay_dist: 0
     keep_steps: false
     output: final_dem.tif
+- name: stack_qc_review
+  args:
+    dem: final_dem.tif

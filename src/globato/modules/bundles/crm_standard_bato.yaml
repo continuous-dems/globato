@@ -12,7 +12,14 @@ tags:
   - glob-stream
   - glob-bundle
 modules:
+  # Every global-bathy-topo member except mbdb, which is defined below with
+  # Stack QC instead of rq. Add new global-bathy-topo modules here too.
   - bundle: global-bathy-topo
+    select:
+      module:
+        - copernicus
+        - sysu
+        - margrav
     hooks:
       - name: raster_warp
         args:
@@ -24,6 +31,46 @@ modules:
         args:
           dst_srs: "EPSG:4326+3855"
           cache_dir: "%shared_cache%"
+
+  # NCEI Multibeam, filtered with Stack QC instead of global-bathy-topo's rq
+  # (same module arguments and source hooks as there). Stack QC
+  # runs at the collection stage on the sources' side-stacks; it filters on a
+  # 1/9" grid and hands accepted 1" side-stacks to stack_combine. The
+  # interpolation block is the working-DEM ladder, written for the 1" DEM grid
+  # (scaled down to qc_res); keep it in step with ms_binary_cudem in
+  # mr-globato-crm.
+  - module: mbdb
+    args: {weight: 1, want_inf: True, use_cache: true}
+    hooks:
+      - name: filename_filter
+        args:
+          match: ".fbt"
+      - name: set-srs
+        args:
+          srs: "EPSG:4326+vdatum:msl"
+      - name: stream_data
+      - name: stream_reproject
+        args:
+          dst_srs: "EPSG:4326+3855"
+          cache_dir: "%shared_cache%"
+      - name: stack_qc
+        args:
+          res: 1s
+          crs: "EPSG:4326+3855"
+          qc_res: 1/9s
+          aggressiveness: 2
+          terrain_restoration: 2
+          max_passes: 5
+          stop_when_stable: false
+          interpolation:
+            steps: 3
+            resolutions: 1s/3s/9s/15s
+            weights: [0.6, 0.4, 0.2]
+            algos: raster_fill/raster_fill/raster_fill/interp_gmt:tension=1
+            blend_dists: 32/16/8/4
+            barrier: osm
+            previous_tier_resampling: cubic_spline
+            bathy_max_z: "ocean:-0.01,river:0,lake:None,wetland:None,estuary:0"
 
   # TNM NED 1
   - module: tnm

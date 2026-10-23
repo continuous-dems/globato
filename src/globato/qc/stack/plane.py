@@ -23,7 +23,7 @@ def _sum(a, wy, wx):
     )
 
 
-def plane_protection(z, valid, candidates):
+def plane_protection(z, valid, candidates, tolerance=TOLERANCE_M):
     """Centered least-squares plane outside flagged cells, checked for support.
 
     This is not an iterative robust regression: excluding the suspect cells,
@@ -53,7 +53,7 @@ def plane_protection(z, valid, candidates):
     predicted = (sz - ax * sx - ay * sy) / den
     residual_ss = _sum(v * v, one, one) - sz * sz / den - ax * xz - ay * yz
     rms = np.sqrt(np.maximum(residual_ss, 0.0) / den)
-    support = (n >= MIN_PLANE_CELLS) & rank & (rms <= TOLERANCE_M)
+    support = (n >= MIN_PLANE_CELLS) & rank & (rms <= tolerance)
     for ys in (x < 0, x > 0):
         for xs in (x < 0, x > 0):
             support &= _sum(w, ys.astype(float), xs.astype(float)) >= 2
@@ -61,7 +61,7 @@ def plane_protection(z, valid, candidates):
         np.asarray(candidates, bool)
         & valid
         & support
-        & (np.abs(z - predicted) <= TOLERANCE_M)
+        & (np.abs(z - predicted) <= tolerance)
     )
     return protect, dict(
         predicted=predicted.astype("float32"),

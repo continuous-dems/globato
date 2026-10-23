@@ -264,7 +264,16 @@ def test_final_requested_pass_hands_mask_to_build_without_context_interpolation(
         builds.append(read(manifest)["rejected_source_cells"])
         return baseline
 
-    def reject(pool, parent, parent_dem, folder, detector_level, consensus):
+    def reject(
+        pool,
+        parent,
+        parent_dem,
+        folder,
+        detector_level,
+        consensus,
+        settings=None,
+        workers=1,
+    ):
         with rasterio.open(parent["masks"]["s0"]["mask"]) as ds:
             previous = ds.read(1).astype(bool)
         mask = previous.copy()

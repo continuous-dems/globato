@@ -25,6 +25,23 @@ modules:
         args:
           dst_srs: "EPSG:4269+5703"
           cache_dir: "%shared_cache%"
+      # Multibeam Stack QC on the 1/9" CUDEM grid itself (no finer qc_res).
+      # Only crm-bathy-topo's mbdb has stack_qc, so only it gets these args.
+      # The interpolation block mirrors ms_binary_cudem in mr-globato-cudem.
+      - name: stack_qc
+        args:
+          res: .1111111s
+          crs: "EPSG:4269+5703"
+          qc_res: null
+          interpolation:
+            steps: 5
+            resolutions: .1111111s/.3333333s/1s/3s/9s/15s
+            weights: [2.0, 1.0, 0.5, 0.25, 0.1]
+            algos: raster_fill/raster_fill/raster_fill/raster_fill/raster_fill/interp_gmt:tension=.95
+            blend_dists: 64/32/16/8/4/2
+            barrier: osm
+            previous_tier_resampling: cubic_spline
+            bathy_max_z: "ocean:-0.01,river:0,lake:None,wetland:None,estuary:0"
 
   # --- HIGH RES TOPOGRAPHY ---
   # - module: coned

@@ -10,7 +10,8 @@ from fetchez.spatial import Region
 from globato.hooks.sinks.multi_stack import MultiStackHook
 from globato.hooks.transforms.point_pixels import FUSION_BANDS
 from globato.qc.stack import io
-from globato.qc.stack.native import NativeBuilder, masked_stream
+from globato.qc.stack.context import WorkingSurface
+from globato.qc.stack.native import masked_stream
 from globato.qc.stack.stacking import rebuild
 
 
@@ -159,13 +160,25 @@ def test_rebuilt_all_bands_exactly_match_native_replay_and_reuse_unchanged_block
         np.testing.assert_array_equal(actual.read(), wanted.read())
 
 
+def interpolators():
+    from globato.hooks.rasters.binary_cudem import BinaryCudemStepDown
+
+    return [
+        BinaryCudemStepDown(
+            steps=1,
+            resolutions="3/9",
+            weights=".5",
+            algos="raster_fill/raster_fill",
+            barrier=None,
+            inland_decay_dist=0,
+        )
+    ]
+
+
 def test_unchanged_winning_state_skips_native_interpolation(tmp_path):
     # In supercede mode the lower-weight source is hidden by better observations.
-    from test_stack_qc_native import setup
-
-    _, _, hooks = setup(tmp_path)
     stack, region, records = fixture(tmp_path, "supercede")
-    builder = NativeBuilder(stack, [hooks[-1]], records, region)
+    builder = WorkingSurface(stack, interpolators, records, region, tmp_path)
     baseline = builder(None, tmp_path / "baseline")
     manifest = tmp_path / "manifest.json"
     io.write(manifest, mask(tmp_path, records, "loser"))
@@ -180,11 +193,8 @@ def test_unchanged_winning_state_skips_native_interpolation(tmp_path):
 
 
 def test_changed_fusion_state_invalidates_cached_context(tmp_path):
-    from test_stack_qc_native import setup
-
-    _, _, hooks = setup(tmp_path)
     stack, region, records = fixture(tmp_path, "mean")
-    builder = NativeBuilder(stack, [hooks[-1]], records, region)
+    builder = WorkingSurface(stack, interpolators, records, region, tmp_path)
     builder(None, tmp_path / "baseline")
     with Path(builder.previous["state"]).open("ab") as stream:
         stream.write(b"changed")

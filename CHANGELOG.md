@@ -10,9 +10,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### ADDED
 * A `py.typed` marker, so type checkers read globato's type annotations in code that uses it (#284). mypy now runs on every pull request, in a new "Typecheck" workflow.
 * Added `stack_combine` hook to combine multiple fusion-state stack files into a multi-stack.
+* `stack_qc` hook: Stack QC source filtering and terrain restoration (from #285) as a standard collection-stage hook. It filters a module's side-stacks, optionally on a finer `qc_res` grid, against working DEMs built in the same process, and hands accepted side-stacks to `stack_combine`. Detection thresholds, window sizes, plane tolerance and restoration scales, and the working-DEM settings, are hook arguments. Results are cached on the filter's own inputs only.
+* `stack_qc_review` hook: optional HTML review (before/after hillshades) of Stack QC results, written after the final DEM.
 
 ### CHANGED
 * Updated `globato build` to use `ignore-failures` instead of `fail-fast`
+* `mr-globato-crm` and `mr-globato-cudem` stack with `side_stack` + `stack_combine` (based on `mr-globato-ss`) instead of `multi_stack`. The CUDEM side-stack resolution now matches its stack (`.1111111s`).
+* `crm-bathy-topo` filters NCEI multibeam (`mbdb`) with `stack_qc` (1/9" QC for the 1" DEM) instead of `rq`; `cudem-bathy-topo` runs it on its own 1/9" grid. Other recipes using `global-bathy-topo` keep `rq`.
+* `mr-globato-crm` tier weights are 0.6/0.4/0.2 (were 1/0.5/0.25), so multibeam (stack weights ~0.8-0.95) is gridded at 1" instead of 3". On the 330 Southern California CRM tiles no other dataset changed tier (module weights are >= 1 or <= 0.5).
 
 ### FIXED
 * The `glob_sdb` module failed with `ModuleNotFoundError: No module named 'globato.cli.recipe'` as soon as it started building its training DEM (#284). It now uses `fetchez.recipe.Recipe`.

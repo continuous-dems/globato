@@ -39,14 +39,14 @@ def retained_context(pool, bounds, parent, independent_poor, poor, references):
     return context, original, unknown, evidence
 
 
-def predict_levels(context, removed, inner, spacing, maximum):
+def predict_levels(context, removed, inner, spacing, maximum, scales=(1.0, 1.0)):
     """Higher strengths extend recovery while preserving earlier predictions."""
     predictions = {0: np.full(removed.shape, np.nan, "float32")}
     for level in range(1, maximum + 1):
         prediction = np.full(removed.shape, np.nan, "float32")
         if removed[inner].any() and len(context):
             prediction = restoration.tile_model(
-                context, removed, spacing, settings.restoration_policy(level)
+                context, removed, spacing, settings.restoration_policy(level, *scales)
             )["prediction"]
         earlier = np.isfinite(predictions[level - 1])
         prediction[earlier] = predictions[level - 1][earlier]
@@ -64,7 +64,9 @@ def clear_survey_outliers(group, pool, evidence, votes, categories, rows, cols):
     return clear
 
 
-def restore(pool, parent, baseline, out, levels, quality, exclusion="off"):
+def restore(
+    pool, parent, baseline, out, levels, quality, exclusion="off", scales=(1.0, 1.0)
+):
     """Bounded recovery stage followed by a separate optional exclusion stage."""
     out = Path(out)
     out.mkdir(parents=True, exist_ok=True)
@@ -79,7 +81,7 @@ def restore(pool, parent, baseline, out, levels, quality, exclusion="off"):
     with rasterio.open(baseline) as before:
         dx, dy = metres(before)
     spacing = (dy, dx)
-    halo = restoration.context_halo(spacing)
+    halo = restoration.context_halo(spacing, settings.restoration_policy(0, *scales))
     for number, (core, bounds, inner) in enumerate(windows(pool.shape, CORE, halo), 1):
         context, original, unknown, evidence = retained_context(
             pool, bounds, parent, independent_poor, poor, references
@@ -88,7 +90,9 @@ def restore(pool, parent, baseline, out, levels, quality, exclusion="off"):
         active_ids = {r["source_id"] for r in pool.active_records(bounds)}
         for source in pool.active_records(bounds):
             removed |= pool.rejection_mask(source, bounds, parent)
-        predictions = predict_levels(context, removed, inner, spacing, max(evaluated))
+        predictions = predict_levels(
+            context, removed, inner, spacing, max(evaluated), scales
+        )
         rows, cols = np.nonzero(np.isfinite(predictions[max(evaluated)]))
         votes, categories = surveys.qualified_votes(
             original[:, rows, cols], 3.5, unknown=unknown[rows, cols]
@@ -111,7 +115,7 @@ def restore(pool, parent, baseline, out, levels, quality, exclusion="off"):
                         rejected,
                         predictions[level],
                         clear_outlier=clear,
-                        policy=settings.restoration_policy(level),
+                        policy=settings.restoration_policy(level, *scales),
                     )
                     if level
                     else np.zeros(z.shape, bool)
