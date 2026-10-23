@@ -12,10 +12,10 @@ project:
 execution:
   threads: 4
 
-schemas:
-  - name: validate-recipe
-  - name: validate-paths
-  - name: validate-parameters
+# schemas:
+#   - name: validate-recipe
+#   - name: validate-paths
+#   - name: validate-parameters
 
 modifiers:
   - name: buffer-and-cut

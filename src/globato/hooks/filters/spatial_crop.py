@@ -43,7 +43,7 @@ class SpatialCrop(FetchHook):
     def run(self, entries):
         for mod, entry in entries:
             stream = entry.get("stream")
-            if not stream:
+            if not stream or entry.get("stream-type") != "point-stream":
                 continue
 
             region = getattr(mod, "region", None)

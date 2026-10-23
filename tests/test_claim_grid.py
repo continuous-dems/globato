@@ -123,7 +123,7 @@ def test_output_cell_exclusion_prevents_multistack_mixing(tmp_path, monkeypatch)
     # filtering; default aggregation preserves their individual weights.
     # The update API may optionally require a dataset identity.
     def _update(points, dataset_id):
-        if "dataset_id" in inspect.signature(stack.update).parameters:
+        if "contribution_id" in inspect.signature(stack.update).parameters:
             stack.update(points, dataset_id)
         else:
             stack.update(points)
