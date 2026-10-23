@@ -129,10 +129,12 @@ def _block_state(
     data = np.zeros((7, int(window.height), int(window.width)), dtype="float64")
     for r in active:
         source, target = overlap(r, window)
+        if memberships is None and not _holds_data(
+            (written or {}).get(r["source_id"]), source
+        ):
+            continue  # Never-written blocks read as zeros; don't even open it.
         src = pool.ds(r["path"])
         if memberships is None:
-            if not _holds_data((written or {}).get(r["source_id"]), source):
-                continue  # Never-written blocks read as zeros.
             if not np.any(src.read(2, window=source) > 0):
                 continue
             occupied.append(r["source_id"])
@@ -164,6 +166,7 @@ def rebuild(accumulator, records, manifest, previous=None, workers=1):
     """
     started = time.monotonic()
     dst = accumulator.dataset
+    sparse = getattr(accumulator, "sparse_state", False) and not accumulator.resume
     inventory = dict(grid=dict(shape=[dst.height, dst.width]), sources=records)
     pool = SourcePool(inventory)
     occupied = {r["source_id"]: [] for r in records}
@@ -271,7 +274,9 @@ def rebuild(accumulator, records, manifest, previous=None, workers=1):
                     source_reads += reads
                     for sid in block_occupied:
                         occupied[sid].append(key)
-                dst.write(data, window=window)
+                # A sparse state reads unwritten blocks as zero; skip the write.
+                if not (sparse and not np.any(data)):
+                    dst.write(data, window=window)
                 if time.monotonic() - last_report >= 10 or number == len(windows):
                     logger.info(
                         "QC stack blocks: %d/%d; rebuilt=%d; changed=%d; source reads=%d",

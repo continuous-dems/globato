@@ -101,7 +101,7 @@ class WorkingSurface:
                 raise RuntimeError("QC rejection mask changed during QC")
         state = str(work / "fusion.tif")
         accumulator = self.stack.create_accumulator(
-            self.region, output=str(work / "stack.tif"), state=state
+            self.region, output=str(work / "stack.tif"), state=state, sparse_state=True
         )
         try:
             details = rebuild(

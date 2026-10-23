@@ -122,6 +122,7 @@ class MultiStackAccumulator:
         verbose=False,
         state_fn=None,
         resume=True,
+        sparse_state=False,
     ):
         strategy = strategy.lower()
         if strategy not in VALID_STRATEGIES:
@@ -139,6 +140,10 @@ class MultiStackAccumulator:
         self.verbose = verbose
         self.compress_state = str2bool(compress_state)
         self.resume = bool(resume)
+        # A sparse state stores no block until something is written to it;
+        # unwritten blocks read as zero, the identity for every state band.
+        # Used for temporary states (e.g. Stack QC's working stacks).
+        self.sparse_state = bool(sparse_state)
 
         self.lock = threading.Lock()
         self.wts = np.sort([float(x) for x in str(weight_threshold).split("/")])
@@ -267,11 +272,15 @@ class MultiStackAccumulator:
 
             os.remove(self.state_fn)
 
-        with rasterio.open(self.state_fn, "w", **self._state_profile()) as dst:
+        profile = self._state_profile()
+        if self.sparse_state:
+            profile["sparse_ok"] = True
+        with rasterio.open(self.state_fn, "w", **profile) as dst:
             # Zero is the identity value for every additive state band.
             # GeoTIFF creation commonly initializes sparse/tiled data to zero,
-            # but write explicit blocks so the contract is unambiguous.
-            for _, window in dst.block_windows(1):
+            # but write explicit blocks so the contract is unambiguous (a sparse
+            # state leaves them unwritten; they read as zero).
+            for _, window in [] if self.sparse_state else dst.block_windows(1):
                 zeros = np.zeros(
                     (len(FUSION_BANDS), int(window.height), int(window.width)),
                     dtype=np.float64,
@@ -608,7 +617,9 @@ class MultiStackHook(FetchHook):
         self.compress_state = str2bool(compress_state)
         self._accumulator = None
 
-    def create_accumulator(self, region, *, output, state=None, resume=False):
+    def create_accumulator(
+        self, region, *, output, state=None, resume=False, sparse_state=False
+    ):
         """Create an independent native state without changing this hook's lifecycle."""
         if isinstance(self.res, str) and self.res.endswith("s"):
             inc = float(self.res[:-1]) / 3600.0
@@ -630,6 +641,7 @@ class MultiStackHook(FetchHook):
             compress_state=self.compress_state,
             state_fn=state,
             resume=resume,
+            sparse_state=sparse_state,
         )
 
     def _init_accumulator(self, region):
