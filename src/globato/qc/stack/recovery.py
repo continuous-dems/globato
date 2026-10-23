@@ -118,7 +118,7 @@ def _restore_block(pool, parent, block, sets, spacing, evaluated, scales):
     return out
 
 
-_WORKER = {}
+_WORKER: dict = {}
 
 
 def _init_worker(inventory, parent, sets, spacing, evaluated, scales):

@@ -183,7 +183,7 @@ def _reject_block(pool, g, parent, level, consensus, tolerance, block):
     return out
 
 
-_WORKER = {}
+_WORKER: dict = {}
 
 
 def _init_reject_worker(inventory, paths, parent, level, consensus, tolerance):
