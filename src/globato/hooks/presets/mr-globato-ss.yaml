@@ -1,4 +1,4 @@
-name: mr-globato-ss
+name: mr-globato-test
 description: "The standard Multi-Resolution Global Bathymetry and Topography pipeline."
 tags:
   - globato-dem
@@ -9,64 +9,78 @@ hooks:
   - name: enrich
   - name: transfer_log
   - name: drop_class
-  - name: provenance
-    args:
-      res: 3s
-      output: "%name%_%batch_name%_provenance.tif"
+  # - name: provenance
+  #   args:
+  #     res: 3s
+  #     output: "%name%_%batch_name%_provenance.tif"
 
-  - name: source_masks
-    args:
-      res: 3s
-      output: "%name%_%batch_name%_sources.vrt"
+  # - name: source_masks
+  #   args:
+  #     res: 3s
+  #     output: "%name%_%batch_name%_sources.vrt"
 
   # Side-stack testing, not default for now.
-  - name: side_stack_check
-    args:
-      res: 3s
-      crs: epsg:4326+3855
+  # - name: side_stack_check
+  #   args:
+  #     res: 3s
+  #     crs: epsg:4326+3855
 
   - name: side_stack
     args:
       res: 3s
       crs: epsg:4326+3855
 
-  # - name: fusion_consistency
-  #   args:
-  #     hard: true
-  #     hard_threshold: 1
-  #     radius: 5
-  #     sigma: 2.5
-  #     min_residual: 10
-  #     residual_span: 200
-  #     preserve_coherence: 0.8
-  #     min_peer_cells: 4
-  #     # sigma: 4
-  #     # min_residual: 25
-  #     # residual_span: 200
-  #     # preserve_coherence: 0.60
-  #     # min_peer_cells: 8
-  #     group_by: survey_id
-  #     group_bad_fraction: 0.20
-  #     group_bias_threshold: 40
-  #     group_bias_span: 100
-  #     strategy: mixed
-  #     weight_threshold: 0.25/0.5/0.75/1.0
+  - name: fusion_consistency
+    args:
+      group_by: survey_id
+      hard: true
+      floor: 0.1
+      sigma: 4
+      min_residual: 5
+      source_artifact: side-stack
+      output_artifact: qc-side-stack1
+
+  - name: fusion_consistency
+    args:
+      group_by: survey_id
+      hard: true
+      floor: 0.1
+      sigma: 4
+      min_residual: 15
+      source_artifact: qc-side-stack1
+      output_artifact: qc-side-stack2
+
+  - name: fusion_consistency
+    args:
+      group_by: survey_id
+      hard: true
+      floor: 0.1
+      sigma: 4
+      min_residual: 25
+      source_artifact: qc-side-stack2
+      output_artifact: qc-side-stack3
+
+  - name: fusion_consistency
+    args:
+      group_by: survey_id
+      hard: true
+      floor: 0.1
+      sigma: 4
+      min_residual: 35
+      source_artifact: qc-side-stack3
+      output_artifact: qc-side-stack4
 
   - name: stack_combine
     args:
       res: 3s
+      strategy: mixed
+      weight_threshold: 1/2/4
+      source_artifact: qc-side-stack-dup4
+      missing: error
+      output: multi_stack.tif
+      state: multi_stack.fusion.tif
       crs: epsg:4326+3855
-      output: "%name%_%batch_name%_stack.tif"
-
-  # - name: multi_stack
-  #   args:
-  #     res: 3s
-  #     crs: epsg:4326+3855
-  #     strategy: mixed
-  #     nodata: -9999.0
-  #     weight_threshold: 3/2/1/.75/.5/.4/.3/.2/.1
-  #     output: "%name%_%batch_name%_stack.tif"
-  #     # state_fn: "%name%_%batch_name%_state.tif"
+      #output: "%name%_%batch_name%_stack.tif"
 
   # - name: stack_provenance
   #   args:
@@ -103,32 +117,6 @@ hooks:
   #     max_residual: 20
   #     floor: 0.6
   #     min_neighbors: 8
-
-  # --- Testing BLEND ---
-  # - name: ms_blend
-  #   args:
-  #     weight_threshold: 1.0
-  #     blend_dist: 60
-
-  # - name: ms_blend
-  #   args:
-  #     weight_threshold: 0.5
-  #     blend_dist: 60
-
-  # - name: ms_blend
-  #   args:
-  #     weight_threshold: 0.25
-  #     blend_dist: 60
-
-  # # Save the blended stack without breaking the active raster stream.
-  # - name: raster_write
-  #   args:
-  #     suffix: _final_blend
-  #     artifact_id: blended_checkpoint
-
-  # - name: focus_sink
-  #   args:
-  #     target: blended_checkpoint
 
   - name: ms_binary_cudem
     args:

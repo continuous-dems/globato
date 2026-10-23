@@ -60,6 +60,7 @@ class StackCombine(FetchHook):
         compress_state=True,
         ndv=-9999,
         source_artifact="side-stack",
+        missing="skip",
         **kwargs,
     ):
         super().__init__(**kwargs)
@@ -70,10 +71,15 @@ class StackCombine(FetchHook):
         self.strategy = str(strategy).lower()
         if self.strategy not in VALID_STRATEGIES:
             raise ValueError(f"Invalid stack strategy {strategy!r}")
+
         self.weight_threshold = weight_threshold
         self.compress_state = str2bool(compress_state)
         self.ndv = float(ndv)
         self.source_artifact = source_artifact
+        self.missing = str(missing).lower()
+        if self.missing not in {"skip", "error"}:
+            raise ValueError("missing must be skip or error")
+
         self._accumulator = None
         self._temporary_paths = []
 
@@ -84,6 +90,7 @@ class StackCombine(FetchHook):
         suffix = region.format("fn")
         if suffix not in path.stem:
             path = path.with_name(f"{path.stem}_{suffix}{path.suffix}")
+
         return path.absolute()
 
     @staticmethod
@@ -97,54 +104,83 @@ class StackCombine(FetchHook):
         return name
 
     @staticmethod
-    def _sources(entries, artifact):
+    def _sources(entries, artifact, missing="skip"):
         """Pick declared side-stack artifacts, ignoring repeated references."""
         selected = []
         seen = set()
         for _, entry in entries:
             path = (entry.get("artifacts") or {}).get(artifact)
             if path is None:
+                if missing == "error" and (entry.get("artifacts") or {}).get(
+                    "side-stack"
+                ):
+                    raise ValueError(
+                        f"Missing required {artifact!r} artifact for entry {entry.get('dst_fn', '<unknown>')!r}"
+                    )
+
                 continue
+
             if not isinstance(path, (str, os.PathLike)):
                 raise TypeError("side-stack artifact must be one raster filename")
+
             canonical = str(Path(path).resolve())
             if canonical not in seen:
                 seen.add(canonical)
                 selected.append(canonical)
+
         return selected
 
     @staticmethod
     def _validate_source(src, path, accumulator):
-        """Reject non-FusionState rasters or incompatible grid definitions."""
+        """Validate the FusionState schema and destination grid, not cache identity.
+
+        ``side_stack`` validates its own cache hash using Fetchez ``dataset_id``
+        and the producing entry. At collection time the selected artifact may be
+        a QC-adjusted side-stack, so its filename/hash need not equal the original
+        entry's cache digest. Recreating that digest here would be incorrect.
+        """
+        tags = src.tags()
         problems = []
+
+        if tags.get("GLOBATO_DATATYPE") != "FUSION_STATE":
+            problems.append("not a FusionState (GLOBATO_DATATYPE)")
+        if tags.get("GLOBATO_FUSION_VERSION") != str(FUSION_STATE_VERSION):
+            problems.append("FusionState version mismatch")
         if src.count != len(FUSION_BANDS):
-            problems.append("band count")
+            problems.append("band count mismatch")
         if tuple(src.descriptions) != tuple(FUSION_BANDS):
-            problems.append("FusionState band descriptions")
-        if src.tags().get("GLOBATO_DATATYPE") != "FUSION_STATE":
-            problems.append("GLOBATO_DATATYPE")
-        if src.tags().get("GLOBATO_FUSION_VERSION") != str(FUSION_STATE_VERSION):
-            problems.append("FusionState version")
+            problems.append("band schema mismatch")
+        if any(dtype != "float64" for dtype in src.dtypes):
+            problems.append("dtype mismatch (expected float64)")
+
         if (src.width, src.height) != (accumulator.xcount, accumulator.ycount):
-            problems.append("dimensions")
+            problems.append("grid dimensions mismatch")
         if src.transform != accumulator.transform:
-            problems.append("geotransform")
+            problems.append("geotransform mismatch")
         expected_crs = CRS.from_user_input(accumulator.crs) if accumulator.crs else None
         if src.crs != expected_crs:
-            problems.append("CRS")
-        if any(dtype != "float64" for dtype in src.dtypes):
-            problems.append("dtype (expected float64)")
-        if problems:
-            raise ValueError(f"Incompatible side-stack {path!r}: {', '.join(problems)}")
+            problems.append("CRS mismatch")
 
-    def _grid(self, region):
-        inc = parse_increments(self.res, crs=self.crs)
-        if inc is None or inc <= 0:
-            raise ValueError(f"Invalid stack resolution: {self.res!r}")
-        return inc
+        if problems:
+            logger.error(
+                "Side-stack grid mismatch:\n"
+                "  source:   size=%sx%s, transform=%s, crs=%s\n"
+                "  expected: size=%sx%s, transform=%s, crs=%s",
+                src.width,
+                src.height,
+                src.transform,
+                src.crs,
+                accumulator.xcount,
+                accumulator.ycount,
+                accumulator.transform,
+                accumulator.crs,
+            )
+            raise ValueError(
+                f"Incompatible FusionState artifact {path!r}: " + "; ".join(problems)
+            )
 
     def run(self, entries):
-        sources = self._sources(entries, self.source_artifact)
+        sources = self._sources(entries, self.source_artifact, self.missing)
         if not sources:
             logger.info("stack_combine: no side-stack artifacts; nothing to assemble")
             return entries
@@ -165,6 +201,12 @@ class StackCombine(FetchHook):
         if output_path == state_path:
             raise ValueError("stack_combine output and state paths must differ")
 
+        logger.info(
+            "StackCombine configuration: res=%r, crs=%r, source_artifact=%r",
+            self.res,
+            self.crs,
+            self.source_artifact,
+        )
         # Avoid changing existing outputs until every input has been reduced and
         # the finalized MultiStack has been successfully written.
         work_output = self._temp_path(output_path)
@@ -173,8 +215,8 @@ class StackCombine(FetchHook):
         try:
             accumulator = MultiStackAccumulator(
                 region=region,
-                x_inc=self._grid(region),
-                y_inc=self._grid(region),
+                x_inc=parse_increments(self.res, crs=self.crs),
+                y_inc=parse_increments(self.res, crs=self.crs),
                 output_fn=work_output,
                 state_fn=work_state,
                 resume=False,
@@ -195,9 +237,15 @@ class StackCombine(FetchHook):
                             name: data[index] for index, name in enumerate(FUSION_BANDS)
                         }
                         accumulator.update_state(state, window)
-                    # Use the side-stack's immutable cache identity when present.
-                    # Path is the fallback for externally generated FusionStates.
-                    source_key = src.tags().get("GLOBATO_SIDESTACK_HASH") or path
+                    # Use the selected artifact's identity, not the original
+                    # source's cache hash when a QC-adjusted raster is selected.
+                    # A QC output may retain the original source provenance but
+                    # represents a distinct contribution to this assembly.
+                    source_key = (
+                        src.tags().get("GLOBATO_QC_HASH")
+                        or src.tags().get("GLOBATO_SIDESTACK_HASH")
+                        or path
+                    )
                     accumulator.mark_registered(source_key)
 
             accumulator.finalize(ndv=self.ndv)
