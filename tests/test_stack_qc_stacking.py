@@ -115,8 +115,9 @@ def reference(stack, region, records, manifest, path):
 
 
 @pytest.mark.parametrize("strategy", ["mean", "weighted_mean", "mixed", "supercede"])
+@pytest.mark.parametrize("workers", [1, 3])
 def test_rebuilt_all_bands_exactly_match_native_replay_and_reuse_unchanged_blocks(
-    tmp_path, strategy
+    tmp_path, strategy, workers
 ):
     stack, region, records = fixture(tmp_path, strategy)
     a = stack.create_accumulator(
@@ -124,7 +125,7 @@ def test_rebuilt_all_bands_exactly_match_native_replay_and_reuse_unchanged_block
         output=str(tmp_path / "base.tif"),
         state=str(tmp_path / "base.state.tif"),
     )
-    details = rebuild(a, records, None)
+    details = rebuild(a, records, None, workers=workers)
     a.finalize(statistics=False)
     previous = dict(**details, state=a.state_fn, masks=None)
     current = mask(tmp_path, records, "one", source=2)
@@ -133,7 +134,7 @@ def test_rebuilt_all_bands_exactly_match_native_replay_and_reuse_unchanged_block
         output=str(tmp_path / "update.tif"),
         state=str(tmp_path / "update.state.tif"),
     )
-    updated = rebuild(b, records, current, previous)
+    updated = rebuild(b, records, current, previous, workers=workers)
     b.finalize(statistics=False)
     assert updated["timings"]["rebuilt_blocks"] == 1
     assert updated["timings"]["changed_blocks"] == 1
@@ -152,7 +153,13 @@ def test_rebuilt_all_bands_exactly_match_native_replay_and_reuse_unchanged_block
         output=str(tmp_path / "moved.tif"),
         state=str(tmp_path / "moved.state.tif"),
     )
-    more = rebuild(c, records, moved, dict(**updated, state=b.state_fn, masks=current))
+    more = rebuild(
+        c,
+        records,
+        moved,
+        dict(**updated, state=b.state_fn, masks=current),
+        workers=workers,
+    )
     c.finalize(statistics=False)
     assert more["timings"]["rebuilt_blocks"] == 2
     expected = reference(stack, region, records, moved, tmp_path / "reference2.tif")

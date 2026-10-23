@@ -372,3 +372,24 @@ def test_parallel_restoration_matches_serial(tmp_path):
         serial[2][1]["restored_source_cells"] == parallel[2][1]["restored_source_cells"]
     )
     p.close()
+
+
+def test_parallel_rejection_pass_matches_serial(tmp_path):
+    """Worker processes evaluate blocks; masks are written in block order."""
+    from globato.qc.stack import source_windows
+
+    rng = np.random.default_rng(11)
+    y, x = np.indices((600, 600))
+    z = (-200.0 + 0.05 * x + 0.03 * y).astype("float32")
+    spikes = rng.random(z.shape) < 0.002
+    z[spikes] += 40
+    p, b = pool(tmp_path, z, groups=2)
+    _, parent = zero_masks(p, tmp_path / "zero")
+    _, serial = source_windows.reject(p, parent, b, tmp_path / "serial", 2)
+    _, parallel = source_windows.reject(
+        p, parent, b, tmp_path / "parallel", 2, workers=3
+    )
+    assert serial["rejected_source_cells"] > 0
+    assert serial["signature"] == parallel["signature"]
+    assert serial["source_counts"] == parallel["source_counts"]
+    p.close()

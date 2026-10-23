@@ -271,7 +271,12 @@ def run_filter(qc, module, records, region, cache, stack):
             )
             return result, True
         builder = WorkingSurface(
-            stack, qc.interpolator_hooks, records, region, cache_root_for(module)
+            stack,
+            qc.interpolator_hooks,
+            records,
+            region,
+            cache_root_for(module),
+            workers=qc.workers,
         )
         logger.info("Stack QC %s: building the initial working DEM", module.name)
         baseline = builder(None, cache / "baseline")

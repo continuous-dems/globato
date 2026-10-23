@@ -34,12 +34,13 @@ class WorkingSurface:
     dist2coast), the same place the main build uses.
     """
 
-    def __init__(self, stack, interpolators, sources, region, cache_root):
+    def __init__(self, stack, interpolators, sources, region, cache_root, workers=1):
         self.stack = stack
         self.interpolators = interpolators
         self.sources = sources
         self.region = region
         self.cache_root = str(cache_root)
+        self.workers = workers
         self.baseline = None
         self.previous = None
 
@@ -103,7 +104,9 @@ class WorkingSurface:
             self.region, output=str(work / "stack.tif"), state=state
         )
         try:
-            details = rebuild(accumulator, self.sources, masks, previous)
+            details = rebuild(
+                accumulator, self.sources, masks, previous, workers=self.workers
+            )
             details.update(state=state, masks=masks)
             if previous and details["timings"]["changed_blocks"] == 0:
                 accumulator.close()

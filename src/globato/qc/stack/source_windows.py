@@ -144,42 +144,113 @@ def disagreement_rejection(z, active, group, pool, evidence):
     )
 
 
+def _reject_block(pool, g, parent, level, consensus, tolerance, block):
+    """Rejection decisions for one block, for every source (pure; no writes).
+
+    Returns one item per source in pool order: None when the source has no
+    data near the block, else (final, prior, observed, rejected) for the core.
+    """
+    s, b, inner = block
+    union = g[detector.ELIGIBILITY_LEVEL][b]
+    candidate = g[level][b]
+    vals, unknown = pool.values(b, parent)
+    votes, categories = survey_protection(vals, union, unknown)
+    disagreement = se.evidence(vals, unknown) if consensus else None
+    active_ids = {r["source_id"] for r in pool.active_records(b)}
+    out = []
+    for r in pool.records:
+        if r["source_id"] not in active_ids:
+            out.append(None)
+            continue
+        z, valid, w, prior = pool.source(r, b, parent)
+        active = valid & ~prior
+        protected = source_protection(
+            z, active, union, r["group"], pool, votes, categories, tolerance
+        )
+        survey_outlier = disagreement_rejection(
+            z, active, r["group"], pool, disagreement
+        )
+        new = (candidate & active & ~protected) | survey_outlier
+        final = prior | new
+        out.append(
+            (
+                final[inner],
+                prior[inner],
+                int(valid[inner].sum()),
+                int((final[inner] & valid[inner]).sum()),
+            )
+        )
+    return out
+
+
+_WORKER = {}
+
+
+def _init_reject_worker(inventory, paths, parent, level, consensus, tolerance):
+    import atexit
+
+    from .sources import SourcePool
+
+    pool = SourcePool(inventory)
+    atexit.register(pool.close)
+    g = {i: np.load(p, mmap_mode="r") for i, p in paths.items()}
+    _WORKER.update(pool=pool, g=g, args=(parent, level, consensus, tolerance))
+
+
+def _reject_worker_block(block):
+    parent, level, consensus, tolerance = _WORKER["args"]
+    return _reject_block(
+        _WORKER["pool"], _WORKER["g"], parent, level, consensus, tolerance, block
+    )
+
+
 def reject(pool, parent, dem, out, level, consensus=False, settings=None, workers=1):
+    """One removal pass. With ``workers`` > 1, blocks are evaluated in worker
+    processes and written here in block order, so the masks and their hashes
+    do not depend on the worker count."""
     out = Path(out)
     out.mkdir(parents=True, exist_ok=True)
     g = geometry(dem, out / "GEOMETRY", [level], settings, workers)
     tolerance = None if settings is None else settings.plane_tolerance_m
     m = MaskWriter(out / "MASKS", pool)
     stats = {r["source_id"]: dict(observed=0, rejected=0) for r in pool.records}
-    for n, (s, b, inner) in enumerate(windows(pool.shape, CORE, 4), 1):
-        union = g[detector.ELIGIBILITY_LEVEL][b]
-        candidate = g[level][b]
-        vals, unknown = pool.values(b, parent)
-        votes, categories = survey_protection(vals, union, unknown)
-        disagreement = se.evidence(vals, unknown) if consensus else None
-        active_ids = {r["source_id"] for r in pool.active_records(b)}
-        for r in pool.records:
-            if r["source_id"] not in active_ids:
-                # Masks must still hash every cell in every source, including
-                # empty ones. Avoid source reads and terrain fits here.
-                m.put(r, s, np.zeros(tuple(i.stop - i.start for i in s), bool))
-                continue
-            z, valid, w, prior = pool.source(r, b, parent)
-            active = valid & ~prior
-            protected = source_protection(
-                z, active, union, r["group"], pool, votes, categories, tolerance
-            )
-            survey_outlier = disagreement_rejection(
-                z, active, r["group"], pool, disagreement
-            )
-            new = (candidate & active & ~protected) | survey_outlier
-            final = prior | new
-            m.put(r, s, final[inner], previous=prior[inner])
-            st = stats[r["source_id"]]
-            st["observed"] += int(valid[inner].sum())
-            st["rejected"] += int((final[inner] & valid[inner]).sum())
-        if n % 64 == 0:
-            log(f"Source rejection blocks complete: {n}")
+    blocks = list(windows(pool.shape, CORE, 4))
+    executor = None
+    if workers > 1 and len(blocks) > 1:
+        for a in g.values():
+            if hasattr(a, "flush"):
+                a.flush()
+        paths = {i: str(out / "GEOMETRY" / f"L{i}.npy") for i in g}
+        executor = ProcessPoolExecutor(
+            max_workers=workers,
+            mp_context=multiprocessing.get_context("spawn"),
+            initializer=_init_reject_worker,
+            initargs=(pool.inv, paths, parent, level, consensus, tolerance),
+        )
+        results = executor.map(_reject_worker_block, blocks, chunksize=4)
+    else:
+        results = (
+            _reject_block(pool, g, parent, level, consensus, tolerance, block)
+            for block in blocks
+        )
+    try:
+        for n, ((s, _, _), decisions) in enumerate(zip(blocks, results), 1):
+            for r, item in zip(pool.records, decisions):
+                if item is None:
+                    # Masks must still hash every cell in every source,
+                    # including empty ones.
+                    m.put(r, s, np.zeros(tuple(i.stop - i.start for i in s), bool))
+                    continue
+                final, prior, observed, rejected = item
+                m.put(r, s, final, previous=prior)
+                st = stats[r["source_id"]]
+                st["observed"] += observed
+                st["rejected"] += rejected
+            if n % 64 == 0:
+                log(f"Source rejection blocks complete: {n}")
+    finally:
+        if executor is not None:
+            executor.shutdown(cancel_futures=True)
     p, d = m.finish(dict(source_counts=stats, consensus=bool(consensus), level=level))
     pool.close()
     # Geometry was needed only for this exact parent; keep masks/receipts, not duplicate float DEM copies.
