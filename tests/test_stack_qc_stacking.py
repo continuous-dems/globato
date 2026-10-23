@@ -404,3 +404,24 @@ def test_same_grid_accepted_stream_reads_only_blocks_with_data(tmp_path):
     np.testing.assert_array_equal(full, fast)
     assert n_fast == 2 < n_full
     assert full[1, 10:20, 10:20].sum() == 0  # rejected cells zeroed
+
+
+@pytest.mark.parametrize("strategy", ["mean", "mixed"])
+def test_sparse_working_state_matches_the_dense_state(tmp_path, strategy):
+    """A sparse state (empty blocks unstored) reads back the same as a dense one."""
+    stack, region, records = fixture(tmp_path, strategy)
+    states = {}
+    for sparse in (False, True):
+        acc = stack.create_accumulator(
+            region,
+            output=str(tmp_path / f"stack_{sparse}.tif"),
+            state=str(tmp_path / f"state_{sparse}.tif"),
+            sparse_state=sparse,
+        )
+        rebuild(acc, [dict(r) for r in records], None)
+        out = acc.finalize(statistics=False)
+        acc.close()
+        with rasterio.open(acc.state_fn) as st, rasterio.open(out) as fin:
+            states[sparse] = (st.read(), fin.read())
+    np.testing.assert_array_equal(states[False][0], states[True][0])
+    np.testing.assert_array_equal(states[False][1], states[True][1])
