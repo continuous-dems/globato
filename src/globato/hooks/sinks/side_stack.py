@@ -517,6 +517,9 @@ class SideStackGenerate(FetchHook):
             bigtiff="YES",
             dtype="float64",
             nodata=None,
+            # Blocks no source chunk touches are never stored and read back as
+            # zeros, the same additive FusionState; readers can skip them.
+            sparse_ok=True,
         )
         return out
 

@@ -19,6 +19,51 @@ from .sources import SourcePool
 logger = logging.getLogger(__name__)
 
 
+def written_blocks(path):
+    """Stored blocks of a tiled GeoTIFF as (block height, width, {(row, col)}).
+
+    A sparse GeoTIFF block that was never written reads as zeros, so a source
+    window covering only unwritten blocks holds no measurements. None when GDAL
+    cannot tell.
+    """
+    import warnings
+
+    try:
+        from osgeo import gdal
+    except ImportError:
+        return None
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", FutureWarning)
+        ds = gdal.Open(str(path))
+        if ds is None:
+            return None
+        band = ds.GetRasterBand(1)
+        bx, by = band.GetBlockSize()
+        nx = (ds.RasterXSize + bx - 1) // bx
+        ny = (ds.RasterYSize + by - 1) // by
+        stored = {
+            (y, x)
+            for y in range(ny)
+            for x in range(nx)
+            if band.GetMetadataItem(f"BLOCK_OFFSET_{x}_{y}", "TIFF")
+        }
+    return by, bx, stored
+
+
+def _holds_data(info, window):
+    """False only when every block under ``window`` was never written."""
+    if info is None:
+        return True
+    by, bx, stored = info
+    rows = range(
+        int(window.row_off) // by, (int(window.row_off + window.height) - 1) // by + 1
+    )
+    cols = range(
+        int(window.col_off) // bx, (int(window.col_off + window.width) - 1) // bx + 1
+    )
+    return any((y, x) in stored for y in rows for x in cols)
+
+
 def overlap(record, window):
     dy, dx = record["offset"]
     h, w = record["grid"]["shape"]
@@ -57,6 +102,7 @@ def _block_state(
     accumulator,
     block,
     window,
+    written=None,
 ):
     """Rebuilt seven-band state for one global block (pure; no writes)."""
     key = f"{block[0]},{block[1]}"
@@ -85,6 +131,8 @@ def _block_state(
         source, target = overlap(r, window)
         src = pool.ds(r["path"])
         if memberships is None:
+            if not _holds_data((written or {}).get(r["source_id"]), source):
+                continue  # Never-written blocks read as zeros.
             if not np.any(src.read(2, window=source) > 0):
                 continue
             occupied.append(r["source_id"])
@@ -162,6 +210,7 @@ def rebuild(accumulator, records, manifest, previous=None, workers=1):
             accumulator,
             block,
             window,
+            written,
         )
 
     executor = None
@@ -185,6 +234,13 @@ def rebuild(accumulator, records, manifest, previous=None, workers=1):
                             "QC mask does not match the original seven-band grid"
                         )
             windows = list(dst.block_windows(1))
+            # Only the first build scans sources for data; later builds use the
+            # block index it returns.
+            written = (
+                {r["source_id"]: written_blocks(r["path"]) for r in records}
+                if memberships is None
+                else {}
+            )
             if workers > 1 and len(windows) > 1:
                 executor = ThreadPoolExecutor(max_workers=workers)
                 results = _bounded_map(executor, compute, windows, 4 * workers)
@@ -201,6 +257,7 @@ def rebuild(accumulator, records, manifest, previous=None, workers=1):
                         accumulator,
                         block,
                         window,
+                        written,
                     )
                     for block, window in windows
                 )

@@ -350,6 +350,7 @@ def write_accepted(rec, masks, target, signature, path):
         bigtiff="YES",
         compress="lzw",
         predictor=3,
+        sparse_ok=True,
     )
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_name("." + path.name + ".partial.tif")

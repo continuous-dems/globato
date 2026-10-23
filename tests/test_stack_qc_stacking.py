@@ -274,3 +274,98 @@ def test_sparse_index_preserves_windows_that_cross_block_boundaries(tmp_path):
     finally:
         plain.close()
         sparse.close()
+
+
+def _sparse_source(path, blocks, value=-50.0):
+    """A sparse 7-band 1024x1024 FusionState with data only in ``blocks``."""
+    profile = dict(
+        driver="GTiff",
+        width=1024,
+        height=1024,
+        count=7,
+        dtype="float64",
+        nodata=None,
+        crs="EPSG:32611",
+        transform=from_origin(350000, 3750000, 3, 3),
+        tiled=True,
+        blockxsize=256,
+        blockysize=256,
+        compress="lzw",
+        sparse_ok=True,
+    )
+    with rasterio.open(path, "w", **profile) as dst:
+        for row, col in blocks:
+            data = np.zeros((7, 256, 256))
+            data[1] = 2.0
+            data[2] = 2.0
+            data[0] = value * 2.0
+            data[3] = value * value * 2.0
+            dst.write(data, window=Window(col * 256, row * 256, 256, 256))
+    with rasterio.open(path) as ds:
+        g = io.grid(ds)
+    return dict(
+        source_id=path.name,
+        group=None,
+        path=str(path),
+        grid=g,
+        offset=[0, 0],
+        source_sha256=io.sha(path),
+        fingerprint=io.fingerprint(path),
+    )
+
+
+def test_unwritten_sparse_blocks_are_skipped_with_identical_results(
+    tmp_path, monkeypatch
+):
+    import globato.qc.stack.stacking as stacking
+
+    region = Region(350000, 353072, 3746928, 3750000, srs="EPSG:32611")
+    stack = MultiStackHook(res="3", crs="EPSG:32611", strategy="mean")
+    records = [
+        _sparse_source(tmp_path / "a.tif", [(0, 0), (2, 3)]),
+        _sparse_source(tmp_path / "b.tif", [(1, 1)], value=-60.0),
+    ]
+    info = stacking.written_blocks(records[0]["path"])
+    assert info is not None and info[2] == {(0, 0), (2, 3)}
+
+    def build(name):
+        acc = stack.create_accumulator(
+            region,
+            output=str(tmp_path / f"{name}.tif"),
+            state=str(tmp_path / f"{name}.state.tif"),
+        )
+        details = rebuild(acc, [dict(r) for r in records], None, workers=2)
+        acc.close()
+        with rasterio.open(acc.state_fn) as ds:
+            return ds.read(), details
+
+    skipped, d1 = build("skipped")
+    monkeypatch.setattr(stacking, "written_blocks", lambda path: None)
+    read_all, d2 = build("read_all")
+    np.testing.assert_array_equal(skipped, read_all)
+    assert d1["source_blocks"] == d2["source_blocks"]
+    assert d1["timings"]["source_block_reads"] == d2["timings"]["source_block_reads"]
+
+
+def test_side_stacks_are_written_sparse(tmp_path):
+    """Blocks no source chunk touches are not stored."""
+    import globato.qc.stack.stacking as stacking
+    from globato.hooks.sinks.side_stack import SideStackGenerate
+
+    profile = SideStackGenerate._creation_profile(
+        dict(
+            driver="GTiff",
+            width=1024,
+            height=1024,
+            count=7,
+            crs="EPSG:32611",
+            transform=from_origin(350000, 3750000, 3, 3),
+        )
+    )
+    assert profile["sparse_ok"] is True
+    path = tmp_path / "s.tif"
+    with rasterio.open(path, "w+", **profile) as dst:
+        dst.write(
+            dst.read(window=Window(0, 0, 256, 256)) + 1, window=Window(0, 0, 256, 256)
+        )
+    assert stacking.written_blocks(path)[2] == {(0, 0)}
