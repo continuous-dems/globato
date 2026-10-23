@@ -40,10 +40,9 @@ from rasterio.windows import Window
 from fetchez.hooks import FetchHook
 from fetchez.spatial import Region
 from fetchez.utils import str2bool
-from fetchez.entry import dataset_id
 
 from ..transforms.point_pixels import FUSION_BAND_MAP, FUSION_BANDS, PointPixels
-from .provenance import MaskSet, source_token
+from .provenance import MaskSet, source_id, source_token
 
 logger = logging.getLogger(__name__)
 
@@ -155,14 +154,14 @@ class StackTierStateBase:
 
         return path
 
-    def register(self, contribution_key, *, description=None, tags=None):
+    def register(self, dataset_id, *, description=None, tags=None):
         raise NotImplementedError
 
     def update(self, handle, window, codes):
         raise NotImplementedError
 
     def iter_sources(self):
-        """Yield ``(contribution_key, description, tags, source)`` records."""
+        """Yield ``(dataset_id, description, tags, source)`` records."""
         raise NotImplementedError
 
     def iter_blocks(self, source):
@@ -182,7 +181,7 @@ class DiskStackTierState(StackTierStateBase):
         self.resume = bool(resume)
         self.compress = bool(compress)
         self.lock = threading.Lock()
-        self.states = {}  # contribution_key -> path
+        self.states = {}  # dataset_id -> path
         os.makedirs(self.output_dir, exist_ok=True)
 
         self.profile = {
@@ -204,13 +203,13 @@ class DiskStackTierState(StackTierStateBase):
 
         self._discover_existing()
 
-    def _path(self, contribution_key):
+    def _path(self, dataset_id):
         return os.path.join(
             self.output_dir,
-            f"{source_token(contribution_key)}_stack_state.tif",
+            f"{source_token(dataset_id)}_stack_state.tif",
         )
 
-    def _valid_existing(self, path, contribution_key):
+    def _valid_existing(self, path, dataset_id):
         if not os.path.exists(path):
             return False
 
@@ -233,7 +232,7 @@ class DiskStackTierState(StackTierStateBase):
                 and src.count == 1
                 and src.dtypes[0] == "uint8"
                 and tags.get(self.TYPE_TAG) == self.STATE_TYPE
-                and tags.get(self.SOURCE_TAG) == contribution_key
+                and tags.get(self.SOURCE_TAG) == dataset_id
                 and tags.get("GLOBATO_STACK_STRATEGY", "").lower() == self.strategy
                 # and tags.get("GLOBATO_STORAGE") == "disk"
                 and np.array_equal(stored_tiers, self.weight_tiers)
@@ -252,10 +251,10 @@ class DiskStackTierState(StackTierStateBase):
             try:
                 with rasterio.open(path) as src:
                     tags = src.tags()
-                    contribution_key = tags.get(self.SOURCE_TAG)
+                    dataset_id = tags.get(self.SOURCE_TAG)
 
-                if contribution_key and self._valid_existing(path, contribution_key):
-                    self.states[contribution_key] = path
+                if dataset_id and self._valid_existing(path, dataset_id):
+                    self.states[dataset_id] = path
 
             except Exception as exc:
                 logger.debug(
@@ -264,16 +263,16 @@ class DiskStackTierState(StackTierStateBase):
                     exc,
                 )
 
-    def register(self, contribution_key, *, description=None, tags=None):
-        path = self._path(contribution_key)
+    def register(self, dataset_id, *, description=None, tags=None):
+        path = self._path(dataset_id)
 
-        if not (self.resume and self._valid_existing(path, contribution_key)):
+        if not (self.resume and self._valid_existing(path, dataset_id)):
             with rasterio.open(path, "w", **self.profile) as dst:
                 if description:
                     dst.set_band_description(1, description)
                 metadata = {
                     self.TYPE_TAG: self.STATE_TYPE,
-                    self.SOURCE_TAG: contribution_key,
+                    self.SOURCE_TAG: dataset_id,
                     "GLOBATO_STACK_STRATEGY": self.strategy,
                     "GLOBATO_WEIGHT_TIERS": json.dumps(self.weight_tiers.tolist()),
                     "GLOBATO_STORAGE": "disk",
@@ -288,7 +287,7 @@ class DiskStackTierState(StackTierStateBase):
                     )
                 dst.update_tags(**metadata)
 
-        self.states[contribution_key] = path
+        self.states[dataset_id] = path
         return path
 
     def update(self, path, window, codes):
@@ -302,11 +301,11 @@ class DiskStackTierState(StackTierStateBase):
                 dst.write(current, 1, window=window)
 
     def iter_sources(self):
-        for contribution_key, path in self.states.items():
+        for dataset_id, path in self.states.items():
             if not os.path.exists(path):
                 continue
             with rasterio.open(path) as src:
-                yield contribution_key, src.descriptions[0], src.tags(), path
+                yield dataset_id, src.descriptions[0], src.tags(), path
 
     def iter_blocks(self, path):
         with rasterio.open(path) as src:
@@ -323,13 +322,13 @@ class MemoryStackTierState(StackTierStateBase):
     def __init__(self, fusion_state):
         super().__init__(fusion_state)
         self.lock = threading.Lock()
-        self.states = {}  # contribution_key -> {data, description, tags}
+        self.states = {}  # dataset_id -> {data, description, tags}
 
-    def register(self, contribution_key, *, description=None, tags=None):
-        if contribution_key not in self.states:
+    def register(self, dataset_id, *, description=None, tags=None):
+        if dataset_id not in self.states:
             metadata = {
                 self.TYPE_TAG: self.STATE_TYPE,
-                self.SOURCE_TAG: contribution_key,
+                self.SOURCE_TAG: dataset_id,
                 "GLOBATO_STACK_STRATEGY": self.strategy,
                 "GLOBATO_WEIGHT_TIERS": json.dumps(self.weight_tiers.tolist()),
                 "GLOBATO_STORAGE": "memory",
@@ -342,14 +341,14 @@ class MemoryStackTierState(StackTierStateBase):
                         if v not in (None, "", "None", "Unknown")
                     }
                 )
-            self.states[contribution_key] = {
+            self.states[dataset_id] = {
                 "data": np.zeros((self.height, self.width), dtype=np.uint8),
                 "description": description,
                 "tags": metadata,
             }
-        return contribution_key
+        return dataset_id
 
-    def update(self, contribution_key, window, codes):
+    def update(self, dataset_id, window, codes):
         if codes is None or not np.any(codes):
             return
 
@@ -359,12 +358,12 @@ class MemoryStackTierState(StackTierStateBase):
         col1 = col0 + int(window.width)
 
         with self.lock:
-            current = self.states[contribution_key]["data"][row0:row1, col0:col1]
+            current = self.states[dataset_id]["data"][row0:row1, col0:col1]
             np.maximum(current, codes, out=current)
 
     def iter_sources(self):
-        for contribution_key, state in self.states.items():
-            yield contribution_key, state["description"], state["tags"], state["data"]
+        for dataset_id, state in self.states.items():
+            yield dataset_id, state["description"], state["tags"], state["data"]
 
     def iter_blocks(self, data):
         block = 256
@@ -523,8 +522,8 @@ class StackProvenance(FetchHook):
             if self._tier_state.strategy == "supercede":
                 continue
 
-            contribution_key = dataset_id(entry)
-            src_name = os.path.basename(entry.get("dst_fn", contribution_key))
+            dataset_id = source_id(entry)
+            src_name = os.path.basename(entry.get("dst_fn", dataset_id))
             tags = {
                 "MODULE": getattr(mod, "name", None),
                 "DATASET": getattr(mod, "title", getattr(mod, "name", None)),
@@ -538,7 +537,7 @@ class StackProvenance(FetchHook):
                 tags.update({str(k).upper(): v for k, v in entry["metadata"].items()})
 
             state_handle = self._tier_state.register(
-                contribution_key,
+                dataset_id,
                 description=os.path.splitext(src_name)[0],
                 tags=tags,
             )
@@ -588,7 +587,7 @@ class StackProvenance(FetchHook):
     def _materialize_masks(self, winner_path):
         with rasterio.open(winner_path) as winners:
             for (
-                contribution_key,
+                dataset_id,
                 description,
                 tags,
                 source,
@@ -599,7 +598,7 @@ class StackProvenance(FetchHook):
                     if key not in {"GLOBATO_STORAGE"}
                 }
                 final_path = self._final_masks.register(
-                    contribution_key,
+                    dataset_id,
                     description=description,
                     tags=final_tags,
                 )

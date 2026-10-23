@@ -64,8 +64,8 @@ def _drain(entry):
     list(entry["stream"])
 
 
-def _mask_data(hook, contribution_key):
-    path = hook._final_masks.masks[contribution_key]
+def _mask_data(hook, dataset_id):
+    path = hook._final_masks.masks[dataset_id]
     assert os.path.exists(path)
     with rasterio.open(path) as src:
         return src.read(1)
@@ -174,10 +174,10 @@ def test_disk_and_memory_backends_materialize_identical_masks(tmp_path):
     disk, _, _ = _run_mixed_case(tmp_path / "disk_run", "disk")
     memory, _, _ = _run_mixed_case(tmp_path / "memory_run", "memory")
 
-    for contribution_key in ("source-a", "source-b"):
+    for dataset_id in ("source-a", "source-b"):
         np.testing.assert_array_equal(
-            _mask_data(disk, contribution_key),
-            _mask_data(memory, contribution_key),
+            _mask_data(disk, dataset_id),
+            _mask_data(memory, dataset_id),
         )
 
 
@@ -378,7 +378,7 @@ def test_stack_provenance_uses_exact_fusion_state_grid(tmp_path):
         assert stack_window is not None
 
         # Persist the numerical stack.
-        acc.update(points, contribution_key="boundary-source")
+        acc.update(points, dataset_id="boundary-source")
         acc.mark_registered("boundary-source")
 
     finally:
@@ -470,7 +470,7 @@ def test_stack_provenance_uses_exact_multistack_grid_for_boundary_points(tmp_pat
 
         # Put the same points into the real FusionState so stack_provenance
         # initializes from exactly the grid multi_stack produced.
-        acc.update(points, contribution_key="boundary-source")
+        acc.update(points, dataset_id="boundary-source")
         acc.mark_registered("boundary-source")
 
     finally:
@@ -535,7 +535,7 @@ def test_every_stacked_pixel_has_stack_provenance(tmp_path, storage):
 
         points = _point_chunk(xs, ys, weight=0.5)
 
-        acc.update(points, contribution_key="boundary-source")
+        acc.update(points, dataset_id="boundary-source")
         acc.mark_registered("boundary-source")
 
     finally:
