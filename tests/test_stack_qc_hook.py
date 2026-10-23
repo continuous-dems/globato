@@ -23,6 +23,16 @@ from globato.hooks.tools.stack_combine import StackCombine
 from globato.qc.stack import geometry, io
 from globato.qc.stack.settings import Settings
 
+
+@pytest.fixture(autouse=True)
+def fresh_results():
+    from globato.hooks.filters import stack_qc
+
+    stack_qc.RESULTS.clear()
+    yield
+    stack_qc.RESULTS.clear()
+
+
 INTERPOLATION = dict(
     steps=1,
     resolutions="3/9",
@@ -359,3 +369,19 @@ def test_regridding_restores_the_source_crs_from_before_the_stream_stage():
         _fresh(dict(url="file:///y.fbt", src_srs="A"))["_stack_qc_restored_srs"]
         is False
     )
+
+
+def test_review_finds_results_after_focus_sink_dropped_them(tmp_path, monkeypatch):
+    """focus_sink keeps one entry's artifacts; the review must still find QC results."""
+    pytest.importorskip("matplotlib")
+    monkeypatch.chdir(tmp_path)
+    build(tmp_path)
+    dem = tmp_path / "a" / "dem.tif"
+    focused = [(None, dict(dst_fn=str(dem), artifacts={"multi_stack": "x.tif"}))]
+    StackQCReview(dem=str(dem)).run(focused)
+    pages = list((tmp_path / "a" / "stack_qc_review").glob("*/review.html"))
+    assert len(pages) == 1
+    # Each result is reviewed once per process.
+    from globato.hooks.filters import stack_qc
+
+    assert stack_qc.RESULTS == []

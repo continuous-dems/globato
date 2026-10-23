@@ -38,6 +38,10 @@ from globato.qc.stack.settings import Settings
 
 logger = logging.getLogger(__name__)
 
+# Result receipts written in this process, for stack_qc_review. focus_sink
+# keeps only one entry's artifacts, so the review cannot rely on them alone.
+RESULTS: list = []
+
 # Working-DEM interpolation used when a recipe gives none: the CRM 1" ladder.
 DEFAULT_INTERPOLATION = dict(
     steps=3,
@@ -275,4 +279,8 @@ class StackQC(FetchHook):
         for key in order:
             mod, selected = groups[key]
             prepare(self, mod, selected, threads=self.threads)
+            for _, entry in selected:
+                receipt = (entry.get("artifacts") or {}).get("stack_qc")
+                if receipt and receipt not in RESULTS:
+                    RESULTS.append(receipt)
         return entries

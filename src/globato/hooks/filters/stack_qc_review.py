@@ -55,23 +55,51 @@ class StackQCReview(FetchHook):
                 return Path(path).resolve()
         return None
 
+    @staticmethod
+    def _overlaps(receipt, dem):
+        """Does a Stack QC result's region overlap the final DEM?"""
+        import rasterio
+
+        try:
+            west, east, south, north = json.loads(Path(receipt).read_text())["region"][
+                :4
+            ]
+        except (OSError, ValueError, KeyError):
+            return False
+        try:
+            with rasterio.open(dem) as ds:
+                b = ds.bounds
+        except rasterio.errors.RasterioError:
+            return True  # Cannot tell; keep the result.
+        return west < b.right and east > b.left and south < b.top and north > b.bottom
+
     def run(self, entries):
         from fetchez.spatial import Region
         from globato.hooks.sinks.multi_stack import MultiStackHook
         from globato.qc.stack.review.visualize import completed
 
+        from globato.hooks.filters import stack_qc
+
+        final = self._final_dem(entries)
         receipts = []
         for _, entry in entries:
             path = (entry.get("artifacts") or {}).get("stack_qc")
             if path and path not in receipts:
                 receipts.append(path)
+        for path in stack_qc.RESULTS:
+            if path not in receipts:
+                receipts.append(path)
+        if final is not None and final.is_file():
+            receipts = [p for p in receipts if self._overlaps(p, final)]
         if not receipts:
             logger.info("No Stack QC results in this build")
             return entries
-        final = self._final_dem(entries)
         if final is None or not final.is_file():
             logger.warning("Final DEM not found; no review written")
             return entries
+        # Each result is reviewed once; later builds in this process (other
+        # regions of a batch) see only their own.
+        stack_qc.RESULTS[:] = [p for p in stack_qc.RESULTS if p not in receipts]
         base = Path(self.output) if self.output else final.parent / "stack_qc_review"
         for path in receipts:
             receipt = json.loads(Path(path).read_text())
