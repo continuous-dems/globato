@@ -1,4 +1,4 @@
-name: mr-globato
+name: mr-globato-ss
 description: "The standard Multi-Resolution Global Bathymetry and Topography pipeline."
 tags:
   - globato-dem
