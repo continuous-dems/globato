@@ -9,9 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### ADDED
 * A `py.typed` marker, so type checkers read globato's type annotations in code that uses it (#284). mypy now runs on every pull request, in a new "Typecheck" workflow.
-* Added `stack_combine` hook to combine multiple fusion-state stack files into a multi-stack.
+* Added `stack_combine` to construct a MultiStack and its FusionState directly from completed side-stack artifacts, using the existing `MultiStackAccumulator` for reduction and finalization.
+* Allow `stack_combine` to consume original or QC-adjusted side-stacks, with configurable handling of missing required artifacts.
 
 ### CHANGED
+* Simplify cache identities using Fetchez's `dataset_id()` and contribution metadata instead of a separate Globato identity implementation. Retain grid, CRS, FusionState schema, and cache hash validation.
+* Updated globato build overrides to propagate resolution, CRS, and stacking configuration to `stack_combine`.
 * Updated `globato build` to use `ignore-failures` instead of `fail-fast`
 
 ### FIXED
