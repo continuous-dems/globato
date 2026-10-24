@@ -14,12 +14,10 @@ raster stream for ``multi_stack``.
 from __future__ import annotations
 
 import hashlib
-import json
 import logging
 import os
 import re
 import tempfile
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -29,6 +27,7 @@ from rasterio.crs import CRS
 
 from fetchez.hooks import FetchHook
 from fetchez.utils import float_or, str2bool, str2inc
+from fetchez.entry import source_id, dataset_id
 
 from globato.hooks.transforms.point_pixels import (
     FUSION_BAND_MAP,
@@ -41,188 +40,6 @@ logger = logging.getLogger(__name__)
 
 SIDESTACK_DATATYPE = "FUSION_STATE"
 SIDESTACK_HASH_TAG = "GLOBATO_SIDESTACK_HASH"
-SIDESTACK_IDENTITY_TAG = "GLOBATO_SIDESTACK_IDENTITY"
-
-NON_FUSION_HOOKS = {
-    "side_stack_check",
-    "side-stack-check",
-    "side_stack",
-    "side-stack",
-    "stream-init",
-    "stream_init",
-    "stream_data",
-    "multi_stack",
-    "multi-stack",
-    "provenance",
-    "source-masks",
-    "source_masks",
-    "ms_binary_cudem",
-    "format_cog",
-    "format-cog",
-    "copy_artifact",
-    "raster_metadata",
-    "viz_geoshade",
-}
-
-VOLATILE_HOOK_FIELDS = {
-    "logger",
-    "results",
-    "stream",
-    "raster_stream",
-    "session",
-    "dataset",
-    "_accumulator",
-}
-
-
-def _stable_value(value: Any) -> Any:
-    """Convert configuration values to deterministic JSON-compatible values."""
-
-    if value is None or isinstance(value, (str, int, bool)):
-        return value
-
-    if isinstance(value, float):
-        return value if np.isfinite(value) else repr(value)
-
-    if isinstance(value, Path):
-        return str(value)
-
-    if isinstance(value, CRS):
-        return value.to_wkt()
-
-    if isinstance(value, Mapping):
-        return {
-            str(key): _stable_value(val)
-            for key, val in sorted(value.items(), key=lambda item: str(item[0]))
-        }
-
-    if isinstance(value, (list, tuple)):
-        return [_stable_value(item) for item in value]
-
-    if isinstance(value, set):
-        return sorted(_stable_value(item) for item in value)
-
-    if hasattr(value, "export_as_list"):
-        try:
-            return _stable_value(value.export_as_list())
-        except Exception:
-            pass
-
-    if hasattr(value, "format"):
-        try:
-            return str(value.format("fn"))
-        except Exception:
-            pass
-
-    return str(value)
-
-
-def _hook_name(hook: Any) -> str:
-    if isinstance(hook, Mapping):
-        return str(hook.get("name", ""))
-    return str(getattr(hook, "name", hook.__class__.__name__))
-
-
-def _hook_affects_fusion_state(hook: Any) -> bool:
-    """Return whether a hook should participate in side-stack invalidation."""
-
-    if isinstance(hook, Mapping):
-        explicit = hook.get("affects_fusion_state")
-    else:
-        explicit = getattr(hook, "affects_fusion_state", None)
-
-    if explicit is not None:
-        return bool(explicit)
-
-    return _hook_name(hook) not in NON_FUSION_HOOKS
-
-
-def _hook_identity(hook: Any) -> dict[str, Any]:
-    """Return deterministic configuration identity for one upstream hook."""
-
-    name = _hook_name(hook)
-
-    if isinstance(hook, Mapping):
-        config = {
-            str(key): value
-            for key, value in hook.items()
-            if key not in {"name", "affects_fusion_state"}
-        }
-        return {"name": name, "config": _stable_value(config)}
-
-    explicit = getattr(hook, "sidestack_identity", None)
-    if callable(explicit):
-        explicit = explicit()
-    if explicit is not None:
-        return {"name": name, "config": _stable_value(explicit)}
-
-    config = {}
-    for key, value in vars(hook).items():
-        if key.startswith("_") or key in VOLATILE_HOOK_FIELDS:
-            continue
-        config[key] = value
-
-    return {"name": name, "config": _stable_value(config)}
-
-
-def processing_identity(mod: Any, entry: Mapping[str, Any]) -> list[dict[str, Any]]:
-    """Describe ordered processing that can change the cached FusionState."""
-
-    module_hooks = list(getattr(mod, "hooks", []) or [])
-    entry_hooks = list(entry.get("hooks", []) or [])
-
-    hooks = [
-        _hook_identity(hook)
-        for hook in module_hooks + entry_hooks
-        if _hook_affects_fusion_state(hook)
-    ]
-
-    hooks.append(
-        {
-            "name": "__fusion_context__",
-            "config": _stable_value(
-                {
-                    "module_weight": getattr(mod, "weight", None),
-                    "module_uncertainty": getattr(mod, "uncertainty", None),
-                    "entry_weight": entry.get("weight"),
-                    "entry_uncertainty": entry.get("uncertainty"),
-                }
-            ),
-        }
-    )
-
-    return hooks
-
-
-def source_identity(entry: Mapping[str, Any]) -> dict[str, Any]:
-    """Return the best available identity for the underlying source."""
-
-    checksum = entry.get("checksum")
-    if checksum:
-        return {"checksum": str(checksum)}
-
-    identity: dict[str, Any] = {}
-
-    for key in ("url", "etag", "e_tag", "last_modified", "version", "revision"):
-        value = entry.get(key)
-        if value not in (None, ""):
-            identity[key] = _stable_value(value)
-
-    dst_fn = entry.get("dst_fn")
-    if dst_fn:
-        path = Path(dst_fn)
-        if path.exists():
-            stat = path.stat()
-            identity.setdefault("basename", path.name)
-            identity.setdefault("size", stat.st_size)
-            identity.setdefault("mtime_ns", stat.st_mtime_ns)
-        elif not identity:
-            identity["basename"] = path.name
-
-    if not identity:
-        identity["source"] = "unknown"
-
-    return identity
 
 
 def _resolve_grid(region: Any, res: Any, crs: Any) -> dict[str, Any]:
@@ -263,53 +80,20 @@ def _resolve_grid(region: Any, res: Any, crs: Any) -> dict[str, Any]:
     }
 
 
-@dataclass(frozen=True)
-class SideStackIdentity:
-    """Canonical identity of one cached per-entry FusionState."""
+def sidestack_provenance(entry):
+    """Descriptive source tags; intentionally excluded from the cache digest."""
+    metadata = entry.get("metadata") or {}
+    survey_id = entry.get("survey_id") or metadata.get("survey_id")
 
-    source: Mapping[str, Any]
-    processing: tuple[Mapping[str, Any], ...]
-    grid: Mapping[str, Any]
-    fusion_version: int = FUSION_STATE_VERSION
+    tags = {}
+    identifier = source_id(entry)
+    if identifier is not None:
+        tags["GLOBATO_SOURCE_ID"] = str(identifier)
 
-    @classmethod
-    def from_entry(
-        cls,
-        mod: Any,
-        entry: Mapping[str, Any],
-        *,
-        region: Any,
-        res: Any,
-        crs: Any,
-    ) -> "SideStackIdentity":
-        return cls(
-            source=source_identity(entry),
-            processing=tuple(processing_identity(mod, entry)),
-            grid=_resolve_grid(region, res, crs),
-            fusion_version=FUSION_STATE_VERSION,
-        )
+    if survey_id is not None and str(survey_id).strip():
+        tags["GLOBATO_SURVEY_ID"] = str(survey_id)
 
-    def canonical(self) -> dict[str, Any]:
-        return {
-            "source": _stable_value(self.source),
-            "processing": _stable_value(self.processing),
-            "grid": _stable_value(self.grid),
-            "fusion": {
-                "version": self.fusion_version,
-                "bands": list(FUSION_BANDS),
-            },
-        }
-
-    def json(self) -> str:
-        return json.dumps(
-            self.canonical(),
-            sort_keys=True,
-            separators=(",", ":"),
-            ensure_ascii=True,
-        )
-
-    def digest(self) -> str:
-        return hashlib.sha256(self.json().encode("utf-8")).hexdigest()
+    return tags
 
 
 def _safe_basename(entry: Mapping[str, Any]) -> str:
@@ -328,19 +112,10 @@ def sidestack_path(
     return str(base_dir / f"{_safe_basename(entry)}_{digest[:16]}_sidestack.tif")
 
 
-def _identity_transform(identity: SideStackIdentity):
-    a, b, c, d, e, f = identity.grid["transform"]
-    return rasterio.Affine(a, b, c, d, e, f)
+def validate_sidestack(path, grid, digest):
+    """Validate a cached FusionState against its expected grid and identity."""
 
-
-def validate_sidestack(
-    path: str,
-    identity: SideStackIdentity,
-    digest: str,
-) -> tuple[bool, str | None]:
-    """Validate both the FusionState schema and the exact cache identity."""
-
-    if not os.path.exists(path):
+    if not os.path.isfile(path):
         return False, "missing"
 
     try:
@@ -350,36 +125,35 @@ def validate_sidestack(
             if tags.get("GLOBATO_DATATYPE") != SIDESTACK_DATATYPE:
                 return False, "not a FusionState"
 
-            if int(tags.get("GLOBATO_FUSION_VERSION", -1)) != FUSION_STATE_VERSION:
+            if tags.get("GLOBATO_FUSION_VERSION") != str(FUSION_STATE_VERSION):
                 return False, "FusionState version mismatch"
 
             if tags.get(SIDESTACK_HASH_TAG) != digest:
-                return False, "identity hash mismatch"
-
-            if tuple(src.descriptions) != tuple(FUSION_BANDS):
-                return False, "band schema mismatch"
+                return False, "cache identity mismatch"
 
             if src.count != len(FUSION_BANDS):
                 return False, "band count mismatch"
 
-            if (
-                src.width != identity.grid["width"]
-                or src.height != identity.grid["height"]
+            if tuple(src.descriptions) != tuple(FUSION_BANDS):
+                return False, "band schema mismatch"
+
+            if any(dtype != "float64" for dtype in src.dtypes):
+                return False, "dtype mismatch"
+
+            if (src.width, src.height) != (
+                grid["width"],
+                grid["height"],
             ):
                 return False, "grid dimensions mismatch"
 
-            if src.transform != _identity_transform(identity):
+            expected_transform = rasterio.Affine(*grid["transform"])
+            if src.transform != expected_transform:
                 return False, "grid transform mismatch"
 
-            expected_crs = (
-                CRS.from_wkt(identity.grid["crs"]) if identity.grid["crs"] else None
-            )
+            expected_crs = CRS.from_wkt(grid["crs"]) if grid["crs"] else None
+
             if src.crs != expected_crs:
                 return False, "CRS mismatch"
-
-            stored_identity = tags.get(SIDESTACK_IDENTITY_TAG)
-            if stored_identity and stored_identity != identity.json():
-                return False, "identity manifest mismatch"
 
     except (OSError, ValueError, rasterio.errors.RasterioError) as exc:
         return False, f"unreadable cache: {exc}"
@@ -398,6 +172,15 @@ def read_fusion_state_stream(path: str):
             data = src.read(window=window).astype(np.float64, copy=False)
             transform = src.window_transform(window)
             yield window, window, data, None, transform
+
+
+def sidestack_cache_key(entry, grid):
+    identity = dataset_id(
+        entry,
+        grid=grid,
+        fusion_version=FUSION_STATE_VERSION,
+    )
+    return hashlib.sha256(identity.encode("utf-8")).hexdigest()[:16]
 
 
 class SideStackCheck(FetchHook):
@@ -430,21 +213,15 @@ class SideStackCheck(FetchHook):
                 getattr(mod, "outdir", None),
             )
 
-            identity = SideStackIdentity.from_entry(
-                mod,
-                entry,
-                region=region,
-                res=self.res,
-                crs=self.crs,
-            )
-            digest = identity.digest()
+            grid = _resolve_grid(region, self.res, self.crs)
+            digest = sidestack_cache_key(entry, grid)
+
             cache_path = sidestack_path(entry, cache_dir, digest)
 
             entry["_sidestack_hash"] = digest
-            entry["_sidestack_identity"] = identity.json()
             entry["_sidestack_path"] = cache_path
 
-            valid, reason = validate_sidestack(cache_path, identity, digest)
+            valid, reason = validate_sidestack(cache_path, grid, digest)
 
             if valid:
                 logger.debug("Side-stack hit: %s", os.path.basename(cache_path))
@@ -514,8 +291,9 @@ class SideStackGenerate(FetchHook):
         raster_stream,
         cache_path: str,
         *,
-        identity: SideStackIdentity,
         digest: str,
+        entry: dict,
+        provenance: dict | None = None,
     ):
         """Write FusionState atomically while yielding identical chunks onward."""
 
@@ -549,7 +327,7 @@ class SideStackGenerate(FetchHook):
                     GLOBATO_FUSION_VERSION=str(FUSION_STATE_VERSION),
                     **{
                         SIDESTACK_HASH_TAG: digest,
-                        SIDESTACK_IDENTITY_TAG: identity.json(),
+                        **sidestack_provenance(entry),
                     },
                 )
 
@@ -577,25 +355,6 @@ class SideStackGenerate(FetchHook):
                 except OSError:
                     pass
 
-    def _identity_for_entry(self, mod, entry, region):
-        cached_json = entry.get("_sidestack_identity")
-        if cached_json:
-            payload = json.loads(cached_json)
-            return SideStackIdentity(
-                source=payload["source"],
-                processing=tuple(payload["processing"]),
-                grid=payload["grid"],
-                fusion_version=int(payload["fusion"]["version"]),
-            )
-
-        return SideStackIdentity.from_entry(
-            mod,
-            entry,
-            region=region,
-            res=self.res,
-            crs=self.crs,
-        )
-
     def run(self, entries):
         point_to_state = Point2PixelStream(
             x_inc=self.res,
@@ -616,13 +375,19 @@ class SideStackGenerate(FetchHook):
                 getattr(mod, "outdir", None),
             )
 
-            identity = self._identity_for_entry(mod, entry, region)
-            digest = entry.get("_sidestack_hash") or identity.digest()
+            grid = _resolve_grid(region, self.res, self.crs)
+            digest = sidestack_cache_key(entry, grid)
             cache_path = entry.get("_sidestack_path") or sidestack_path(
                 entry,
                 cache_dir,
                 digest,
             )
+
+            valid, reason = validate_sidestack(cache_path, grid, digest)
+
+            if valid:
+                entry.setdefault("artifacts", {})["side-stack"] = cache_path
+                continue
 
             logger.debug(
                 "Side-stack miss; generating %s",
@@ -638,8 +403,9 @@ class SideStackGenerate(FetchHook):
             entry["stream"] = self._cache_stream(
                 fusion_stream,
                 cache_path,
-                identity=identity,
                 digest=digest,
+                entry=entry,
+                provenance=sidestack_provenance(entry),
             )
             entry["stream_type"] = "raster-stream"
             entry["data_type"] = "fusion-state"

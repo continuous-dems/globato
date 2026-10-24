@@ -269,10 +269,17 @@ class MRGlobatoAdapter:
         if increment is None:
             raise ValueError("mr-globato requires a target --increment/-E")
 
-        for hook_name in ("provenance", "source_masks", "multi_stack"):
+        for hook_name in (
+            "provenance",
+            "source_masks",
+            "multi_stack",
+            "side_stack",
+            "stack_combine",
+        ):
             update(hook_name, res=increment)
         if target_srs is not None:
-            update("multi_stack", crs=target_srs)
+            for hook_name in ("multi_stack", "side_stack", "stack_combine"):
+                update(hook_name, crs=target_srs)
         if nodata is not None:
             update("multi_stack", nodata=nodata)
 
@@ -286,11 +293,12 @@ class MRGlobatoAdapter:
             if str(stack_weights).lower() == "auto"
             else cls._parse_weights(stack_weights)
         )
-        update(
-            "multi_stack",
-            strategy=options["stack_strategy"],
-            weight_threshold="/".join(map(str, stack_weights)),
-        )
+        for hook_name in ("multi_stack", "stack_combine"):
+            update(
+                hook_name,
+                strategy=options["stack_strategy"],
+                weight_threshold="/".join(map(str, stack_weights)),
+            )
 
         dem_weights = options["dem_weights"]
         dem_weights = (

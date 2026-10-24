@@ -29,6 +29,10 @@ hooks:
         args:
           res: 1s
           crs: "EPSG:4326+3855"
+      - name: stack_combine
+        args:
+          res: 1s
+          crs: "EPSG:4326+3855"
       - name: source_masks
         args:
           res: 1s
