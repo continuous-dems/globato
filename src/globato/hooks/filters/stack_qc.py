@@ -1,29 +1,33 @@
 """Filter a module's elevation sources with Stack QC before they are stacked.
 
 A collection-stage hook for ``side_stack`` + ``stack_combine`` recipes. It
-reads each filtered module's side-stacks (``source_artifact``), runs the Stack
-QC removal and restoration passes against working DEMs it builds itself
-(MultiStack plus ``ms_binary_cudem``, in this process), writes each source's
-accepted measurements as a side-stack on the DEM grid, and records it as
+filters each named module's sources, runs the Stack QC removal and restoration
+passes against working DEMs it builds itself (MultiStack plus
+``ms_binary_cudem``, in this process), writes each source's accepted
+measurements as a side-stack on the DEM grid, and records it as
 ``output_artifact``. Entries of other modules get ``output_artifact`` pointing
-at their own side-stack, so ``stack_combine`` stacks one artifact name:
+at their own side-stack, so ``stack_combine`` stacks one artifact name.
+
+To filter on a finer grid than the DEM (``qc_res``), add ``stack_qc_grid``
+(below) with the same ``modules``, ``res``, ``qc_res`` and ``crs``, before
+``side_stack``. It grids that module's points on the QC grid during the stream
+stage; ``stack_qc`` filters those grids and sums the accepted measurements onto
+the DEM grid:
 
     hooks:
       - name: side_stack_check
         args: {res: 1s, crs: "EPSG:4326+3855"}
+      - name: stack_qc_grid
+        args: {modules: mbdb, res: 1s, qc_res: 1/9s, crs: "EPSG:4326+3855"}
       - name: side_stack
         args: {res: 1s, crs: "EPSG:4326+3855"}
       - name: stack_qc
-        args: {modules: mbdb, res: 1s, crs: "EPSG:4326+3855", qc_res: 1/9s}
+        args: {modules: mbdb, res: 1s, qc_res: 1/9s, crs: "EPSG:4326+3855"}
       - name: stack_combine
         args: {res: 1s, crs: "EPSG:4326+3855", source_artifact: qc-side-stack}
 
-With ``qc_res`` finer than ``res``, the filtered module's side-stacks must be
-on the QC grid: give that module its own ``side_stack_check`` and
-``side_stack`` at ``qc_res``. A module's own side-stack hooks run before the
-global ones, which then leave its entries alone. The accepted measurements are
-summed from the QC grid onto the DEM grid. Without ``qc_res`` the module's DEM
-grid side-stacks are filtered directly.
+Without ``qc_res``, ``stack_qc`` filters the module's DEM-grid side-stacks
+(``source_artifact``) directly and no ``stack_qc_grid`` is needed.
 
 Results are cached per module. The cache key holds only the module's sources
 (the side-stacks' contents), weight, the region, these settings and the QC
@@ -33,6 +37,7 @@ filter results.
 
 import logging
 import math
+import os
 
 from fetchez.hooks import FetchHook
 from fetchez.utils import str2bool
@@ -111,7 +116,8 @@ class StackQC(FetchHook):
         "stack_weight_threshold": "Working-DEM MultiStack weight tiers.",
         "interpolation": "ms_binary_cudem arguments for the working DEMs, written for the DEM grid (scaled to qc_res).",
         "modules": "As a global hook: the module names to filter.",
-        "source_artifact": "Artifact holding each entry's side-stack (default side-stack).",
+        "source_artifact": "Artifact holding each entry's DEM-grid side-stack (default side-stack); filtered when there is no qc_res.",
+        "grid_artifact": "With qc_res: artifact holding each entry's QC-grid FusionState from stack_qc_grid (default stack-qc-grid).",
         "output_artifact": "Artifact to record the accepted side-stacks in (default qc-side-stack); other modules' entries get their source_artifact here.",
         "workers": "Processes for the geometry step (results do not depend on it).",
     }
@@ -141,6 +147,7 @@ class StackQC(FetchHook):
         interpolation=None,
         modules=None,
         source_artifact="side-stack",
+        grid_artifact="stack-qc-grid",
         output_artifact="qc-side-stack",
         cache_dir=None,
         workers=4,
@@ -180,6 +187,7 @@ class StackQC(FetchHook):
         )
         self.modules = _names(modules)
         self.source_artifact = str(source_artifact)
+        self.grid_artifact = str(grid_artifact)
         self.output_artifact = str(output_artifact)
         self.cache_dir = cache_dir
         self._workers = max(1, int(workers))
@@ -201,23 +209,14 @@ class StackQC(FetchHook):
         return self._qc_increment
 
     def _resolve_grids(self):
-        from globato.qc.stack.resampling import resolution
+        from globato.qc.stack.resampling import nested_increment, resolution
 
         final = resolution(self.res, crs=self.crs)
         ladder = self.interpolation.get("resolutions")
-        if self.qc_res is None:
+        fine = nested_increment(self.res, self.qc_res, crs=self.crs)
+        if fine is None:
             return None, ladder
-        fine = resolution(self.qc_res, crs=self.crs)
-        ratio = final / fine
-        if ratio < 1 - 1e-8 or not math.isclose(ratio, round(ratio), rel_tol=1e-8):
-            raise ValueError(
-                f"stack_qc: qc_res={self.qc_res!r} does not nest in res={self.res!r}; "
-                "use res / N for a whole number N"
-            )
-        factor = round(ratio)
-        if factor == 1:
-            return None, ladder
-        fine = final / factor
+        factor = round(final / fine)
         # The working-DEM ladder is written for the DEM grid; scale it down so
         # its first tier is the QC grid (as the DEM's first tier is the DEM grid).
         from fetchez.utils import parse_arg_to_list
@@ -298,4 +297,121 @@ class StackQC(FetchHook):
                 receipt = (entry.get("artifacts") or {}).get("stack_qc")
                 if receipt and receipt not in RESULTS:
                     RESULTS.append(receipt)
+        return entries
+
+
+class StackQCGrid(FetchHook):
+    """Grid a module's points on the Stack QC grid, for ``stack_qc``.
+
+    A stream-stage hook, listed before ``side_stack``. For each entry of the
+    named modules it bins the points on the grid ``stack_qc`` filters on (the
+    ``qc_res`` grid nested in the ``res`` DEM grid), caches that FusionState like
+    a side-stack, and records it as ``artifact``. The entry then carries the
+    QC-grid FusionState instead of points, so ``side_stack`` (which only
+    side-stacks point streams) leaves it alone, and ``stack_qc`` writes the
+    accepted measurements on the DEM grid. Use the same ``modules``, ``res``,
+    ``qc_res`` and ``crs`` as ``stack_qc``.
+    """
+
+    name = "stack_qc_grid"
+    meta_stage = "stream"
+    meta_category = "filter"
+    meta_desc = "Grid a module's points on the Stack QC grid for stack_qc."
+    _cli_arg_help = {
+        "res": "DEM grid (as stack_qc res).",
+        "qc_res": "QC grid (as stack_qc qc_res); without it, the DEM grid.",
+        "crs": "Stack CRS (as stack_qc crs).",
+        "modules": "Module names to grid (as stack_qc modules).",
+        "artifact": "Artifact recording each entry's QC-grid FusionState.",
+        "cache_dir": "Cache directory (default: the module's cache directory).",
+    }
+
+    def __init__(
+        self,
+        res="1s",
+        crs="EPSG:4326+3855",
+        qc_res=None,
+        modules=None,
+        artifact="stack-qc-grid",
+        cache_dir=None,
+        compress=True,
+        **kwargs,
+    ):
+        stage = str(kwargs.pop("stage", "stream")).lower()
+        if stage != "stream":
+            raise ValueError("stack_qc_grid runs at the stream stage")
+        super().__init__(stage="stream", **kwargs)
+        from globato.qc.stack.resampling import nested_increment
+
+        nested_increment(res, qc_res, crs=crs)  # fail early if it cannot nest
+        self.res = res
+        self.crs = crs
+        self.qc_res = qc_res
+        self.modules = _names(modules)
+        self.artifact = str(artifact)
+        self.cache_dir = cache_dir
+        self.compress = str2bool(compress)
+
+    def run(self, entries):
+        from globato.hooks.sinks.side_stack import (
+            SideStackGenerate,
+            read_fusion_state_stream,
+            sidestack_cache_key,
+            sidestack_path,
+            sidestack_provenance,
+            validate_sidestack,
+        )
+        from globato.hooks.transforms.point_pixels import Point2PixelStream
+        from globato.qc.stack.resampling import qc_grid
+
+        grids = {}
+        for mod, entry in entries:
+            if self.modules is not None and mod.name not in self.modules:
+                continue
+            region = getattr(mod, "region", None)
+            if region is None:
+                continue
+            key = id(mod)
+            if key not in grids:
+                grids[key] = qc_grid(self.res, self.qc_res, self.crs, region)
+            increment, qc_region, grid = grids[key]
+            cache_dir = self.cache_dir or getattr(
+                mod, "_outdir", getattr(mod, "outdir", None)
+            )
+            digest = sidestack_cache_key(entry, grid)
+            path = sidestack_path(entry, cache_dir, digest)
+            entry.setdefault("artifacts", {})[self.artifact] = path
+
+            valid, _ = validate_sidestack(path, grid, digest)
+            if valid:
+                stream = read_fusion_state_stream(path)
+            elif self.is_point_stream(entry):
+                points = Point2PixelStream(x_inc=increment, y_inc=increment)
+                writer = SideStackGenerate(
+                    res=increment,
+                    crs=self.crs,
+                    cache_dir=cache_dir,
+                    compress=self.compress,
+                )
+                stream = writer._cache_stream(
+                    points._stream_wrapper(
+                        entry["stream"], entry=entry, region=qc_region
+                    ),
+                    path,
+                    digest=digest,
+                    grid=grid,
+                    entry=entry,
+                    provenance=sidestack_provenance(entry),
+                )
+            else:
+                raise ValueError(
+                    f"stack_qc_grid: {os.path.basename(str(entry.get('dst_fn')))} "
+                    "has no cached QC grid and its points are gone (it arrived as "
+                    f"{entry.get('stream_type')!r}, e.g. a cached side-stack from "
+                    "side_stack_check). List stack_qc_grid before side_stack, or "
+                    "remove that module's cached side-stacks and rebuild."
+                )
+            entry["stream"] = stream
+            entry["stream_type"] = "raster-stream"
+            entry["data_type"] = "fusion-state"
         return entries

@@ -5,16 +5,29 @@ inconsistent cells, and restores original contributions supported by the
 surrounding terrain and survey evidence. Source files are unchanged;
 decisions are recorded as 0/1 masks on each source's grid.
 
-`stack_qc` is a standard hook that works with either way of stacking.
+`stack_qc` is a collection-stage hook for `side_stack` + `stack_combine`
+recipes. List it in `global_hooks` with `modules:`, after `side_stack` and
+before `stack_combine`. It filters the named modules' sources and records each
+source's accepted measurements, on the DEM grid, as the entry's
+`qc-side-stack` artifact. Entries of other modules get their own side-stack
+there unchanged, so `stack_combine` reads `qc-side-stack` for everything. The
+original side-stacks are left untouched.
 
-**`multi_stack` recipes (default, `stage: manifest`).** List it in
-`global_hooks` with `modules:`, after any global manifest hooks that select
-files, so only files that will be stacked are filtered. The CRM and CUDEM
-presets append it after the `mr-globato` preset:
+To filter on a finer grid than the DEM (`qc_res`), add `stack_qc_grid` with
+the same `modules`, `res`, `qc_res` and `crs`, before `side_stack`. During the
+stream stage it grids those modules' points on the QC grid and caches that
+like a side-stack. The entries then carry the QC-grid FusionState instead of
+points, so `side_stack` (which only side-stacks point streams) leaves them
+alone. This is the CRM layout (`mr-globato-crm`):
 
 ```yaml
 global_hooks:
-  - preset: mr-globato
+  - name: side_stack_check
+    args: {res: 1s, crs: "EPSG:4326+3855"}
+  - name: stack_qc_grid
+    args: {modules: mbdb, res: 1s, qc_res: 1/9s, crs: "EPSG:4326+3855"}
+  - name: side_stack
+    args: {res: 1s, crs: "EPSG:4326+3855"}
   - name: stack_qc
     args:
       modules: mbdb
@@ -30,20 +43,13 @@ global_hooks:
         algos: raster_fill/raster_fill/raster_fill/interp_gmt:tension=1
         blend_dists: 32/16/8/4
         barrier: osm
+  - name: stack_combine
+    args: {res: 1s, crs: "EPSG:4326+3855", source_artifact: qc-side-stack}
 ```
 
-Each filtered file's accepted measurements reach the stream stage as a
-FusionState stream on the DEM grid; `multi_stack`, `provenance`,
-`source_masks` and `stack_provenance` consume it like any other source. The
-entry is marked with `entry.set_contribution_id("stack_qc", ...)`, so
-`multi_stack` registers it separately from the unfiltered file. As a
-module-level hook it would run before global selection hooks, so prefer the
-global form.
-
-**`side_stack` + `stack_combine` recipes (`stage: collection`).** Attach it to
-the module (or list it globally before `stack_combine`): it filters the
-module's side-stacks and points each entry's `side-stack` artifact at the
-filtered one. It refuses a recipe that already stacked with `multi_stack`.
+Without `qc_res`, `stack_qc` filters the modules' DEM-grid side-stacks
+directly and no `stack_qc_grid` is needed (`mr-globato-cudem`). `stack_qc`
+refuses a recipe that stacked with `multi_stack`.
 
 The optional `stack_qc_review` hook writes an HTML review with before/after
 hillshades. Put it in `global_hooks` after the final interpolation (see
@@ -57,12 +63,17 @@ Grid and working DEM:
 | --- | --- | --- |
 | `res` | `1s` | DEM grid of the accepted measurements; equal to the stack's `res` |
 | `crs` | `EPSG:4326+3855` | Stack CRS; equal to the stack's `crs` |
-| `stage` | `manifest` | `manifest` for `multi_stack`, `collection` for `stack_combine` |
 | `modules` | all | Modules to filter when used as a global hook |
 | `qc_res` | none | Optional finer QC grid, `res / N` (e.g. `1/9s` for a 1s DEM) |
 | `stack_strategy` | `mixed` | Working-DEM MultiStack strategy |
 | `stack_weight_threshold` | `3/2/1/.75/.5/.4/.3/.2/.1` | Working-DEM MultiStack weight tiers |
 | `interpolation` | CRM 1" ladder | `ms_binary_cudem` arguments for the working DEMs |
+| `source_artifact` | `side-stack` | Each entry's DEM-grid side-stack (filtered without `qc_res`; passed through for other modules) |
+| `grid_artifact` | `stack-qc-grid` | With `qc_res`: each entry's QC-grid FusionState from `stack_qc_grid` |
+| `output_artifact` | `qc-side-stack` | Where the accepted DEM-grid side-stacks are recorded |
+
+`stack_qc_grid` takes `modules`, `res`, `qc_res` and `crs` (as `stack_qc`),
+plus `artifact` (default `stack-qc-grid`) and `cache_dir`.
 
 The working DEMs are the surfaces each pass compares source cells with. They
 are built from the module's own sources only, in the build's own process, with
@@ -99,15 +110,14 @@ cover nine times the ground on a 1" grid as on a 1/9" grid. In tests, filtering
 directly on a 1" grid with the default constants removed real relief; either
 filter on a finer `qc_res` or scale the thresholds up and the windows down.
 
-Execution (results do not depend on these): `threads` (source gridding),
-`workers` (processes for the geometry step, default 4), `cache_dir` (default
-`<module cache>/stack_qc`), `side_stack_cache`.
+Execution (results do not depend on these): `workers` (processes for the
+geometry step, default 4) and `cache_dir` (default `<module cache>/stack_qc`).
 
 ## Caching
 
 Each module's results are cached under `<cache_dir>/<key>/`. The key covers
-only what can change the decisions: the module's sources (side-stack identity
-and checksum, which include the module's own processing hooks), the module
+only what can change the decisions: the module's sources (the contents of
+their QC-grid side-stacks), the module
 weight, the region, the QC grid, the detection and restoration tuning, the
 working-DEM settings and the Stack QC code. Changing another dataset, its
 weight, or the final DEM's tiers reuses the cached decisions. Pass results are
@@ -116,8 +126,12 @@ and a different `aggressiveness` or `terrain_restoration` reuses the shared
 working DEMs where it can. The accepted side-stacks are cached in the same
 folder.
 
-The QC-grid side-stacks used with `qc_res` are cached as ordinary side-stacks
-next to the module's other side-stacks.
+`stack_qc_grid` caches the QC grids like side-stacks, in the module's cache
+directory; a rebuild reads them instead of the points. If a module's points
+never reach `stack_qc_grid` and it has no cached QC grid (for example, a
+cached DEM-grid side-stack of that module replaced its data), it stops with an
+error rather than filter nothing: list it before `side_stack`, or remove that
+module's cached side-stacks.
 
 ## Choose the QC grid
 
@@ -156,8 +170,8 @@ The resolved final DEM grid owns the bounds and origin. Native Globato may round
 an arbitrary requested AOI to whole final-grid cells. QC uses **those resolved
 bounds**, rather than independently rounding the original AOI at the finer
 resolution. Its working width and height are exactly N times the DEM grid's
-width and height. QC uses a module copy; the ordinary final build keeps the
-original recipe module.
+width and height. `stack_qc_grid` and `stack_qc` compute this grid with the
+same function, so the QC grids always match what `stack_qc` expects.
 
 Both grids must share the same CRS and north-up orientation. The AOI reference
 must match the stack's horizontal CRS. Source side-stacks must exactly match
@@ -176,9 +190,9 @@ as final increment / N to avoid accumulated edge drift.
 
 QC and restoration operate on each source's QC-grid side-stack. Accepted
 seven-band statistics are summed **per source** into complete DEM cells and
-written as a side-stack on the DEM grid; the entry's `side-stack` artifact then
-points to it (the original is recorded as `stack_qc_original_side_stack`).
-`stack_combine` reduces the accepted side-stacks of all modules as usual. One
+written as a side-stack on the DEM grid and recorded as the entry's
+`qc-side-stack` artifact. `stack_combine` (with `source_artifact:
+qc-side-stack`) reduces the accepted side-stacks with every other module's. One
 survey may be rejected while an overlapping survey remains. Interpolated
 working-DEM values never enter the stack.
 
@@ -186,9 +200,11 @@ A factor of nine means up to 81 times the working cells; finer QC costs more.
 
 ## Provenance
 
-With `stage: manifest`, `provenance`, `source_masks` and `stack_provenance`
-see the filtered measurements. With `stage: collection` they run in the
-stream stage, before Stack QC, and record coverage before filtering.
+Give `provenance`, `source_masks` and `stack_provenance`
+`source_artifact: qc-side-stack` so they run at the collection stage on the
+stacked side-stacks and record the filtered coverage (`stack_provenance`
+after `stack_combine`). At the stream stage they would see the sources before
+filtering.
 
 ## Review pages
 

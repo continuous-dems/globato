@@ -57,6 +57,7 @@ global_hooks:
     crs: EPSG:4269+5703
     strategy: mixed
     weight_threshold: 3/2/1/.75/.5/.4/.3/.2/.1
+    source_artifact: qc-side-stack
     output: source_stack.tif
 - name: focus_sink
   args:

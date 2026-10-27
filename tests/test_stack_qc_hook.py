@@ -15,7 +15,7 @@ from fetchez.hooks.focus import FocusSink
 from fetchez.modules import FetchModule
 from fetchez.spatial import Region
 
-from globato.hooks.filters.stack_qc import StackQC
+from globato.hooks.filters.stack_qc import StackQC, StackQCGrid
 from globato.hooks.filters.stack_qc_review import StackQCReview
 from globato.hooks.rasters.binary_cudem import BinaryCudemStepDown
 from globato.hooks.sinks.multi_stack import MultiStackHook
@@ -317,8 +317,9 @@ def _fine_qc(tmp_path, **kw):
 
 
 def test_finer_qc_grid_filters_then_delivers_on_the_dem_grid(tmp_path, monkeypatch):
-    """The CRM layout: mbdb has its own side-stacks on the QC grid; the global
-    ones (DEM grid) leave its entries alone; stack_qc delivers on the DEM grid."""
+    """The CRM layout: stack_qc_grid grids mbdb on the QC grid during the stream
+    stage, side_stack leaves those entries alone, and stack_qc delivers on the
+    DEM grid."""
     monkeypatch.chdir(tmp_path)
     region = Region(350000.0, 350189.0, 3749811.0, 3750000.0, srs="EPSG:32611")
     ladder, qc = _fine_qc(tmp_path)
@@ -327,14 +328,11 @@ def test_finer_qc_grid_filters_then_delivers_on_the_dem_grid(tmp_path, monkeypat
         str(points(tmp_path)),
         src_region=region,
         outdir=str(tmp_path / "source_cache"),
-        hook=[
-            SideStackCheck(res="3", crs="EPSG:32611"),
-            SideStackGenerate(res="3", crs="EPSG:32611"),
-        ],
     )
     mod.run()
     hooks = [
         SideStackCheck(res="9", crs="EPSG:32611"),
+        StackQCGrid(modules="mbdb", res="9", qc_res="3", crs="EPSG:32611"),
         SideStackGenerate(res="9", crs="EPSG:32611"),
         qc,
         StackCombine(
@@ -355,8 +353,9 @@ def test_finer_qc_grid_filters_then_delivers_on_the_dem_grid(tmp_path, monkeypat
     with rasterio.open(item["mask"]) as mask:
         assert mask.res == (3.0, 3.0)  # filtered on the QC grid
     artifacts = out[0][1]["artifacts"]
-    with rasterio.open(artifacts["side-stack"]) as original:
-        assert original.res == (3.0, 3.0)  # the module's own side-stack
+    assert "side-stack" not in artifacts  # side_stack left mbdb alone
+    with rasterio.open(artifacts["stack-qc-grid"]) as original:
+        assert original.res == (3.0, 3.0)  # the QC grid
     with rasterio.open(artifacts["qc-side-stack"]) as accepted:
         assert accepted.res == (9.0, 9.0)  # delivered on the DEM grid
         assert accepted.tags()["GLOBATO_STACK_QC_SIGNATURE"] == report["signature"]
@@ -365,8 +364,8 @@ def test_finer_qc_grid_filters_then_delivers_on_the_dem_grid(tmp_path, monkeypat
         assert float(dem.read(1, masked=True).max()) < -90.0
 
 
-def test_finer_qc_grid_needs_the_module_side_stacks_on_it(tmp_path, monkeypatch):
-    """Without the module's own qc_res side-stacks the hook says what to add."""
+def test_finer_qc_grid_needs_stack_qc_grid(tmp_path, monkeypatch):
+    """Without stack_qc_grid the hook says what to add."""
     monkeypatch.chdir(tmp_path)
     region = Region(350000.0, 350189.0, 3749811.0, 3750000.0, srs="EPSG:32611")
     _, qc = _fine_qc(tmp_path)
@@ -379,9 +378,7 @@ def test_finer_qc_grid_needs_the_module_side_stacks_on_it(tmp_path, monkeypatch)
         SideStackGenerate(res="9", crs="EPSG:32611"),
         qc,
     ]
-    with pytest.raises(
-        Exception, match="own side_stack_check and side_stack at qc_res"
-    ):
+    with pytest.raises(Exception, match="add stack_qc_grid"):
         run_fetchez([mod], threads=1, global_hooks=hooks, ignore_failures=False)
 
 
@@ -422,3 +419,37 @@ def test_review_finds_results_after_focus_sink_dropped_them(tmp_path, monkeypatc
 def test_entries_without_contribution_keep_their_historical_dataset_id():
     entry = dict(url="https://example.org/a.fbt", checksum="abc")
     assert MultiStackHook._dataset_id(entry, 1.0) == "abc|w=1.0"
+
+
+def test_second_build_reuses_the_cached_qc_grid(tmp_path, monkeypatch):
+    """The QC grid is cached like a side-stack; a rebuild reads it, not the points."""
+    monkeypatch.chdir(tmp_path)
+    region = Region(350000.0, 350189.0, 3749811.0, 3750000.0, srs="EPSG:32611")
+
+    def run():
+        mod = FixtureMB(
+            str(points(tmp_path)), src_region=region, outdir=str(tmp_path / "src")
+        )
+        mod.run()
+        grid = StackQCGrid(modules="mbdb", res="9", qc_res="3", crs="EPSG:32611")
+        out = run_fetchez([mod], threads=1, global_hooks=[grid], ignore_failures=False)
+        return out[0][1]["artifacts"]["stack-qc-grid"]
+
+    first = run()
+    stamp = Path(first).stat().st_mtime_ns
+    assert run() == first
+    assert Path(first).stat().st_mtime_ns == stamp
+
+
+def test_stack_qc_grid_refuses_entries_without_points_or_cache(tmp_path):
+    region = Region(350000.0, 350189.0, 3749811.0, 3750000.0, srs="EPSG:32611")
+    mod = FixtureMB(str(points(tmp_path)), src_region=region, outdir=str(tmp_path))
+    entry = dict(
+        url="file:///x.xyz",
+        dst_fn=str(tmp_path / "x.xyz"),
+        stream_type="raster-stream",
+        stream=iter(()),
+    )
+    grid = StackQCGrid(modules="mbdb", res="9", qc_res="3", crs="EPSG:32611")
+    with pytest.raises(ValueError, match="before side_stack"):
+        grid.run([(mod, entry)])

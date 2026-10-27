@@ -167,6 +167,42 @@ def nested_region(region, fine_stack, target):
     return native, grid
 
 
+def nested_increment(res, qc_res, *, crs=None):
+    """The QC grid increment for ``qc_res`` in a ``res`` DEM, or None for the DEM grid.
+
+    ``qc_res`` must nest a whole number of times in ``res`` (e.g. 1/9s in 1s).
+    """
+    if qc_res is None:
+        return None
+    final = resolution(res, crs=crs)
+    fine = resolution(qc_res, crs=crs)
+    ratio = final / fine
+    if ratio < 1 - 1e-8 or not math.isclose(ratio, round(ratio), rel_tol=1e-8):
+        raise ValueError(
+            f"stack_qc: qc_res={qc_res!r} does not nest in res={res!r}; "
+            "use res / N for a whole number N"
+        )
+    factor = round(ratio)
+    return None if factor == 1 else final / factor
+
+
+def qc_grid(res, qc_res, crs, region):
+    """The grid Stack QC filters on: (increment, region, side-stack grid).
+
+    Shared by stack_qc_grid, which writes the QC-grid side-stacks, and
+    stack_qc, which filters them, so the two always agree.
+    """
+    from types import SimpleNamespace
+
+    target = output_grid(SimpleNamespace(res=res, crs=crs), region)
+    fine = nested_increment(res, qc_res, crs=crs)
+    if fine is None:
+        final = resolution(res, crs=crs)
+        return final, region, _resolve_grid(region, final, crs)
+    qc_region, _ = nested_region(region, SimpleNamespace(res=fine, crs=crs), target)
+    return fine, qc_region, _resolve_grid(qc_region, fine, crs)
+
+
 def alignment(source, target):
     """Validate exact nested cells, tolerating only coordinate serialization noise."""
     a, b = source.transform, target["transform"]

@@ -18,9 +18,11 @@ globato run examples/stack_qc/redondo_1s.yaml \
   --outdir /path/to/redondo_1s --shared-cache /path/to/data --fail-fast
 ```
 
-To evaluate finer QC on the 1s final grid, copy a 1s recipe and add
-`qc_res: "1/9s"` to its module's stack_qc args. Keep multi_stack and the final
-interpolation settings unchanged. See the Stack QC user guide for units,
+To evaluate finer QC on the 1s final grid, copy a 1s recipe, add
+`qc_res: "1/9s"` to its module's stack_qc args, and add `stack_qc_grid` with
+the same res, qc_res and crs to the module's hooks (a module's hooks run before
+the global `side_stack`). Keep stack_combine and the final interpolation
+settings unchanged. See the Stack QC user guide for units,
 integer nesting, processing bounds and optional coverage consumers.
 
 ## Separate reproduction package

@@ -56,7 +56,9 @@ def test_side_stack_adds_overlapping_chunks_and_reuses_exact_state(tmp_path):
         assert ds.tags()["GLOBATO_SIDESTACK_VERSION"] == str(SIDESTACK_CACHE_VERSION)
 
 
-def test_existing_fusion_stream_uses_the_same_side_stack_writer(tmp_path):
+def test_side_stack_leaves_fusion_state_streams_alone(tmp_path):
+    """Only point streams are side-stacked; an entry that already carries a
+    FusionState raster (e.g. from stack_qc_grid) is left as it is."""
     region = Region(350000, 350012, 3749988, 3750000, srs="EPSG:32611")
     module = SimpleNamespace(
         region=region, weight=1, uncertainty=0, hooks=[], _outdir=str(tmp_path)
@@ -69,10 +71,10 @@ def test_existing_fusion_stream_uses_the_same_side_stack_writer(tmp_path):
         stream=iter([native_points([-10])]),
     )
     Point2PixelStream(x_inc="3", y_inc="3").run([(module, entry)])
+    stream = entry["stream"]
     SideStackGenerate(res="3", crs="EPSG:32611").run([(module, entry)])
-    list(entry["stream"])
-    with rasterio.open(entry["artifacts"]["side-stack"]) as ds:
-        assert ds.count == 7 and ds.read(2).sum() == 1
+    assert entry["stream"] is stream
+    assert "side-stack" not in entry.get("artifacts", {})
 
 
 def test_side_stack_refuses_untransformed_crs(tmp_path):

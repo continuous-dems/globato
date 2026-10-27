@@ -81,8 +81,8 @@ def collect_sources(module, entries, root, artifact, expected):
                     f"({ds.width}x{ds.height}, {abs(ds.transform.a)!r} per cell) "
                     f"is not on the QC grid ({expected['width']}x"
                     f"{expected['height']}, {abs(expected['transform'].a)!r} per "
-                    "cell). With qc_res, give the module its own side_stack_check "
-                    "and side_stack at qc_res."
+                    "cell). With qc_res, use stack_qc_grid with the same res, "
+                    "qc_res and crs as stack_qc."
                 )
             geom = io.grid(ds)
             if tags.get("GLOBATO_POINT_COUNT") == "0":
@@ -327,7 +327,18 @@ def prepare(qc, module, entries):
         qc_stack, qc_region, qc_grid = dem_stack, region, target
     root = Path(qc.cache_dir or Path(module._outdir) / "stack_qc").resolve()
     root.mkdir(parents=True, exist_ok=True)
-    records, _ = collect_sources(module, entries, root, qc.source_artifact, qc_grid)
+    artifact = qc.source_artifact if qc.qc_increment is None else qc.grid_artifact
+    if not any(artifact in (e.get("artifacts") or {}) for _, e in entries):
+        raise ValueError(
+            f"Stack QC {module.name}: no entry has a {artifact!r} artifact. "
+            + (
+                "With qc_res, add stack_qc_grid (same modules, res, qc_res and "
+                "crs) before side_stack."
+                if qc.qc_increment is not None
+                else "Side-stack the module with side_stack first."
+            )
+        )
+    records, _ = collect_sources(module, entries, root, artifact, qc_grid)
     for _, entry in entries:
         entry.pop(INDEX, None)
     if not records:
