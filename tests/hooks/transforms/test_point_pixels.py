@@ -132,3 +132,27 @@ def test_points_on_geographic_pixel_boundaries_are_stable():
     assert prepared is not None
     assert prepared.pixel_x.item() == col
     assert prepared.pixel_y.item() == row
+
+
+def test_point_stream_logs_the_pixelated_point_count(caplog):
+    """The summary log line must format; a bad one fails every point stream in tests."""
+    import logging
+
+    from fetchez.spatial import Region
+    from globato.hooks.transforms.point_pixels import Point2PixelStream
+
+    points = np.zeros(
+        2, dtype=[("x", "f8"), ("y", "f8"), ("z", "f8"), ("w", "f8"), ("u", "f8")]
+    )
+    points["x"], points["y"], points["z"] = 350001.5, 3749998.5, [-10, -20]
+    points["w"], points["u"] = 1, 0
+    region = Region(350000, 350012, 3749988, 3750000, srs="EPSG:32611")
+    entry = dict(url="file://points", src_srs="EPSG:32611")
+
+    stream = Point2PixelStream(x_inc="3", y_inc="3")._stream_wrapper(
+        iter([points]), entry=entry, region=region
+    )
+    with caplog.at_level(logging.INFO, logger="globato.hooks.transforms.point_pixels"):
+        list(stream)
+
+    assert any("Pixelated" in r.getMessage() for r in caplog.records)

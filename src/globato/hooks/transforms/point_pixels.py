@@ -551,7 +551,7 @@ class Point2PixelStream(FetchHook):
             yield window, window, data, None, chunk_transform
 
         logger.info(
-            "Pixelated %s -> %s %s",
+            "Pixelated %s -> %s",
             format_dataset_id(dataset_id(entry)),
             colorize(f"{count:,}", BOLD) + " pts",
         )

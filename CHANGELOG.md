@@ -18,6 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 * Updated `globato build` to use `ignore-failures` instead of `fail-fast`
 
 ### FIXED
+* `Point2PixelStream`'s "Pixelated" log line had three placeholders and two arguments, so every point stream logged a `--- Logging error ---` traceback in place of its point count, and tests that capture INFO logs failed with `not enough arguments for format string`.
 * The `glob_sdb` module failed with `ModuleNotFoundError: No module named 'globato.cli.recipe'` as soon as it started building its training DEM (#284). It now uses `fetchez.recipe.Recipe`.
 * `GDALReader.get_read_window()` failed with `ModuleNotFoundError: No module named 'globato.streams.spatial'` whenever a region was set (#284). It now uses `fetchez.spatial.Region`, and takes the region as a `Region` or as `[w, e, s, n]` in lon/lat.
 
