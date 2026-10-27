@@ -385,6 +385,26 @@ Source masks may also be polygonized and dissolved into vector metadata products
 * resolution
 * URL
 
+## From Side-Stacks
+
+In a `side_stack` + `stack_combine` recipe no point stream reaches the provenance hooks, and collection-stage filters can change a source's side-stack after the stream stage. Give `source_masks`, `provenance` and `stack_provenance` a `source_artifact` to have them run at the collection stage and read each entry's FusionState artifact instead:
+
+```yaml
+  - name: side_stack
+    args: {res: 1s, crs: "EPSG:4326+3855"}
+  # ... collection-stage filters writing e.g. qc-side-stack ...
+  - name: stack_combine
+    args: {res: 1s, crs: "EPSG:4326+3855", source_artifact: qc-side-stack}
+  - name: source_masks
+    args: {res: 1s, source_artifact: qc-side-stack}
+  - name: provenance
+    args: {res: 1s, source_artifact: qc-side-stack}
+  - name: stack_provenance
+    args: {source_artifact: qc-side-stack}
+```
+
+A cell counts as covered where the artifact's `count` band is above zero. `res` must equal the side-stack resolution; a side-stack on another grid raises an error. `stack_provenance` reads `stack_combine`'s `fusion-state`, so list it after `stack_combine`.
+
 ---
 
 # Typical Output Products
