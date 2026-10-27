@@ -1,36 +1,34 @@
 """Filter a module's elevation sources with Stack QC before they are stacked.
 
-A standard hook that works with either way of stacking:
+A collection-stage hook for ``side_stack`` + ``stack_combine`` recipes. It
+reads each filtered module's side-stacks (``source_artifact``), runs the Stack
+QC removal and restoration passes against working DEMs it builds itself
+(MultiStack plus ``ms_binary_cudem``, in this process), writes each source's
+accepted measurements as a side-stack on the DEM grid, and records it as
+``output_artifact``. Entries of other modules get ``output_artifact`` pointing
+at their own side-stack, so ``stack_combine`` stacks one artifact name:
 
-* ``stage: manifest`` (default), for recipes that stack with ``multi_stack``.
-  List it in ``global_hooks`` with ``modules: mbdb``, after any global
-  manifest hooks that select files (e.g. a hook dropping files that better
-  data supersedes), so only the files that will be stacked are filtered:
+    hooks:
+      - name: side_stack_check
+        args: {res: 1s, crs: "EPSG:4326+3855"}
+      - name: side_stack
+        args: {res: 1s, crs: "EPSG:4326+3855"}
+      - name: stack_qc
+        args: {modules: mbdb, res: 1s, crs: "EPSG:4326+3855", qc_res: 1/9s}
+      - name: stack_combine
+        args: {res: 1s, crs: "EPSG:4326+3855", source_artifact: qc-side-stack}
 
-      global_hooks:
-        - name: supersede_cull
-        - name: stack_qc
-          args: {modules: mbdb, res: 1s, qc_res: 1/9s, max_passes: 5}
-        - name: multi_stack
-          ...
+With ``qc_res`` finer than ``res``, the filtered module's side-stacks must be
+on the QC grid: give that module its own ``side_stack_check`` and
+``side_stack`` at ``qc_res``. A module's own side-stack hooks run before the
+global ones, which then leave its entries alone. The accepted measurements are
+summed from the QC grid onto the DEM grid. Without ``qc_res`` the module's DEM
+grid side-stacks are filtered directly.
 
-  Each filtered file's accepted measurements reach the stream stage as a
-  FusionState stream on the DEM grid; ``multi_stack``, ``provenance``,
-  ``source_masks`` and ``stack_provenance`` consume it like any other source.
-
-* ``stage: collection``, for recipes that stack with ``side_stack`` +
-  ``stack_combine``: it runs on the module's side-stacks after the stream
-  stage and points each entry's ``side-stack`` artifact at the filtered one.
-
-Either way the hook grids each source on the QC grid (``qc_res``, or the DEM
-grid ``res``), runs the Stack QC removal and restoration passes against
-working DEMs it builds itself (MultiStack plus ``ms_binary_cudem``, in this
-process), and writes each source's accepted measurements as a side-stack on
-the DEM grid.
-
-Results are cached per module. The cache key holds only the module's sources,
-weight and processing, the region, these settings and the QC code, so changes
-to other datasets or to the final DEM's tiers reuse the filter results.
+Results are cached per module. The cache key holds only the module's sources
+(the side-stacks' contents), weight, the region, these settings and the QC
+code, so changes to other datasets or to the final DEM's tiers reuse the
+filter results.
 """
 
 import logging
@@ -83,9 +81,7 @@ class StackQC(FetchHook):
     """Stack QC filter for one module's sources (see the module docstring)."""
 
     name = "stack_qc"
-    meta_stage = "manifest"
-    # Its effect is recorded per entry (contribution id, processing record).
-    affects_fusion_state = False
+    meta_stage = "collection"
     meta_category = "filter"
     meta_desc = (
         "Remove elevation outliers and restore supported terrain before stacking."
@@ -96,9 +92,9 @@ class StackQC(FetchHook):
         "measurements on the DEM grid."
     )
     _cli_arg_help = {
-        "res": "DEM grid the accepted measurements are stacked on (must match multi_stack res).",
-        "crs": "Stack CRS (must match multi_stack crs).",
-        "qc_res": "Optional finer QC grid; DEM res / qc_res must be a whole number (e.g. 1/9s for a 1s DEM).",
+        "res": "DEM grid the accepted measurements are stacked on (must match stack_combine res).",
+        "crs": "Stack CRS (must match stack_combine crs).",
+        "qc_res": "Optional finer QC grid; DEM res / qc_res must be a whole number (e.g. 1/9s for a 1s DEM). The filtered module's own side_stack must use it.",
         "aggressiveness": "Filtering strength: 1 light, 2 standard, 3 aggressive.",
         "terrain_restoration": "0 off, 1 conservative, 2 standard, 3 stronger.",
         "max_passes": "Removal pass limit, 1-10.",
@@ -115,7 +111,8 @@ class StackQC(FetchHook):
         "stack_weight_threshold": "Working-DEM MultiStack weight tiers.",
         "interpolation": "ms_binary_cudem arguments for the working DEMs, written for the DEM grid (scaled to qc_res).",
         "modules": "As a global hook: the module names to filter.",
-        "stage": "manifest (multi_stack recipes, default) or collection (side_stack + stack_combine).",
+        "source_artifact": "Artifact holding each entry's side-stack (default side-stack).",
+        "output_artifact": "Artifact to record the accepted side-stacks in (default qc-side-stack); other modules' entries get their source_artifact here.",
         "workers": "Processes for the geometry step (results do not depend on it).",
     }
 
@@ -143,17 +140,19 @@ class StackQC(FetchHook):
         stack_weight_threshold="3/2/1/.75/.5/.4/.3/.2/.1",
         interpolation=None,
         modules=None,
-        stage="manifest",
+        source_artifact="side-stack",
+        output_artifact="qc-side-stack",
         cache_dir=None,
-        side_stack_cache=None,
-        threads=4,
         workers=4,
         **kwargs,
     ):
-        stage = str(stage).lower()
-        if stage not in {"manifest", "collection"}:
-            raise ValueError("stack_qc stage must be manifest or collection")
-        super().__init__(stage=stage, **kwargs)
+        stage = str(kwargs.pop("stage", "collection")).lower()
+        if stage not in {"collection", "post"}:
+            raise ValueError(
+                "stack_qc runs at the collection stage, on side-stacks; "
+                "use side_stack + stack_combine"
+            )
+        super().__init__(stage="collection", **kwargs)
         self._settings = Settings(
             aggressiveness=int(aggressiveness),
             terrain_restoration=int(terrain_restoration),
@@ -180,9 +179,9 @@ class StackQC(FetchHook):
             DEFAULT_INTERPOLATION if interpolation is None else interpolation
         )
         self.modules = _names(modules)
+        self.source_artifact = str(source_artifact)
+        self.output_artifact = str(output_artifact)
         self.cache_dir = cache_dir
-        self.side_stack_cache = side_stack_cache
-        self.threads = int(threads)
         self._workers = max(1, int(workers))
         self._qc_increment, self._ladder = self._resolve_grids()
 
@@ -281,6 +280,12 @@ class StackQC(FetchHook):
         order = []
         for mod, entry in entries:
             if self.modules is not None and mod.name not in self.modules:
+                # Not filtered: stack_combine reads its side-stack unchanged.
+                artifacts = entry.get("artifacts") or {}
+                if self.source_artifact in artifacts:
+                    artifacts.setdefault(
+                        self.output_artifact, artifacts[self.source_artifact]
+                    )
                 continue
             if id(mod) not in groups:
                 groups[id(mod)] = (mod, [])
@@ -288,7 +293,7 @@ class StackQC(FetchHook):
             groups[id(mod)][1].append((mod, entry))
         for key in order:
             mod, selected = groups[key]
-            prepare(self, mod, selected, threads=self.threads)
+            prepare(self, mod, selected)
             for _, entry in selected:
                 receipt = (entry.get("artifacts") or {}).get("stack_qc")
                 if receipt and receipt not in RESULTS:

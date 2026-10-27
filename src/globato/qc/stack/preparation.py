@@ -1,25 +1,23 @@
 """Stack QC orchestration for one module's collected sources.
 
 Runs at the collection stage, after the normal stream stage has written each
-source's side-stack on the DEM grid and before ``stack_combine`` assembles
-the MultiStack:
+source's side-stack and before ``stack_combine`` assembles the MultiStack:
 
-1. Use the module's side-stacks as the QC grids, or, with a finer ``qc_res``,
-   grid each source again on the QC grid with the module's own file and
-   stream hooks (cached by the ordinary side-stack cache).
+1. Read the module's side-stacks (``source_artifact``). They are the QC grids:
+   on the DEM grid, or on a finer ``qc_res`` grid when the module has its own
+   ``side_stack`` at ``qc_res``.
 2. Run the removal/restoration passes against in-process working DEMs.
 3. Write each source's accepted measurements as a side-stack on the DEM grid
-   and point the entry's ``side-stack`` artifact at it, so ``stack_combine``
+   and record it as the entry's ``output_artifact``, so ``stack_combine``
    stacks the filtered data. The original side-stacks are left untouched.
 
 The QC cache key covers only what can change the decisions: the module's
-sources and their processing, the module weight, the QC grid and region, the
-filter settings, the working-DEM settings and the QC code. Changes elsewhere
-in a recipe (another dataset's weight, a new dataset, final DEM tiers) reuse
-the cached decisions.
+sources (the side-stacks' contents), the module weight, the QC grid and region,
+the filter settings, the working-DEM settings and the QC code. Changes
+elsewhere in a recipe (another dataset's weight, a new dataset, final DEM
+tiers) reuse the cached decisions.
 """
 
-import copy
 import inspect
 import logging
 import time
@@ -28,19 +26,13 @@ from pathlib import Path
 import rasterio
 from filelock import FileLock
 
-from fetchez.core import run_fetchez
-from fetchez.entry import set_contribution_id
+from pyproj import CRS
+
 from globato.hooks.metadata.provenance import source_id
-from globato.hooks.sinks.side_stack import (
-    SideStackCheck,
-    SideStackGenerate,
-    SIDESTACK_DATATYPE,
-    SIDESTACK_HASH_TAG,
-)
+from globato.hooks.sinks.side_stack import SIDESTACK_DATATYPE, SIDESTACK_HASH_TAG
 from . import io, processing
 from .context import WorkingSurface, cache_root_for
 from .grid import grid_offset
-from .identity import hook_identity
 from .native import masked_stream
 
 logger = logging.getLogger(__name__)
@@ -50,109 +42,31 @@ ORCHESTRATION_VERSION = "stack_qc_hook_v1"
 INDEX = "_stack_qc_index"
 
 
-def _name(hook):
-    return str(getattr(hook, "name", "")).replace("-", "_")
-
-
-def _source_hooks(module, qc):
-    """The module's own per-file transforms, without QC, manifests or caches."""
-
-    def keep(h):
-        return (
-            h is not qc
-            and _name(h) not in {"stack_qc", "side_stack", "side_stack_check"}
-            and h.stage not in {"manifest", "collection"}
-        )
-
+def _on_grid(ds, expected):
+    """Whether a side-stack is on the expected QC grid (horizontal CRS only)."""
+    if (ds.width, ds.height) != (expected["width"], expected["height"]):
+        return False
+    if any(
+        abs(x - y) > 1e-9 * max(1.0, abs(y))
+        for x, y in zip(tuple(ds.transform)[:6], tuple(expected["transform"])[:6])
+    ):
+        return False
     return (
-        [copy.deepcopy(h) for h in module.internal_hooks if keep(h)],
-        [copy.deepcopy(h) for h in module.external_hooks if keep(h)],
-    )
-
-
-RUNTIME_KEYS = {"stream", "raster_stream", "stream_type", "artifacts"}
-
-
-def _fresh(entry):
-    """A copy of a collected entry as it was before its stream stage."""
-    keep = {
-        k: v
-        for k, v in entry.items()
-        if k not in RUNTIME_KEYS and not k.startswith("_sidestack")
-    }
-    if keep.get("data_type") == "fusion-state":
-        keep.pop("data_type")
-    return copy.deepcopy(keep)
-
-
-def _replay_manifest_hooks(module, qc, entries):
-    """Re-apply the module's own manifest hooks (e.g. set-srs) to fresh copies."""
-    for hook in module.hooks:
-        if hook is qc or hook.stage != "manifest":
-            continue
-        if _name(hook) in {"side_stack_check", "stack_qc"}:
-            continue
-        entries = copy.deepcopy(hook).run(entries) or []
-    return entries
-
-
-def grid_sources(qc, module, entries, region, res, threads, *, collected=True):
-    """Seven-band QC-grid side-stacks for every selected entry (cached).
-
-    ``collected`` entries have been through their stream stage; manifest-stage
-    entries have not, so they need no source-CRS restoration.
-    """
-    clone = copy.copy(module)
-    clone.region = region
-    clone.internal_hooks, clone.external_hooks = _source_hooks(module, qc)
-    fresh = [_fresh(e) for _, e in entries]
-    if collected:
-        # Stream transforms such as stream_reproject overwrite ``src_srs``;
-        # rebuild the manifest-time CRS from the module's own manifest hooks
-        # (e.g. set-srs). Manifest-stage entries still have the original.
-        fresh = [
-            e
-            for _, e in _replay_manifest_hooks(module, qc, [(clone, e) for e in fresh])
-        ]
-    hooks = clone.internal_hooks + clone.external_hooks
-    for e in fresh:
-        # Side-stacks key on fetchez's dataset_id; record the hooks that shape
-        # this source so QC-grid side-stacks made with other hooks aren't reused.
-        set_contribution_id(
-            e,
-            "stack_qc_source_pipeline",
-            [hook_identity(h, e) for h in hooks],
+        CRS.from_user_input(ds.crs.to_wkt())
+        .to_2d()
+        .equals(
+            CRS.from_user_input(expected["crs"].to_wkt()).to_2d(),
+            ignore_axis_order=True,
         )
-    clone.results = fresh
-    check = SideStackCheck(res=res, crs=qc.crs, cache_dir=qc.side_stack_cache)
-    generate = SideStackGenerate(res=res, crs=qc.crs, cache_dir=qc.side_stack_cache)
-    checked = check.run([(clone, e) for e in clone.results]) or []
-    hits = [(m, e) for m, e in checked if e.get("_sidestack_hit")]
-    clone.results = [e for _, e in checked if not e.get("_sidestack_hit")]
-    made = (
-        run_fetchez(
-            [clone], threads=threads, global_hooks=[generate], ignore_failures=False
-        )
-        if clone.results
-        else []
     )
-    logger.info(
-        "Stack QC %s: QC-grid side-stacks: %d cached, %d made",
-        module.name,
-        len(hits),
-        len(clone.results),
-    )
-    return hits + list(made or [])
 
 
-def collect_sources(module, prepared, root):
+def collect_sources(module, entries, root, artifact, expected):
     """Inventory measured QC-grid sources; entries with no data come back separately."""
     records, empty = [], []
     seen = set()
-    for _, entry in prepared:
-        raw = entry.get("_sidestack_path") or entry.get("artifacts", {}).get(
-            "side-stack"
-        )
+    for _, entry in entries:
+        raw = (entry.get("artifacts") or {}).get(artifact)
         if not raw or not Path(raw).is_file():
             empty.append(entry[INDEX])
             continue
@@ -161,6 +75,15 @@ def collect_sources(module, prepared, root):
             tags = ds.tags()
             if ds.count != 7 or tags.get("GLOBATO_DATATYPE") != SIDESTACK_DATATYPE:
                 raise ValueError("Stack QC requires seven-band source side-stacks")
+            if not _on_grid(ds, expected):
+                raise ValueError(
+                    f"Stack QC {module.name}: side-stack {path.name} "
+                    f"({ds.width}x{ds.height}, {abs(ds.transform.a)!r} per cell) "
+                    f"is not on the QC grid ({expected['width']}x"
+                    f"{expected['height']}, {abs(expected['transform'].a)!r} per "
+                    "cell). With qc_res, give the module its own side_stack_check "
+                    "and side_stack at qc_res."
+                )
             geom = io.grid(ds)
             if tags.get("GLOBATO_POINT_COUNT") == "0":
                 empty.append(entry[INDEX])
@@ -372,28 +295,22 @@ def write_accepted(rec, masks, target, signature, path):
     return path
 
 
-def prepare(qc, module, entries, *, threads):
-    """Filter one module's selected entries in place and return them.
+def prepare(qc, module, entries):
+    """Filter one module's collected entries in place and return them.
 
-    At the manifest stage (``multi_stack`` recipes) each filtered entry gets
-    its accepted measurements as a FusionState stream on the DEM grid, which
-    the normal stream stage hands to ``multi_stack``. At the collection stage
-    (``side_stack`` + ``stack_combine`` recipes) the entry's ``side-stack``
-    artifact is pointed at the accepted side-stack instead.
+    Each entry with measurements gets its accepted measurements as a DEM-grid
+    side-stack in ``qc.output_artifact``; entries without any get none.
     """
     from .resampling import nested_region, output_grid
 
-    manifest = qc.stage == "manifest"
     if not entries:
         logger.info("Stack QC %s: no selected sources; nothing to filter", module.name)
         return entries
-    if not manifest and any(
-        "multi_stack" in (e.get("artifacts") or {}) for _, e in entries
-    ):
+    if any("multi_stack" in (e.get("artifacts") or {}) for _, e in entries):
         raise ValueError(
-            "stack_qc at the collection stage filters side-stacks before "
-            "stack_combine, but this recipe already stacked the sources with "
-            "multi_stack. Use stage: manifest with multi_stack."
+            "stack_qc filters side-stacks before stack_combine, but this recipe "
+            "already stacked the sources with multi_stack. Stack with "
+            "side_stack + stack_combine."
         )
     region = module.region
     if region is None:
@@ -405,28 +322,12 @@ def prepare(qc, module, entries, *, threads):
     started = time.monotonic()
     if qc.qc_increment is not None:
         qc_stack = qc.stack_hook(qc.qc_increment)
-        qc_region, _ = nested_region(region, qc_stack, target)
-        prepared = grid_sources(
-            qc,
-            module,
-            entries,
-            qc_region,
-            qc_stack.res,
-            threads,
-            collected=not manifest,
-        )
-    elif manifest:
-        # Nothing is gridded yet: grid on the DEM grid itself.
-        qc_stack, qc_region = dem_stack, region
-        prepared = grid_sources(
-            qc, module, entries, qc_region, qc_stack.res, threads, collected=False
-        )
+        qc_region, qc_grid = nested_region(region, qc_stack, target)
     else:
-        # The module's own DEM-grid side-stacks are the QC grids.
-        qc_stack, qc_region, prepared = dem_stack, region, entries
+        qc_stack, qc_region, qc_grid = dem_stack, region, target
     root = Path(qc.cache_dir or Path(module._outdir) / "stack_qc").resolve()
     root.mkdir(parents=True, exist_ok=True)
-    records, _ = collect_sources(module, prepared, root)
+    records, _ = collect_sources(module, entries, root, qc.source_artifact, qc_grid)
     for _, entry in entries:
         entry.pop(INDEX, None)
     if not records:
@@ -486,14 +387,10 @@ def prepare(qc, module, entries, *, threads):
     with FileLock(str(cache / ".accepted.lock")):
         for i, (_, entry) in enumerate(entries):
             rec = by_index.get(i)
-            artifacts = entry.setdefault("artifacts", {})
             if rec is None:
-                if not manifest and artifacts.get("side-stack"):
-                    # No measurements on the QC grid, so none on the DEM grid.
-                    artifacts["stack_qc_original_side_stack"] = artifacts.pop(
-                        "side-stack"
-                    )
+                # No measurements on the QC grid, so none on the DEM grid.
                 continue
+            artifacts = entry.setdefault("artifacts", {})
             accepted = write_accepted(
                 rec,
                 masks,
@@ -505,16 +402,11 @@ def prepare(qc, module, entries, *, threads):
             artifacts["stack_qc"] = str(receipt)
             artifacts["stack_qc_mask"] = masks[rec["source_id"]]["mask"]
             entry["_stack_qc_signature"] = signature
-            if manifest:
-                _attach_accepted(entry, accepted, rec, signature)
-            else:
-                if artifacts.get("side-stack"):
-                    artifacts["stack_qc_original_side_stack"] = artifacts["side-stack"]
-                artifacts["side-stack"] = str(accepted)
+            artifacts[qc.output_artifact] = str(accepted)
     logger.info(
         "Stack QC %s: %s; %d passes; %s source cells rejected, %s restored; "
         "%d accepted sources (QC grid %s, DEM grid %s); "
-        "QC grids %.1f min, filter %.1f min, accepted side-stacks %.1f min",
+        "inventory %.1f min, filter %.1f min, accepted side-stacks %.1f min",
         module.name,
         "cached result reused" if reused else "filtered",
         result["passes_completed"],
@@ -528,31 +420,3 @@ def prepare(qc, module, entries, *, threads):
         (time.monotonic() - filtered) / 60,
     )
     return entries
-
-
-def _attach_accepted(entry, accepted, rec, signature):
-    """Give a manifest-stage entry its accepted measurements as a FusionState stream.
-
-    The stream stage then skips reading the source (an entry that already has a
-    stream is not read again; point transforms skip raster streams) and
-    multi_stack stacks it. The contribution id keeps the filtered contribution
-    distinct from an unfiltered one in multi_stack's registered datasets. Any
-    side-stack lookup made for the unfiltered source is dropped, and the QC
-    result joins the entry's processing record, so a side-stack cache can never
-    mix filtered and unfiltered data.
-    """
-    from fetchez.entry import set_contribution_id
-    from globato.hooks.sinks.side_stack import read_fusion_state_stream
-
-    for key in [k for k in entry if k.startswith("_sidestack")]:
-        entry.pop(key)
-    entry["artifacts"].pop("side-stack", None)
-    entry["artifacts"]["stack_qc_accepted"] = str(accepted)
-    entry["stream"] = read_fusion_state_stream(str(accepted))
-    entry["stream_type"] = "raster-stream"
-    entry["data_type"] = "fusion-state"
-    entry["src_srs"] = rec["src_srs"]
-    set_contribution_id(entry, "stack_qc", signature[:16])
-    entry["hooks"] = list(entry.get("hooks", []) or []) + [
-        dict(name="stack_qc_result", signature=signature)
-    ]

@@ -210,6 +210,12 @@ class SideStackCheck(FetchHook):
             if not region:
                 continue
 
+            # The first side-stack lookup to see an entry owns it. A module's
+            # own side_stack_check runs before the global one, so a module can
+            # keep its side-stack on another grid (e.g. a finer QC grid).
+            if entry.get("_sidestack_path"):
+                continue
+
             entry.setdefault("_sidestack_source_dst_fn", entry.get("dst_fn"))
 
             cache_dir = self.cache_dir or getattr(
@@ -406,7 +412,11 @@ class SideStackGenerate(FetchHook):
         )
 
         for mod, entry in entries:
-            if entry.get("_sidestack_hit"):
+            # Cached, or already written by an earlier side_stack (a module's
+            # own runs before the global one); the first one owns the entry.
+            if entry.get("_sidestack_hit") or (entry.get("artifacts") or {}).get(
+                "side-stack"
+            ):
                 continue
 
             region = getattr(mod, "region", None)

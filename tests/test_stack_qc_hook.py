@@ -1,7 +1,7 @@
 """stack_qc as a standard collection hook in the ordinary fetchez pipeline.
 
-Side-stacks are made by the normal stream stage, stack_qc replaces the
-module's side-stacks with filtered ones, and stack_combine assembles the stack.
+Side-stacks are made by the normal stream stage, stack_qc records filtered
+copies as ``qc-side-stack``, and stack_combine assembles the stack from them.
 No external data service is used.
 """
 
@@ -88,10 +88,8 @@ def build(
     weight=1.0,
     final_weights=(0.5,),
     tag="a",
-    mode="collection",
 ):
-    """One build: ``collection`` (side_stack + stack_combine, module hook) or
-    ``manifest`` (multi_stack, global hook with modules: mbdb)."""
+    """One side_stack -> stack_qc (module hook) -> stack_combine build."""
     region = Region(350000.0, 350192.0, 3749808.0, 3750000.0, srs="EPSG:32611")
     args = dict(
         res="3",
@@ -103,19 +101,15 @@ def build(
         terrain_restoration=0,
         interpolation=INTERPOLATION,
         cache_dir=str(tmp_path / "qc"),
-        threads=1,
         workers=1,
-        stage=mode,
     )
-    if mode == "manifest":
-        args["modules"] = "mbdb"
     qc = StackQC(**dict(args, **(qc_args or {})))
     mod = FixtureMB(
         str(points(tmp_path)),
         src_region=region,
         outdir=str(tmp_path / "source_cache"),
         weight=weight,
-        hook=[qc] if mode == "collection" else [],
+        hook=[qc],
     )
     mod.run()
     out = tmp_path / tag
@@ -124,37 +118,23 @@ def build(
         **dict(INTERPOLATION, weights=list(final_weights)),
         output=str(out / "dem.tif"),
     )
-    if mode == "collection":
-        hooks = [
-            SideStackCheck(res="3", crs="EPSG:32611"),
-            SideStackGenerate(res="3", crs="EPSG:32611"),
-            StackCombine(
-                res="3",
-                crs="EPSG:32611",
-                strategy="mean",
-                output=str(out / "stack.tif"),
-            ),
-        ]
-    else:
-        hooks = [
-            qc,
-            MultiStackHook(
-                res="3",
-                crs="EPSG:32611",
-                strategy="mean",
-                output=str(out / "stack.tif"),
-                resume=False,
-            ),
-        ]
+    hooks = [
+        SideStackCheck(res="3", crs="EPSG:32611"),
+        SideStackGenerate(res="3", crs="EPSG:32611"),
+        StackCombine(
+            res="3",
+            crs="EPSG:32611",
+            strategy="mean",
+            source_artifact="qc-side-stack",
+            output=str(out / "stack.tif"),
+        ),
+    ]
     hooks += [FocusSink(target="multi_stack"), final]
     return run_fetchez([mod], threads=1, global_hooks=hooks, ignore_failures=False)
 
 
 def results(tmp_path):
     return sorted((tmp_path / "qc").glob("*/result_*.json"))
-
-
-MODES = pytest.mark.parametrize("mode", ["collection", "manifest"])
 
 
 def test_hook_filters_spike_and_feeds_stack_combine(tmp_path, monkeypatch):
@@ -169,24 +149,24 @@ def test_hook_filters_spike_and_feeds_stack_combine(tmp_path, monkeypatch):
     report = io.read(report)
     assert report["rejected_source_cells"] >= 1
     assert points(tmp_path).read_bytes() == original
-    # The entry's side-stack is the filtered one; the original is recorded.
+    # The filtered side-stack is a new artifact; the original is untouched.
     accepted = list((tmp_path / "qc").glob("*/accepted_*/*.tif"))
     assert len(accepted) == 1
-    assert out[0][1]["artifacts"]["side-stack"] == str(accepted[0])
-    original_stack = out[0][1]["artifacts"]["stack_qc_original_side_stack"]
-    assert Path(original_stack).is_file() and original_stack != str(accepted[0])
+    artifacts = out[0][1]["artifacts"]
+    assert artifacts["qc-side-stack"] == str(accepted[0])
+    assert Path(artifacts["side-stack"]).is_file()
+    assert artifacts["side-stack"] != str(accepted[0])
 
 
-@MODES
 def test_cached_result_is_reused_and_unrelated_changes_do_not_refilter(
-    tmp_path, monkeypatch, mode
+    tmp_path, monkeypatch
 ):
     monkeypatch.chdir(tmp_path)
-    build(tmp_path, tag="a", mode=mode)
+    build(tmp_path, tag="a")
     (first,) = results(tmp_path)
     stamp = first.stat().st_mtime_ns
     # Same filter, different final DEM tiers: no new filter run.
-    build(tmp_path, final_weights=(0.25,), tag="b", mode=mode)
+    build(tmp_path, final_weights=(0.25,), tag="b")
     assert results(tmp_path) == [first]
     assert first.stat().st_mtime_ns == stamp
     assert len(list((tmp_path / "qc").glob("*/baseline/COMPLETE.json"))) == 1
@@ -200,19 +180,17 @@ def test_cached_result_is_reused_and_unrelated_changes_do_not_refilter(
         dict(weight=0.5),
     ],
 )
-@MODES
-def test_filter_settings_or_module_weight_refilter(tmp_path, monkeypatch, change, mode):
+def test_filter_settings_or_module_weight_refilter(tmp_path, monkeypatch, change):
     monkeypatch.chdir(tmp_path)
-    build(tmp_path, tag="a", mode=mode)
-    build(tmp_path, tag="b", mode=mode, **change)
+    build(tmp_path, tag="a")
+    build(tmp_path, tag="b", **change)
     assert len(list((tmp_path / "qc").glob("*/baseline/COMPLETE.json"))) == 2
 
 
-@MODES
-def test_more_passes_reuse_earlier_passes(tmp_path, monkeypatch, mode):
+def test_more_passes_reuse_earlier_passes(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
-    build(tmp_path, tag="a", mode=mode)
-    build(tmp_path, tag="b", qc_args=dict(max_passes=2), mode=mode)
+    build(tmp_path, tag="a")
+    build(tmp_path, tag="b", qc_args=dict(max_passes=2))
     # Same key (passes are not part of it), a second result file, one baseline.
     assert len(results(tmp_path)) == 2
     assert len(list((tmp_path / "qc").glob("*/baseline/COMPLETE.json"))) == 1
@@ -220,9 +198,7 @@ def test_more_passes_reuse_earlier_passes(tmp_path, monkeypatch, mode):
 
 def test_hook_refuses_a_multi_stack_pipeline(tmp_path):
     region = Region(350000.0, 350192.0, 3749808.0, 3750000.0, srs="EPSG:32611")
-    qc = StackQC(
-        res="3", crs="EPSG:32611", interpolation=INTERPOLATION, stage="collection"
-    )
+    qc = StackQC(res="3", crs="EPSG:32611", interpolation=INTERPOLATION)
     mod = FixtureMB(str(points(tmp_path)), src_region=region, outdir=str(tmp_path))
     entry = dict(artifacts=dict(multi_stack="stack.tif"))
     with pytest.raises(ValueError, match="stack_combine"):
@@ -317,41 +293,55 @@ def test_review_without_results_does_nothing(tmp_path):
     assert StackQCReview().run(entries) is entries
 
 
+def _fine_qc(tmp_path, **kw):
+    ladder = dict(INTERPOLATION, resolutions="9/27")
+    return ladder, StackQC(
+        **dict(
+            dict(
+                modules="mbdb",
+                res="9",
+                qc_res="3",
+                crs="EPSG:32611",
+                stack_strategy="mean",
+                stack_weight_threshold="1",
+                max_passes=1,
+                stop_when_stable=False,
+                terrain_restoration=0,
+                interpolation=ladder,
+                cache_dir=str(tmp_path / "qc"),
+                workers=1,
+            ),
+            **kw,
+        )
+    )
+
+
 def test_finer_qc_grid_filters_then_delivers_on_the_dem_grid(tmp_path, monkeypatch):
-    """qc_res finer than res: the hook grids the sources again on the QC grid."""
+    """The CRM layout: mbdb has its own side-stacks on the QC grid; the global
+    ones (DEM grid) leave its entries alone; stack_qc delivers on the DEM grid."""
     monkeypatch.chdir(tmp_path)
     region = Region(350000.0, 350189.0, 3749811.0, 3750000.0, srs="EPSG:32611")
-    ladder = dict(INTERPOLATION, resolutions="9/27")
-    qc = StackQC(
-        stage="collection",
-        res="9",
-        qc_res="3",
-        crs="EPSG:32611",
-        stack_strategy="mean",
-        stack_weight_threshold="1",
-        max_passes=1,
-        stop_when_stable=False,
-        terrain_restoration=0,
-        interpolation=ladder,
-        cache_dir=str(tmp_path / "qc"),
-        threads=1,
-        workers=1,
-    )
+    ladder, qc = _fine_qc(tmp_path)
     assert qc.interpolation_args()["resolutions"] == [3.0, 9.0]
     mod = FixtureMB(
         str(points(tmp_path)),
         src_region=region,
         outdir=str(tmp_path / "source_cache"),
-        hook=[qc],
+        hook=[
+            SideStackCheck(res="3", crs="EPSG:32611"),
+            SideStackGenerate(res="3", crs="EPSG:32611"),
+        ],
     )
     mod.run()
     hooks = [
         SideStackCheck(res="9", crs="EPSG:32611"),
         SideStackGenerate(res="9", crs="EPSG:32611"),
+        qc,
         StackCombine(
             res="9",
             crs="EPSG:32611",
             strategy="mean",
+            source_artifact="qc-side-stack",
             output=str(tmp_path / "stack.tif"),
         ),
         FocusSink(target="multi_stack"),
@@ -361,11 +351,13 @@ def test_finer_qc_grid_filters_then_delivers_on_the_dem_grid(tmp_path, monkeypat
     (report,) = results(tmp_path)
     report = io.read(report)
     assert report["rejected_source_cells"] >= 1
-    sources = io.read(Path(report["manifest"]).parents[0] / "MANIFEST.json")["masks"]
-    (item,) = sources.values()
+    (item,) = io.read(report["manifest"])["masks"].values()
     with rasterio.open(item["mask"]) as mask:
         assert mask.res == (3.0, 3.0)  # filtered on the QC grid
-    with rasterio.open(out[0][1]["artifacts"]["side-stack"]) as accepted:
+    artifacts = out[0][1]["artifacts"]
+    with rasterio.open(artifacts["side-stack"]) as original:
+        assert original.res == (3.0, 3.0)  # the module's own side-stack
+    with rasterio.open(artifacts["qc-side-stack"]) as accepted:
         assert accepted.res == (9.0, 9.0)  # delivered on the DEM grid
         assert accepted.tags()["GLOBATO_STACK_QC_SIGNATURE"] == report["signature"]
     with rasterio.open(out[0][1]["dst_fn"]) as dem:
@@ -373,36 +365,42 @@ def test_finer_qc_grid_filters_then_delivers_on_the_dem_grid(tmp_path, monkeypat
         assert float(dem.read(1, masked=True).max()) < -90.0
 
 
-def test_regridding_restores_the_source_crs_from_before_the_stream_stage():
-    """stream_reproject rewrites src_srs; the QC grid must start from the original."""
-    from types import SimpleNamespace
-
-    from globato.qc.stack.preparation import _fresh, _replay_manifest_hooks
-
-    class SetSrs:
-        name = "set-srs"
-        stage = "manifest"
-
-        def run(self, entries):
-            for _, entry in entries:
-                entry["src_srs"] = "EPSG:4326+vdatum:msl"
-            return entries
-
-    collected = dict(
-        url="file:///x.fbt",
-        src_srs="EPSG:4326+3855",  # after stream_reproject
-        data_type="fusion-state",
-        stream=iter(()),
-        artifacts={"side-stack": "x.tif"},
-        _sidestack_path="x.tif",
+def test_finer_qc_grid_needs_the_module_side_stacks_on_it(tmp_path, monkeypatch):
+    """Without the module's own qc_res side-stacks the hook says what to add."""
+    monkeypatch.chdir(tmp_path)
+    region = Region(350000.0, 350189.0, 3749811.0, 3750000.0, srs="EPSG:32611")
+    _, qc = _fine_qc(tmp_path)
+    mod = FixtureMB(
+        str(points(tmp_path)), src_region=region, outdir=str(tmp_path / "src")
     )
-    fresh = _fresh(collected)
-    assert "stream" not in fresh and "artifacts" not in fresh
-    assert "data_type" not in fresh and "_sidestack_path" not in fresh
-    qc = object()
-    module = SimpleNamespace(hooks=[qc, SetSrs()])
-    [(_, replayed)] = _replay_manifest_hooks(module, qc, [(module, fresh)])
-    assert replayed["src_srs"] == "EPSG:4326+vdatum:msl"
+    mod.run()
+    hooks = [
+        SideStackCheck(res="9", crs="EPSG:32611"),
+        SideStackGenerate(res="9", crs="EPSG:32611"),
+        qc,
+    ]
+    with pytest.raises(
+        Exception, match="own side_stack_check and side_stack at qc_res"
+    ):
+        run_fetchez([mod], threads=1, global_hooks=hooks, ignore_failures=False)
+
+
+def test_unfiltered_modules_pass_their_side_stack_through(tmp_path):
+    """Entries of modules stack_qc does not filter keep their side-stack as
+    output_artifact, so stack_combine reads one artifact name for everything."""
+    qc = StackQC(res="3", crs="EPSG:32611", interpolation=INTERPOLATION, modules="mbdb")
+    region = Region(350000.0, 350192.0, 3749808.0, 3750000.0, srs="EPSG:32611")
+    other = FixtureMB(str(points(tmp_path)), src_region=region, outdir=str(tmp_path))
+    other.name = "other"
+    entry = dict(artifacts={"side-stack": "other.tif"})
+    qc.run([(other, entry)])
+    assert entry["artifacts"]["qc-side-stack"] == "other.tif"
+
+
+def test_stack_qc_only_runs_at_the_collection_stage():
+    assert StackQC(res="3", crs="EPSG:32611").stage == "collection"
+    with pytest.raises(ValueError, match="collection stage"):
+        StackQC(res="3", crs="EPSG:32611", stage="manifest")
 
 
 def test_review_finds_results_after_focus_sink_dropped_them(tmp_path, monkeypatch):
@@ -421,139 +419,6 @@ def test_review_finds_results_after_focus_sink_dropped_them(tmp_path, monkeypatc
     assert stack_qc.RESULTS == []
 
 
-def test_manifest_stage_feeds_multi_stack_with_filtered_streams(tmp_path, monkeypatch):
-    """Default stage: a global hook ahead of multi_stack, no side-stack pipeline."""
-    monkeypatch.chdir(tmp_path)
-    out = build(tmp_path, mode="manifest")
-    with rasterio.open(out[0][1]["dst_fn"]) as ds:
-        assert float(ds.read(1, masked=True).max()) < -90.0  # spike removed
-    (report,) = results(tmp_path)
-    assert io.read(report)["rejected_source_cells"] >= 1
-    accepted = list((tmp_path / "qc").glob("*/accepted_*/*.tif"))
-    assert len(accepted) == 1
-
-
-def test_manifest_stage_marks_the_contribution_for_multi_stack(tmp_path, monkeypatch):
-    """A filtered entry registers in multi_stack under its own dataset id, so a
-    stack state holding the unfiltered file cannot make multi_stack skip it."""
-    from globato.hooks.filters.stack_qc import StackQC as Hook
-
-    monkeypatch.chdir(tmp_path)
-    region = Region(350000.0, 350192.0, 3749808.0, 3750000.0, srs="EPSG:32611")
-    qc = Hook(
-        res="3",
-        crs="EPSG:32611",
-        stack_strategy="mean",
-        stack_weight_threshold="1",
-        max_passes=1,
-        stop_when_stable=False,
-        terrain_restoration=0,
-        interpolation=INTERPOLATION,
-        cache_dir=str(tmp_path / "qc"),
-        threads=1,
-        workers=1,
-        modules="mbdb",
-    )
-    mod = FixtureMB(
-        str(points(tmp_path)), src_region=region, outdir=str(tmp_path / "src")
-    )
-    mod.run()
-    plain = dict(mod.results[0])
-    entries = qc.run([(mod, e) for e in mod.results])
-    ((_, entry),) = entries
-    assert entry["contribution_id"]["stack_qc"]
-    assert entry["data_type"] == "fusion-state"
-    assert not any(k.startswith("_sidestack") for k in entry)
-    filtered_id = MultiStackHook._dataset_id(entry, 1.0)
-    assert filtered_id != MultiStackHook._dataset_id(plain, 1.0)
-    assert filtered_id.startswith(
-        MultiStackHook._dataset_id(plain, 1.0) + "|contribution="
-    )
-
-
 def test_entries_without_contribution_keep_their_historical_dataset_id():
     entry = dict(url="https://example.org/a.fbt", checksum="abc")
     assert MultiStackHook._dataset_id(entry, 1.0) == "abc|w=1.0"
-
-
-@MODES
-def test_global_manifest_hook_only_sees_files_left_by_earlier_selection(
-    tmp_path, monkeypatch, mode
-):
-    """A file dropped by an earlier global manifest hook is never filtered."""
-    if mode == "collection":
-        pytest.skip("selection hooks run before the collection stage by definition")
-
-    class DropAll:
-        name = "drop_all_mbdb"
-        stage = "manifest"
-
-        def run(self, entries):
-            return [(m, e) for m, e in entries if m.name != "mbdb"]
-
-        def teardown(self):
-            pass
-
-    monkeypatch.chdir(tmp_path)
-    region = Region(350000.0, 350192.0, 3749808.0, 3750000.0, srs="EPSG:32611")
-    qc = StackQC(
-        res="3",
-        crs="EPSG:32611",
-        interpolation=INTERPOLATION,
-        cache_dir=str(tmp_path / "qc"),
-        modules="mbdb",
-    )
-    mod = FixtureMB(
-        str(points(tmp_path)), src_region=region, outdir=str(tmp_path / "src")
-    )
-    mod.run()
-    run_fetchez([mod], threads=1, global_hooks=[DropAll(), qc], ignore_failures=False)
-    assert not (tmp_path / "qc").exists() or not results(tmp_path)
-
-
-def test_finer_qc_grid_with_multi_stack(tmp_path, monkeypatch):
-    """The CRM path: global manifest hook, qc_res finer than res, multi_stack."""
-    monkeypatch.chdir(tmp_path)
-    region = Region(350000.0, 350189.0, 3749811.0, 3750000.0, srs="EPSG:32611")
-    ladder = dict(INTERPOLATION, resolutions="9/27")
-    qc = StackQC(
-        modules="mbdb",
-        res="9",
-        qc_res="3",
-        crs="EPSG:32611",
-        stack_strategy="mean",
-        stack_weight_threshold="1",
-        max_passes=1,
-        stop_when_stable=False,
-        terrain_restoration=0,
-        interpolation=ladder,
-        cache_dir=str(tmp_path / "qc"),
-        threads=1,
-        workers=1,
-    )
-    mod = FixtureMB(
-        str(points(tmp_path)), src_region=region, outdir=str(tmp_path / "src")
-    )
-    mod.run()
-    hooks = [
-        qc,
-        MultiStackHook(
-            res="9",
-            crs="EPSG:32611",
-            strategy="mean",
-            output=str(tmp_path / "stack.tif"),
-            resume=False,
-        ),
-        FocusSink(target="multi_stack"),
-        BinaryCudemStepDown(**ladder, output=str(tmp_path / "dem.tif")),
-    ]
-    out = run_fetchez([mod], threads=1, global_hooks=hooks, ignore_failures=False)
-    (report,) = results(tmp_path)
-    report = io.read(report)
-    assert report["rejected_source_cells"] >= 1
-    (item,) = io.read(report["manifest"])["masks"].values()
-    with rasterio.open(item["mask"]) as mask:
-        assert mask.res == (3.0, 3.0)  # filtered on the QC grid
-    with rasterio.open(out[0][1]["dst_fn"]) as dem:
-        assert dem.res == (9.0, 9.0)
-        assert float(dem.read(1, masked=True).max()) < -90.0
