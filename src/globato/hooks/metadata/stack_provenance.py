@@ -42,7 +42,15 @@ from fetchez.spatial import Region
 from fetchez.utils import str2bool
 
 from ..transforms.point_pixels import FUSION_BAND_MAP, FUSION_BANDS, PointPixels
-from .provenance import MaskSet, source_id, source_token
+from .provenance import (
+    MaskSet,
+    collection_stage,
+    side_stack_artifacts,
+    side_stack_blocks,
+    source_id,
+    source_tags,
+    source_token,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -396,6 +404,11 @@ class StackProvenance(FetchHook):
     ``supercede`` is intentionally unsupported until reducer decisions can be
     emitted directly by ``multi_stack``; equal-weight replacement is order
     sensitive and cannot be reconstructed from tier state alone.
+
+    With ``source_artifact`` (e.g. ``side-stack``), it runs at the collection
+    stage after ``stack_combine`` and reads each entry's FusionState artifact
+    instead of its stream, against ``stack_combine``'s ``fusion-state``. List it
+    after ``stack_combine``, with the same ``source_artifact``.
     """
 
     name = "stack_provenance"
@@ -418,9 +431,11 @@ class StackProvenance(FetchHook):
         qgis_style=True,
         qgis_style_field="SOURCE_ID",
         group_by=None,
+        source_artifact=None,
         **kwargs,
     ):
-        super().__init__(**kwargs)
+        super().__init__(**collection_stage(source_artifact, kwargs))
+        self.source_artifact = source_artifact
         self.output = output
         self.output_dir = output_dir
         self.state_dir = state_dir
@@ -441,6 +456,7 @@ class StackProvenance(FetchHook):
         self._fusion_state = None
         self._binner = None
         self._region = None
+        self._grid = None
 
     def _init(self, fusion_state):
         if self._tier_state is not None:
@@ -459,6 +475,9 @@ class StackProvenance(FetchHook):
             res = abs(src.transform.a)
             transform = src.transform
             dst_gt = transform.to_gdal()
+            self._grid = dict(
+                width=width, height=height, transform=transform, crs=src.crs
+            )
 
         base = os.path.splitext(self.output)[0]
         state_dir = self.state_dir or f"{base}_state"
@@ -511,7 +530,42 @@ class StackProvenance(FetchHook):
             dst_gt=dst_gt,
         )
 
+    def _register(self, mod, entry):
+        dataset_id = source_id(entry)
+        src_name = os.path.basename(entry.get("dst_fn", dataset_id))
+        state_handle = self._tier_state.register(
+            dataset_id,
+            description=os.path.splitext(src_name)[0],
+            tags=source_tags(mod, entry, resolution=False),
+        )
+        if self.storage == "disk":
+            entry.setdefault("artifacts", {})["stack-provenance-state"] = state_handle
+        return state_handle
+
+    def _run_side_stacks(self, entries):
+        """Collection stage: record each side-stack's tiers against the final stack."""
+
+        for mod, entry, path in side_stack_artifacts(entries, self.source_artifact):
+            fusion_state = entry.get("artifacts", {}).get("fusion-state")
+            if not fusion_state:
+                raise ValueError(
+                    f"{self.name} with source_artifact needs stack_combine's "
+                    "fusion-state; list it after stack_combine"
+                )
+            self._init(fusion_state)
+            if self._tier_state.strategy == "supercede":
+                continue
+            state_handle = self._register(mod, entry)
+            for window, count, weight_sum in side_stack_blocks(path, **self._grid):
+                self._record_state(
+                    state_handle, dict(count=count, weight_sum=weight_sum), window
+                )
+        return entries
+
     def run(self, entries):
+        if self.source_artifact is not None:
+            return self._run_side_stacks(entries)
+
         for mod, entry in entries:
             fusion_state = entry.get("artifacts", {}).get("fusion-state")
             stream = entry.get("stream")
@@ -522,29 +576,7 @@ class StackProvenance(FetchHook):
             if self._tier_state.strategy == "supercede":
                 continue
 
-            dataset_id = source_id(entry)
-            src_name = os.path.basename(entry.get("dst_fn", dataset_id))
-            tags = {
-                "MODULE": getattr(mod, "name", None),
-                "DATASET": getattr(mod, "title", getattr(mod, "name", None)),
-                "CATEGORY": getattr(mod, "meta_category", None),
-                "AGENCY": getattr(mod, "meta_agency", None),
-                "DATATYPE": entry.get("data_type"),
-                "URL": entry.get("url"),
-                "WEIGHT": getattr(mod, "weight", 1.0),
-            }
-            if isinstance(entry.get("metadata"), dict):
-                tags.update({str(k).upper(): v for k, v in entry["metadata"].items()})
-
-            state_handle = self._tier_state.register(
-                dataset_id,
-                description=os.path.splitext(src_name)[0],
-                tags=tags,
-            )
-            if self.storage == "disk":
-                entry.setdefault("artifacts", {})["stack-provenance-state"] = (
-                    state_handle
-                )
+            state_handle = self._register(mod, entry)
             entry["stream"] = self._intercept(stream, state_handle)
 
         return entries
