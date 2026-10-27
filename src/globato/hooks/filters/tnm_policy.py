@@ -375,9 +375,17 @@ class TNMPolicy(FetchHook):
                 if previous_date != published:
                     same_date_claim = None
                     previous_date = published
+                    newer_date_claim = newer_claim
+
+                # Compare same-day editions only outside strictly newer coverage.
+                remaining = (
+                    original
+                    if newer_date_claim is None
+                    else original.difference(newer_date_claim)
+                )
                 if (
                     same_date_claim is not None
-                    and original.intersection(same_date_claim).area > 0
+                    and remaining.intersection(same_date_claim).area > 0
                 ):
                     raise RuntimeError(
                         f"Ambiguous same-day TNM seamless tile editions for {key}: "

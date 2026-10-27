@@ -5,7 +5,10 @@ import numpy as np
 import pytest
 import rasterio
 from fetchez.spatial import Region
-from globato.hooks.sinks.side_stack import SideStackGenerate, SideStackIdentity
+from globato.hooks.sinks.side_stack import (
+    SIDESTACK_CACHE_VERSION,
+    SideStackGenerate,
+)
 from globato.hooks.transforms.point_pixels import Point2PixelStream
 
 
@@ -48,11 +51,9 @@ def test_side_stack_adds_overlapping_chunks_and_reuses_exact_state(tmp_path):
     assert cached[1][valid].item() == 3
     assert (cached[0][valid] / cached[2][valid]).item() == -20
     # The schema still has seven additive bands; legacy overwrite caches have
-    # a different identity and cannot be reused as additive caches.
-    identity = SideStackIdentity.from_entry(
-        module, entry, region=region, res="3", crs="EPSG:32611"
-    )
-    assert identity.canonical()["side_stack_version"] == 2
+    # a different cache key and cannot be reused as additive caches.
+    with rasterio.open(entry["artifacts"]["side-stack"]) as ds:
+        assert ds.tags()["GLOBATO_SIDESTACK_VERSION"] == str(SIDESTACK_CACHE_VERSION)
 
 
 def test_existing_fusion_stream_uses_the_same_side_stack_writer(tmp_path):

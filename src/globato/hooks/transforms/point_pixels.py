@@ -25,10 +25,10 @@ import rasterio
 from rasterio import Affine
 from rasterio.windows import Window
 
+from fetchez.entry import dataset_id
 from fetchez.hooks import FetchHook
-from fetchez.spatial import Region
-from fetchez.utils import float_or, int_or
-from globato.utils import parse_increment
+from fetchez.spatial import Region, parse_increments
+from fetchez.utils import float_or, int_or, colorize, BOLD, format_dataset_id
 
 logger = logging.getLogger(__name__)
 
@@ -491,8 +491,8 @@ class Point2PixelStream(FetchHook):
 
     def __init__(self, x_inc=None, y_inc=None, **kwargs):
         super().__init__(**kwargs)
-        self.x_inc = float_or(parse_increment(x_inc))
-        self.y_inc = float_or(parse_increment(y_inc))
+        self.x_inc = float_or(parse_increments(x_inc))
+        self.y_inc = float_or(parse_increments(y_inc))
 
     def _stream_wrapper(self, input_stream, entry=None, region=None):
         count = 0
@@ -551,10 +551,16 @@ class Point2PixelStream(FetchHook):
             yield window, window, data, None, chunk_transform
 
         logger.info(
-            "Parsed %s data records from %s",
-            f"{count:,}",
-            entry.get("dst_fn", "point stream"),
+            "Pixelated %s -> %s",
+            format_dataset_id(dataset_id(entry)),
+            colorize(f"{count:,}", BOLD) + " pts",
         )
+        # logger.info(
+        #     "Parsed %s data records from %s",
+        #     f"{count:,}",
+        #     dataset_id(entry),
+        #     # entry.get("dst_fn", "point stream"),
+        # )
 
     def run(self, entries):
         for mod, entry in entries:

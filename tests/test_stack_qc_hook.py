@@ -375,35 +375,34 @@ def test_finer_qc_grid_filters_then_delivers_on_the_dem_grid(tmp_path, monkeypat
 
 def test_regridding_restores_the_source_crs_from_before_the_stream_stage():
     """stream_reproject rewrites src_srs; the QC grid must start from the original."""
-    import json
+    from types import SimpleNamespace
 
-    from globato.qc.stack.preparation import _fresh
+    from globato.qc.stack.preparation import _fresh, _replay_manifest_hooks
 
-    identity = dict(
-        processing=[
-            dict(name="stream-reproject", config={}),
-            dict(
-                name="__fusion_context__",
-                config=dict(source_crs="EPSG:4326+vdatum:msl"),
-            ),
-        ]
-    )
+    class SetSrs:
+        name = "set-srs"
+        stage = "manifest"
+
+        def run(self, entries):
+            for _, entry in entries:
+                entry["src_srs"] = "EPSG:4326+vdatum:msl"
+            return entries
+
     collected = dict(
         url="file:///x.fbt",
         src_srs="EPSG:4326+3855",  # after stream_reproject
         data_type="fusion-state",
         stream=iter(()),
         artifacts={"side-stack": "x.tif"},
-        _sidestack_identity=json.dumps(identity),
+        _sidestack_path="x.tif",
     )
     fresh = _fresh(collected)
-    assert fresh["src_srs"] == "EPSG:4326+vdatum:msl"
     assert "stream" not in fresh and "artifacts" not in fresh
-    assert "data_type" not in fresh and fresh["_stack_qc_restored_srs"] is True
-    assert (
-        _fresh(dict(url="file:///y.fbt", src_srs="A"))["_stack_qc_restored_srs"]
-        is False
-    )
+    assert "data_type" not in fresh and "_sidestack_path" not in fresh
+    qc = object()
+    module = SimpleNamespace(hooks=[qc, SetSrs()])
+    [(_, replayed)] = _replay_manifest_hooks(module, qc, [(module, fresh)])
+    assert replayed["src_srs"] == "EPSG:4326+vdatum:msl"
 
 
 def test_review_finds_results_after_focus_sink_dropped_them(tmp_path, monkeypatch):

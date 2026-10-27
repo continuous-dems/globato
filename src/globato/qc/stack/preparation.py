@@ -21,7 +21,6 @@ the cached decisions.
 
 import copy
 import inspect
-import json
 import logging
 import time
 from pathlib import Path
@@ -30,6 +29,7 @@ import rasterio
 from filelock import FileLock
 
 from fetchez.core import run_fetchez
+from fetchez.entry import set_contribution_id
 from globato.hooks.metadata.provenance import source_id
 from globato.hooks.sinks.side_stack import (
     SideStackCheck,
@@ -40,6 +40,7 @@ from globato.hooks.sinks.side_stack import (
 from . import io, processing
 from .context import WorkingSurface, cache_root_for
 from .grid import grid_offset
+from .identity import hook_identity
 from .native import masked_stream
 
 logger = logging.getLogger(__name__)
@@ -72,21 +73,6 @@ def _source_hooks(module, qc):
 RUNTIME_KEYS = {"stream", "raster_stream", "stream_type", "artifacts"}
 
 
-def _manifest_srs(entry):
-    """The entry's source CRS before its stream stage, if it was recorded.
-
-    Stream transforms such as stream_reproject overwrite ``src_srs``; the
-    manifest-stage side-stack lookup recorded the original in its identity.
-    """
-    raw = entry.get("_sidestack_identity")
-    if not raw:
-        return None
-    for hook in json.loads(raw).get("processing", []):
-        if hook.get("name") == "__fusion_context__":
-            return hook.get("config", {}).get("source_crs")
-    return None
-
-
 def _fresh(entry):
     """A copy of a collected entry as it was before its stream stage."""
     keep = {
@@ -96,10 +82,6 @@ def _fresh(entry):
     }
     if keep.get("data_type") == "fusion-state":
         keep.pop("data_type")
-    srs = _manifest_srs(entry)
-    if srs is not None:
-        keep["src_srs"] = srs
-    keep["_stack_qc_restored_srs"] = srs is not None
     return copy.deepcopy(keep)
 
 
@@ -124,17 +106,23 @@ def grid_sources(qc, module, entries, region, res, threads, *, collected=True):
     clone.region = region
     clone.internal_hooks, clone.external_hooks = _source_hooks(module, qc)
     fresh = [_fresh(e) for _, e in entries]
-    if not collected:
-        for e in fresh:
-            e["_stack_qc_restored_srs"] = True
-    if not all(e["_stack_qc_restored_srs"] for e in fresh):
-        # No recorded manifest-time CRS: rebuild it from the module's hooks.
+    if collected:
+        # Stream transforms such as stream_reproject overwrite ``src_srs``;
+        # rebuild the manifest-time CRS from the module's own manifest hooks
+        # (e.g. set-srs). Manifest-stage entries still have the original.
         fresh = [
             e
             for _, e in _replay_manifest_hooks(module, qc, [(clone, e) for e in fresh])
         ]
+    hooks = clone.internal_hooks + clone.external_hooks
     for e in fresh:
-        e.pop("_stack_qc_restored_srs", None)
+        # Side-stacks key on fetchez's dataset_id; record the hooks that shape
+        # this source so QC-grid side-stacks made with other hooks aren't reused.
+        set_contribution_id(
+            e,
+            "stack_qc_source_pipeline",
+            [hook_identity(h, e) for h in hooks],
+        )
     clone.results = fresh
     check = SideStackCheck(res=res, crs=qc.crs, cache_dir=qc.side_stack_cache)
     generate = SideStackGenerate(res=res, crs=qc.crs, cache_dir=qc.side_stack_cache)
