@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 * A `py.typed` marker, so type checkers read globato's type annotations in code that uses it (#284). mypy now runs on every pull request, in a new "Typecheck" workflow.
 * Added `stack_combine` to construct a MultiStack and its FusionState directly from completed side-stack artifacts, using the existing `MultiStackAccumulator` for reduction and finalization.
 * Allow `stack_combine` to consume original or QC-adjusted side-stacks, with configurable handling of missing required artifacts.
+* `source_masks`, `provenance` and `stack_provenance` take a `source_artifact` argument. With it they run at the collection stage and read each entry's FusionState side-stack artifact (original or QC-adjusted) instead of its stream, so they work in `side_stack` + `stack_combine` recipes and reflect collection-stage filtering.
 
 ### CHANGED
 * Simplify cache identities using Fetchez's `dataset_id()` and contribution metadata instead of a separate Globato identity implementation. Retain grid, CRS, FusionState schema, and cache hash validation.

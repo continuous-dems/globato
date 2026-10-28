@@ -18,6 +18,7 @@ import logging
 import threading
 import hashlib
 import tempfile
+from pathlib import Path
 from urllib.parse import urlparse
 
 import numpy as np
@@ -26,10 +27,11 @@ from rasterio.enums import Resampling
 from rasterio.warp import reproject
 from rasterio.features import shapes
 from rasterio.windows import Window
+from pyproj import CRS as ProjCRS
 
 from fetchez.hooks import FetchHook
 from fetchez.utils import str2inc, str2bool, int_or
-from ..transforms.point_pixels import PointPixels
+from ..transforms.point_pixels import FUSION_BAND_MAP, FUSION_BANDS, PointPixels
 
 logger = logging.getLogger(__name__)
 
@@ -40,6 +42,11 @@ class ProvenanceHook(FetchHook):
 
     Usage:
       fetchez ... --hook provenance:res=1s,output=mask.tif
+
+    With ``source_artifact`` (e.g. ``side-stack``), it runs at the collection
+    stage and reads each entry's FusionState artifact instead of its point
+    stream, so it works with side_stack + stack_combine and reflects any
+    collection-stage filtering. ``res`` must match the side-stack resolution.
     """
 
     name = "provenance"
@@ -47,10 +54,13 @@ class ProvenanceHook(FetchHook):
     meta_category = "metadata"
     meta_desc = "Generate a dataset mask raster using Bit IDs."
 
-    def __init__(self, res="1s", output="provenance.tif", **kwargs):
-        super().__init__(**kwargs)
+    def __init__(
+        self, res="1s", output="provenance.tif", source_artifact=None, **kwargs
+    ):
+        super().__init__(**collection_stage(source_artifact, kwargs))
         self.res = str2inc(res)
         self.output = output
+        self.source_artifact = source_artifact
         self._initialized = False
         self.lock = threading.Lock()
 
@@ -80,6 +90,7 @@ class ProvenanceHook(FetchHook):
         )
 
         crs_val = getattr(region, "srs", "EPSG:4326") or "EPSG:4326"
+        self.crs = crs_val
 
         profile = {
             "driver": "GTiff",
@@ -126,6 +137,9 @@ class ProvenanceHook(FetchHook):
             if region:
                 self._init_raster(region)
 
+        if self.source_artifact is not None:
+            return self._run_side_stacks(entries)
+
         for mod, entry in entries:
             if self.is_point_stream(entry):
                 stream = entry.get("stream")
@@ -137,6 +151,32 @@ class ProvenanceHook(FetchHook):
                 )
 
         return entries
+
+    def _run_side_stacks(self, entries):
+        """Collection stage: OR each module's bit where its side-stack has data."""
+
+        if not self._initialized:
+            return entries
+        output = os.path.abspath(self.output)
+        for mod, entry, path in side_stack_artifacts(entries, self.source_artifact):
+            bit_val = self._get_module_bit(mod.name)
+            for window, count, _ in side_stack_blocks(
+                path,
+                width=self.xcount,
+                height=self.ycount,
+                transform=self.transform,
+                crs=self.crs,
+            ):
+                self._or_window(window, count > 0, bit_val)
+            entry.setdefault("artifacts", {})[self.name] = output
+        return entries
+
+    def _or_window(self, window, has_data, bit_val):
+        with self.lock:
+            with rasterio.open(self.output, "r+") as dst:
+                mask_data = dst.read(1, window=window)
+                mask_data[has_data] |= bit_val
+                dst.write(mask_data, 1, window=window)
 
     def _intercept(self, stream, bit_val):
         """Pass-through stream to update mask."""
@@ -165,14 +205,8 @@ class ProvenanceHook(FetchHook):
         col_off, row_off, w, h = sub_win
         window = Window(col_off, row_off, w, h)
 
-        with self.lock:
-            with rasterio.open(self.output, "r+") as dst:
-                mask_data = dst.read(1, window=window)
-
-                # Bitwise OR to add this module's presence
-                mask_data[has_data] |= bit_val
-
-                dst.write(mask_data, 1, window=window)
+        # Bitwise OR to add this module's presence
+        self._or_window(window, has_data, bit_val)
 
     def teardown(self):
         """Write the legend to metadata on exit."""
@@ -212,6 +246,116 @@ def source_id(entry):
 def source_token(dataset_id, length=12):
     """Filesystem-safe stable token without encoding an entire URL/path."""
     return hashlib.sha256(dataset_id.encode("utf-8")).hexdigest()[:length]
+
+
+# -- collection-stage inputs ----------------------------------------------
+#
+# With ``source_artifact`` set, the provenance hooks run at the collection
+# stage and read each entry's FusionState raster (a side-stack, or a QC-adjusted
+# one) instead of its stream. Coverage then reflects whatever collection-stage
+# filtering produced that artifact, and the hooks work in side_stack +
+# stack_combine recipes, where no point stream reaches them.
+
+
+def collection_stage(source_artifact, kwargs):
+    """Run at the collection stage when reading a side-stack artifact."""
+
+    if source_artifact is None:
+        return kwargs
+    stage = kwargs.get("stage")
+    if stage is not None and str(stage).lower() not in {"collection", "post"}:
+        raise ValueError(
+            "source_artifact reads side-stacks at the collection stage; "
+            f"stage={stage!r} is not supported with it"
+        )
+    return dict(kwargs, stage="collection")
+
+
+def side_stack_artifacts(entries, artifact):
+    """(module, entry, path) for each entry's FusionState artifact, once each."""
+
+    seen = set()
+    missing = 0
+    for mod, entry in entries:
+        path = (entry.get("artifacts") or {}).get(artifact)
+        if path is None:
+            missing += 1
+            continue
+        if not isinstance(path, (str, os.PathLike)):
+            raise TypeError(f"{artifact!r} artifact must be one raster filename")
+        canonical = str(Path(path).resolve())
+        key = (source_id(entry), canonical)
+        if key in seen:
+            continue
+        seen.add(key)
+        yield mod, entry, canonical
+    if missing:
+        logger.debug("%d entries have no %r artifact", missing, artifact)
+
+
+def _horizontal_crs(value):
+    if value is None:
+        return None
+    if hasattr(value, "to_wkt"):
+        value = value.to_wkt()
+    return ProjCRS.from_user_input(value).to_2d()
+
+
+def side_stack_blocks(path, *, width, height, transform, crs):
+    """Yield (window, count, weight_sum) for every block of a side-stack with data.
+
+    The side-stack must be on the hook's grid; a mismatch raises rather than
+    misplacing cells. Set the hook's ``res`` to the side-stack resolution.
+    """
+
+    with rasterio.open(path) as src:
+        fusion = src.tags().get("GLOBATO_DATATYPE") == "FUSION_STATE"
+        if not fusion or src.count != len(FUSION_BANDS):
+            raise ValueError(f"{path!r} is not a FusionState side-stack")
+        expected = _horizontal_crs(crs)
+        actual = _horizontal_crs(src.crs)
+        same_crs = (
+            expected is None
+            or actual is None
+            or actual.equals(expected, ignore_axis_order=True)
+        )
+        if (src.width, src.height) != (width, height) or src.transform != transform:
+            raise ValueError(
+                f"Side-stack {path!r} grid ({src.width}x{src.height}, "
+                f"{tuple(src.transform)[:6]}) differs from the provenance grid "
+                f"({width}x{height}, {tuple(transform)[:6]}); set res to the "
+                "side-stack resolution"
+            )
+        if not same_crs:
+            raise ValueError(
+                f"Side-stack {path!r} horizontal CRS differs from the provenance grid"
+            )
+        count_band = FUSION_BAND_MAP["count"]
+        weight_band = FUSION_BAND_MAP["weight_sum"]
+        for _, window in src.block_windows(1):
+            count = src.read(count_band, window=window)
+            if not np.any(count > 0):
+                continue
+            yield window, count, src.read(weight_band, window=window)
+
+
+def source_tags(mod, entry, *, resolution=True):
+    """Descriptive tags for a source's mask."""
+
+    tags = {
+        "MODULE": getattr(mod, "name", None),
+        "DATASET": getattr(mod, "title", getattr(mod, "name", None)),
+        "CATEGORY": getattr(mod, "meta_category", None),
+        "AGENCY": getattr(mod, "meta_agency", None),
+        "DATATYPE": entry.get("data_type"),
+        "URL": entry.get("url"),
+        "WEIGHT": getattr(mod, "weight", 1.0),
+    }
+    if resolution:
+        tags["RESOLUTION"] = getattr(mod, "meta_resolution", None)
+    if isinstance(entry.get("metadata"), dict):
+        tags.update({str(k).upper(): v for k, v in entry["metadata"].items()})
+    return tags
 
 
 class MaskSet:
@@ -792,7 +936,13 @@ class MaskSet:
 
 
 class SourceMasks(FetchHook):
-    """Record all valid source coverage observed before stack reduction."""
+    """Record all valid source coverage observed before stack reduction.
+
+    With ``source_artifact`` (e.g. ``side-stack``), it runs at the collection
+    stage and records each entry's FusionState artifact coverage instead of its
+    point stream, so it works with side_stack + stack_combine and reflects any
+    collection-stage filtering. ``res`` must match the side-stack resolution.
+    """
 
     name = "source-masks"
     meta_stage = "stream"
@@ -812,12 +962,14 @@ class SourceMasks(FetchHook):
         qgis_style=True,
         qgis_style_field="SOURCE_ID",
         group_by=None,
+        source_artifact=None,
         **kwargs,
     ):
-        super().__init__(**kwargs)
+        super().__init__(**collection_stage(source_artifact, kwargs))
 
         self.res = str2inc(res)
         self.output = output
+        self.source_artifact = source_artifact
         self.output_dir = output_dir
         self.vector_output = vector_output
         self.resume = str2bool(resume)
@@ -861,37 +1013,14 @@ class SourceMasks(FetchHook):
         if not self._masks:
             return entries
 
+        if self.source_artifact is not None:
+            return self._run_side_stacks(entries)
+
         for mod, entry in entries:
             if not self.is_point_stream(entry):
                 continue
 
-            dataset_id = source_id(entry)
-            src_name = os.path.basename(entry.get("dst_fn", dataset_id))
-            base = os.path.splitext(src_name)[0]
-
-            tags = {
-                "MODULE": getattr(mod, "name", None),
-                "DATASET": getattr(
-                    mod,
-                    "title",
-                    getattr(mod, "name", None),
-                ),
-                "CATEGORY": getattr(mod, "meta_category", None),
-                "AGENCY": getattr(mod, "meta_agency", None),
-                "DATATYPE": entry.get("data_type"),
-                "RESOLUTION": getattr(mod, "meta_resolution", None),
-                "URL": entry.get("url"),
-                "WEIGHT": getattr(mod, "weight", 1.0),
-            }
-
-            if isinstance(entry.get("metadata"), dict):
-                tags.update({str(k).upper(): v for k, v in entry["metadata"].items()})
-
-            path = self._masks.register(
-                dataset_id,
-                description=base,
-                tags=tags,
-            )
+            path = self._register(mod, entry)
 
             stream = entry.get("stream")
             entry["stream"] = self._intercept(
@@ -902,6 +1031,34 @@ class SourceMasks(FetchHook):
 
             entry.setdefault("artifacts", {})[self.name] = path
 
+        return entries
+
+    def _register(self, mod, entry):
+        dataset_id = source_id(entry)
+        src_name = os.path.basename(entry.get("dst_fn", dataset_id))
+        return self._masks.register(
+            dataset_id,
+            description=os.path.splitext(src_name)[0],
+            tags=source_tags(mod, entry),
+        )
+
+    def _run_side_stacks(self, entries):
+        """Collection stage: record where each entry's side-stack has data."""
+
+        masks = self._masks
+        for mod, entry, side_stack in side_stack_artifacts(
+            entries, self.source_artifact
+        ):
+            path = self._register(mod, entry)
+            for window, count, _ in side_stack_blocks(
+                side_stack,
+                width=masks.xcount,
+                height=masks.ycount,
+                transform=masks.transform,
+                crs=masks.profile["crs"],
+            ):
+                MaskSet.update(path, window, count > 0)
+            entry.setdefault("artifacts", {})[self.name] = path
         return entries
 
     def _intercept(self, stream, path, region):
