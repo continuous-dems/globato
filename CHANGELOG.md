@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### ADDED
+* Added draft implementation of the new `fusion-provenance` hook for use in the new side-stack workflows.
 * Added `globatize_sources` recipe modifier to set the res and dst_srs for modules in a recipe.
 * Added the `globatize_sources` modifier as a default in `globato build`
 * Added `sidestack` cli managment tool to the globato cli to inspect and clear existing sidestack files.
