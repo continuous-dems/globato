@@ -9,21 +9,6 @@ hooks:
   - name: enrich
   - name: transfer_log
   - name: drop_class
-  # - name: provenance
-  #   args:
-  #     res: 3s
-  #     output: "%name%_%batch_name%_provenance.tif"
-
-  # - name: source_masks
-  #   args:
-  #     res: 3s
-  #     output: "%name%_%batch_name%_sources.vrt"
-
-  # Side-stack testing, not default for now.
-  # - name: side_stack_check
-  #   args:
-  #     res: 3s
-  #     crs: epsg:4326+3855
 
   - name: side_stack
     args:
@@ -38,50 +23,28 @@ hooks:
       sigma: 4
       min_residual: 5
       source_artifact: side-stack
-      output_artifact: qc-side-stack1
-
-  - name: fusion_consistency
-    args:
-      group_by: survey_id
-      hard: true
-      floor: 0.1
-      sigma: 4
-      min_residual: 15
-      source_artifact: qc-side-stack1
-      output_artifact: qc-side-stack2
-
-  - name: fusion_consistency
-    args:
-      group_by: survey_id
-      hard: true
-      floor: 0.1
-      sigma: 4
-      min_residual: 25
-      source_artifact: qc-side-stack2
-      output_artifact: qc-side-stack3
-
-  - name: fusion_consistency
-    args:
-      group_by: survey_id
-      hard: true
-      floor: 0.1
-      sigma: 4
-      min_residual: 35
-      source_artifact: qc-side-stack3
-      output_artifact: qc-side-stack4
+      output_artifact: qc-side-stack
 
   - name: stack_combine
     args:
       res: 3s
       strategy: mixed
       weight_threshold: 1/2/4
-      source_artifact: qc-side-stack-dup4
+      source_artifact: qc-side-stack
       missing: error
       output: multi_stack.tif
       state: multi_stack.fusion.tif
       crs: epsg:4326+3855
       #output: "%name%_%batch_name%_stack.tif"
 
+  - name: fusion_provenance
+    args:
+      stage: stack
+      source_artifact: qc-side-stack
+      state_dir: provenance_state
+      output: stack_sources.vrt
+      vector_output: stack_sources.gpkg
+      group_by: MODULE/WEIGHT
   # - name: stack_provenance
   #   args:
   #     storage: disk
