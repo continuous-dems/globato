@@ -20,6 +20,7 @@ from rasterio.windows import Window
 
 from fetchez.hooks import FetchHook
 from fetchez import utils
+from fetchez.spatial import parse_increment_pair
 
 logger = logging.getLogger(__name__)
 
@@ -177,7 +178,7 @@ class SimpleStack(FetchHook):
     """Simple Weighted Mean Stacker.
 
     Args:
-        res (str): Resolution (e.g. '1s', '10m').
+        res (str): Resolution (e.g. '1s', '10e', '1s/2s').
         output (str): Output filename. Supports templates like '{base}_stack.tif'.
         mode (str): Aggregation mode (currently only 'mean').
         plug (bool): If True, consumes the stream, writes the file, and replaces
@@ -209,14 +210,7 @@ class SimpleStack(FetchHook):
     def _create_accumulator(self, filename, region):
         """Factory method to create an accumulator."""
 
-        if isinstance(self.res, str) and self.res.endswith("s"):
-            inc = float(self.res[:-1]) / 3600.0
-            x_inc, y_inc = inc, inc
-        elif "/" in str(self.res):
-            x_inc, y_inc = map(float, self.res.split("/"))
-        else:
-            inc = float(self.res)
-            x_inc, y_inc = inc, inc
+        x_inc, y_inc = parse_increment_pair(self.res)
 
         return PointAccumulator(
             filename=filename, region=region, x_inc=x_inc, y_inc=y_inc, verbose=True

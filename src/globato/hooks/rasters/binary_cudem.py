@@ -29,10 +29,9 @@ import pyogrio
 import shapely
 
 import fetchez
-from fetchez.spatial import Region
+from fetchez.spatial import Region, parse_increment_list
 from fetchez.utils import (
     remove_glob2,
-    str2inc,
     inc2str,
     int_or,
     str_or,
@@ -85,7 +84,9 @@ class BinaryCudemStepDown(RasterGlobalHook):
         ]
         self.steps = int_or(steps)
         self.weights = parse_arg_to_list(weights, float)
-        self.resolutions = parse_arg_to_list(resolutions, str2inc)
+        self.resolutions = (
+            parse_increment_list(resolutions) if resolutions is not None else []
+        )
         self.blend_dists = parse_arg_to_list(blend_dists, int)
         self.algos = parse_arg_to_list(algos, str)
         self.decimation_mode = str_or(decimation_mode, "weighted_mean")
