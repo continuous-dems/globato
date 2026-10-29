@@ -21,6 +21,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 * Simplify cache identities using Fetchez's `dataset_id()` and contribution metadata instead of a separate Globato identity implementation. Retain grid, CRS, FusionState schema, and cache hash validation.
 * Updated globato build overrides to propagate resolution, CRS, and stacking configuration to `stack_combine`.
 * Updated `globato build` to use `ignore-failures` instead of `fail-fast`
+* Resolution lists and x/y increments now use fetchez's `parse_increment_list` and `parse_increment_pair`, so they accept parenthesized fractions like `(1/9)s/(1/3)s/1s`. This covers `ms_cudem` and `ms_binary_cudem` resolutions, the `globato run` and `wafflez` resolution rescaling, and `multi_stack`/`simple_stack` `res`. An invalid increment in these lists now raises ValueError. Requires the next fetchez release.
 
 ### FIXED
 * `Point2PixelStream`'s "Pixelated" log line had three placeholders and two arguments, so every point stream logged a `--- Logging error ---` traceback in place of its point count, and tests that capture INFO logs failed with `not enough arguments for format string`.

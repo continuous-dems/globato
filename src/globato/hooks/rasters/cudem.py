@@ -18,6 +18,7 @@ import logging
 import numpy as np
 import rasterio
 import scipy.ndimage
+from fetchez.spatial import parse_increment_list
 from fetchez.utils import remove_glob2, str2inc
 from rasterio.enums import Resampling
 from rasterio.warp import calculate_default_transform, reproject
@@ -60,7 +61,7 @@ class CudemStepDown(RasterGlobalHook):
                 return [cast_type(v) for v in val.split("/")]
             return [cast_type(val)]
 
-        self.resolutions = _parse_arg(resolutions, str)
+        self.resolutions = parse_increment_list(resolutions)
         self.weights = _parse_arg(weights, float)
         self.blend_dists = _parse_arg(blend_dist, int)
 
