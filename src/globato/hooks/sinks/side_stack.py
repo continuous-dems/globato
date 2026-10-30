@@ -23,10 +23,12 @@ from typing import Any, Mapping
 
 import numpy as np
 import rasterio
+from filelock import FileLock
 from rasterio.crs import CRS
 
 from fetchez.hooks import FetchHook
-from fetchez.utils import float_or, str2bool, str2inc
+from fetchez.utils import float_or, str2bool
+from fetchez.spatial import parse_increments
 from fetchez.entry import source_id, dataset_id
 
 from globato.hooks.transforms.point_pixels import (
@@ -40,12 +42,14 @@ logger = logging.getLogger(__name__)
 
 SIDESTACK_DATATYPE = "FUSION_STATE"
 SIDESTACK_HASH_TAG = "GLOBATO_SIDESTACK_HASH"
+# 2: point chunks add into the cache instead of overwriting it.
+SIDESTACK_CACHE_VERSION = 2
 
 
 def _resolve_grid(region: Any, res: Any, crs: Any) -> dict[str, Any]:
     """Resolve the exact raster grid used by Point2PixelStream."""
 
-    inc = float_or(str2inc(res))
+    inc = float_or(parse_increments(res))
     if inc is None:
         raise ValueError(f"Unable to resolve side-stack resolution {res!r}")
 
@@ -179,6 +183,7 @@ def sidestack_cache_key(entry, grid):
         entry,
         grid=grid,
         fusion_version=FUSION_STATE_VERSION,
+        side_stack_version=SIDESTACK_CACHE_VERSION,
     )
     return hashlib.sha256(identity.encode("utf-8")).hexdigest()[:16]
 
@@ -283,6 +288,9 @@ class SideStackGenerate(FetchHook):
             bigtiff="YES",
             dtype="float64",
             nodata=None,
+            # Blocks no source chunk touches are never stored and read back as
+            # zeros, the same additive FusionState; readers can skip them.
+            sparse_ok=True,
         )
         return out
 
@@ -292,12 +300,34 @@ class SideStackGenerate(FetchHook):
         cache_path: str,
         *,
         digest: str,
+        grid: dict,
         entry: dict,
         provenance: dict | None = None,
     ):
         """Write FusionState atomically while yielding identical chunks onward."""
 
         profile = next(raster_stream)
+        expected_crs = CRS.from_wkt(grid["crs"]) if grid["crs"] else None
+        if CRS.from_user_input(profile["crs"]) != expected_crs:
+            raise ValueError(
+                "Side-stack source CRS differs from the build CRS. Apply "
+                "stream_reproject before side_stack or stack_qc; changing a CRS "
+                "label is not a transformation."
+            )
+        if (
+            profile["width"],
+            profile["height"],
+            profile["transform"],
+            profile["count"],
+        ) != (
+            grid["width"],
+            grid["height"],
+            rasterio.Affine(*grid["transform"]),
+            len(FUSION_BANDS),
+        ):
+            raise ValueError(
+                "Side-stack input must use the build's exact native FusionState grid"
+            )
         yield profile
 
         cache_dir = os.path.dirname(os.path.abspath(cache_path))
@@ -318,19 +348,21 @@ class SideStackGenerate(FetchHook):
 
         completed = False
         try:
-            with rasterio.open(tmp_path, "w", **creation_profile) as dst:
+            with rasterio.open(tmp_path, "w+", **creation_profile) as dst:
                 for name, idx in FUSION_BAND_MAP.items():
                     dst.set_band_description(idx, name)
 
                 dst.update_tags(
                     GLOBATO_DATATYPE=SIDESTACK_DATATYPE,
                     GLOBATO_FUSION_VERSION=str(FUSION_STATE_VERSION),
+                    GLOBATO_SIDESTACK_VERSION=str(SIDESTACK_CACHE_VERSION),
                     **{
                         SIDESTACK_HASH_TAG: digest,
                         **sidestack_provenance(entry),
                     },
                 )
 
+                point_count = 0
                 for chunk in raster_stream:
                     window, buff_win, data, ndv, transform = chunk
 
@@ -341,10 +373,22 @@ class SideStackGenerate(FetchHook):
                             f"{len(FUSION_BANDS)} bands; got {data.shape!r}"
                         )
 
-                    dst.write(data, window=window)
+                    # Point chunks can revisit the same cells. FusionState is
+                    # additive; overwriting would silently discard earlier
+                    # soundings on cache reuse.
+                    dst.write(dst.read(window=window) + data, window=window)
+                    point_count += int(np.sum(data[FUSION_BAND_MAP["count"] - 1]))
                     yield window, buff_win, data, ndv, transform
+                dst.update_tags(GLOBATO_POINT_COUNT=str(point_count))
 
-            os.replace(tmp_path, cache_path)
+            # Concurrent misses may have produced this same cache entry.
+            # Publish once so another build's copy stays stable.
+            with FileLock(cache_path + ".lock"):
+                valid, _ = validate_sidestack(cache_path, grid, digest)
+                if valid:
+                    os.remove(tmp_path)
+                else:
+                    os.replace(tmp_path, cache_path)
             completed = True
             logger.debug("Side-stack cached: %s", os.path.basename(cache_path))
 
@@ -404,6 +448,7 @@ class SideStackGenerate(FetchHook):
                 fusion_stream,
                 cache_path,
                 digest=digest,
+                grid=grid,
                 entry=entry,
                 provenance=sidestack_provenance(entry),
             )

@@ -122,6 +122,7 @@ class MultiStackAccumulator:
         verbose=False,
         state_fn=None,
         resume=True,
+        sparse_state=False,
     ):
         strategy = strategy.lower()
         if strategy not in VALID_STRATEGIES:
@@ -139,6 +140,10 @@ class MultiStackAccumulator:
         self.verbose = verbose
         self.compress_state = str2bool(compress_state)
         self.resume = bool(resume)
+        # A sparse state stores no block until something is written to it;
+        # unwritten blocks read as zero, the identity for every state band.
+        # Used for temporary states (e.g. Stack QC's working stacks).
+        self.sparse_state = bool(sparse_state)
 
         self.lock = threading.Lock()
         self.wts = np.sort([float(x) for x in str(weight_threshold).split("/")])
@@ -267,11 +272,15 @@ class MultiStackAccumulator:
 
             os.remove(self.state_fn)
 
-        with rasterio.open(self.state_fn, "w", **self._state_profile()) as dst:
+        profile = self._state_profile()
+        if self.sparse_state:
+            profile["sparse_ok"] = True
+        with rasterio.open(self.state_fn, "w", **profile) as dst:
             # Zero is the identity value for every additive state band.
             # GeoTIFF creation commonly initializes sparse/tiled data to zero,
-            # but write explicit blocks so the contract is unambiguous.
-            for _, window in dst.block_windows(1):
+            # but write explicit blocks so the contract is unambiguous (a sparse
+            # state leaves them unwritten; they read as zero).
+            for _, window in [] if self.sparse_state else dst.block_windows(1):
                 zeros = np.zeros(
                     (len(FUSION_BANDS), int(window.height), int(window.width)),
                     dtype=np.float64,
@@ -403,58 +412,62 @@ class MultiStackAccumulator:
         with self.lock:
             current = self.dataset.read(window=window).astype(np.float64, copy=False)
 
-            if self.strategy in {"mean", "weighted_mean"}:
-                current[:, valid_new] += incoming[:, valid_new]
-
-                accepted = valid_new
-                replaced = empty
-
-            else:
-                incoming_mean_weight = self._mean_weight(incoming)
-                current_mean_weight = self._mean_weight(current)
-
-                current_count = current[FUSION_BAND_MAP["count"] - 1]
-
-                if self.strategy == "supercede":
-                    replaced = valid_new & (
-                        (current_count == 0)
-                        | (incoming_mean_weight > current_mean_weight)
-                    )
-
-                    accepted = replaced
-
-                    if np.any(replaced):
-                        current[:, replaced] = incoming[:, replaced]
-
-                else:  # mixed
-                    incoming_tier = np.digitize(
-                        incoming_mean_weight,
-                        self.wts,
-                    )
-                    current_tier = np.digitize(
-                        current_mean_weight,
-                        self.wts,
-                    )
-
-                    current_tier[current_count == 0] = -1
-
-                    replaced = valid_new & (incoming_tier > current_tier)
-                    merged = valid_new & (incoming_tier == current_tier)
-
-                    if np.any(replaced):
-                        current[:, replaced] = incoming[:, replaced]
-
-                    if np.any(merged):
-                        current[:, merged] += incoming[:, merged]
-
-                    accepted = replaced | merged
+            result = self.reduce_state(current, incoming)
 
             self.dataset.write(current, window=window)
 
-        return StackUpdate(
-            accepted=accepted,
-            replaced=replaced,
-        )
+        return result
+
+    def reduce_state(self, current, incoming):
+        """Apply the native source policy in place; shared by streams and block rebuilds."""
+        incoming_count = incoming[FUSION_BAND_MAP["count"] - 1]
+        valid_new = incoming_count > 0
+        empty = np.zeros_like(valid_new, dtype=bool)
+        if self.strategy in {"mean", "weighted_mean"}:
+            current[:, valid_new] += incoming[:, valid_new]
+
+            accepted = valid_new
+            replaced = empty
+
+        else:
+            incoming_mean_weight = self._mean_weight(incoming)
+            current_mean_weight = self._mean_weight(current)
+
+            current_count = current[FUSION_BAND_MAP["count"] - 1]
+
+            if self.strategy == "supercede":
+                replaced = valid_new & (
+                    (current_count == 0) | (incoming_mean_weight > current_mean_weight)
+                )
+
+                accepted = replaced
+
+                if np.any(replaced):
+                    current[:, replaced] = incoming[:, replaced]
+
+            else:  # mixed
+                incoming_tier = np.digitize(
+                    incoming_mean_weight,
+                    self.wts,
+                )
+                current_tier = np.digitize(
+                    current_mean_weight,
+                    self.wts,
+                )
+
+                current_tier[current_count == 0] = -1
+
+                replaced = valid_new & (incoming_tier > current_tier)
+                merged = valid_new & (incoming_tier == current_tier)
+
+                if np.any(replaced):
+                    current[:, replaced] = incoming[:, replaced]
+
+                if np.any(merged):
+                    current[:, merged] += incoming[:, merged]
+
+                accepted = replaced | merged
+        return StackUpdate(accepted=accepted, replaced=replaced)
 
     # ------------------------------------------------------------------
     # Finalization
@@ -464,7 +477,7 @@ class MultiStackAccumulator:
     def _state_from_array(data):
         return {name: data[index] for index, name in enumerate(FUSION_BANDS)}
 
-    def finalize(self, ndv=-9999):
+    def finalize(self, ndv=-9999, *, statistics=True):
         """Derive a finalized MultiStack without mutating persisted state."""
 
         if self.dataset and not self.dataset.closed:
@@ -524,7 +537,9 @@ class MultiStackAccumulator:
                     VERSION=__version__,
                 )
 
-        # Keep statistics behavior from the existing implementation.
+        # Temporary callers can omit a full seven-band statistics scan.
+        if not statistics:
+            return self.output_fn
         with rasterio.open(self.output_fn, "r+") as dst:
             all_stats = dst.stats(approx=False)
             for index, stats in enumerate(all_stats, start=1):
@@ -602,49 +617,48 @@ class MultiStackHook(FetchHook):
         self.compress_state = str2bool(compress_state)
         self._accumulator = None
 
+    def create_accumulator(
+        self, region, *, output, state=None, resume=False, sparse_state=False
+    ):
+        """Create an independent native state without changing this hook's lifecycle."""
+        if isinstance(self.res, str) and self.res.endswith("s"):
+            inc = float(self.res[:-1]) / 3600.0
+            x_inc, y_inc = inc, inc
+        elif "/" in str(self.res):
+            x_inc, y_inc = map(float, self.res.split("/"))
+        else:
+            inc = float(self.res)
+            x_inc, y_inc = inc, inc
+
+        return MultiStackAccumulator(
+            region=region,
+            x_inc=x_inc,
+            y_inc=y_inc,
+            output_fn=output,
+            strategy=self.strategy,
+            weight_threshold=self.weight_threshold,
+            crs=self.crs,
+            compress_state=self.compress_state,
+            state_fn=state,
+            resume=resume,
+            sparse_state=sparse_state,
+        )
+
     def _init_accumulator(self, region):
         with INIT_LOCK:
-            if self._accumulator:
-                return
-
-            if isinstance(self.res, str) and self.res.endswith("s"):
-                inc = float(self.res[:-1]) / 3600.0
-                x_inc, y_inc = inc, inc
-            elif "/" in str(self.res):
-                x_inc, y_inc = map(float, self.res.split("/"))
-            else:
-                inc = float(self.res)
-                x_inc, y_inc = inc, inc
-
-            logger.info(
-                "Initializing MultiStack: %s @ %s,%s (%s)",
-                self.output,
-                x_inc,
-                y_inc,
-                self.strategy,
-            )
-
-            self._accumulator = MultiStackAccumulator(
-                region=region,
-                x_inc=x_inc,
-                y_inc=y_inc,
-                output_fn=self.output,
-                strategy=self.strategy,
-                weight_threshold=self.weight_threshold,
-                crs=self.crs,
-                compress_state=self.compress_state,
-                verbose=True,
-                state_fn=self.state,
-                resume=self.resume,
-            )
+            if self._accumulator is None:
+                self._accumulator = self.create_accumulator(
+                    region, output=self.output, state=self.state, resume=self.resume
+                )
 
     @staticmethod
     def _dataset_id(entry, module_weight=1.0):
         """Identify an input, optionally scoped to a named processing branch.
 
         Separate class-selection branches can read the same physical file at
-        the same weight. Keep their registrations independent while preserving
-        the historical identifiers for entries without a partition label.
+        the same weight, and a filter can change what a file contributes
+        (``contribution_id``). Keep their registrations independent while
+        preserving the historical identifiers for plain entries.
         """
         checksum = entry.get("checksum")
         if checksum:
@@ -663,6 +677,13 @@ class MultiStackHook(FetchHook):
         partition = entry.get("stack_partition")
         if partition is not None:
             dataset_id += "|partition=" + json.dumps(str(partition), ensure_ascii=True)
+        # Hooks that change what an entry contributes record it with fetchez's
+        # entry.set_contribution_id; entries without one keep their historical id.
+        contribution = entry.get("contribution_id")
+        if contribution:
+            dataset_id += "|contribution=" + json.dumps(
+                contribution, sort_keys=True, separators=(",", ":"), default=str
+            )
         return dataset_id
 
     @staticmethod

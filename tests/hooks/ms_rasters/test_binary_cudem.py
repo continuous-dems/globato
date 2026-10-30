@@ -191,3 +191,43 @@ def test_larger_gap_is_not_forced_closed():
     # These two areas are too far apart for the small closing operation
     # and should not become one artificial land feature.
     assert not result[3, 3]
+
+
+def test_decimation_consumes_the_actual_native_stack_artifact(tmp_path, monkeypatch):
+    import rasterio
+    from rasterio.transform import from_origin
+
+    source = tmp_path / "checkpoint.tif"
+    actual = tmp_path / "checkpoint_step_with_native_region_suffix.tif"
+    output = tmp_path / "result.tif"
+    profile = dict(
+        driver="GTiff",
+        width=2,
+        height=2,
+        count=7,
+        dtype="float32",
+        crs="EPSG:32611",
+        transform=from_origin(350000, 3750000, 3, 3),
+    )
+    for path in (source, actual):
+        with rasterio.open(path, "w", **profile) as dst:
+            dst.write(np.ones((7, 2, 2), "float32"))
+    hook = BinaryCudemStepDown(inland_decay_dist=0, keep_steps=True)
+
+    def configure(_):
+        hook.resolutions = [9]
+        hook.weights, hook.algos, hook.blend_dists = [1], ["raster_fill"], [0]
+
+    monkeypatch.setattr(hook, "_setup_steps", configure)
+    monkeypatch.setattr(hook, "_get_barrier", lambda **kw: None)
+    monkeypatch.setattr(hook, "_decimate_raster", lambda *args, **kw: [str(actual)])
+    consumed = []
+    monkeypatch.setattr(
+        hook,
+        "_process_tier",
+        lambda step_stack, *args, **kw: consumed.append(step_stack),
+    )
+    assert hook.process_raster(str(source), str(output), {})
+    assert consumed == [str(actual)]
+    with rasterio.open(output) as ds:
+        assert (ds.read() == 1).all()

@@ -32,7 +32,6 @@ import fetchez
 from fetchez.spatial import Region
 from fetchez.utils import (
     remove_glob2,
-    str2inc,
     inc2str,
     int_or,
     str_or,
@@ -41,6 +40,7 @@ from fetchez.utils import (
     parse_arg_to_list,
 )
 from fetchez.registry import HookRegistry
+from globato.utils import parse_increment
 
 from .base import RasterGlobalHook
 
@@ -85,7 +85,7 @@ class BinaryCudemStepDown(RasterGlobalHook):
         ]
         self.steps = int_or(steps)
         self.weights = parse_arg_to_list(weights, float)
-        self.resolutions = parse_arg_to_list(resolutions, str2inc)
+        self.resolutions = parse_arg_to_list(resolutions, parse_increment)
         self.blend_dists = parse_arg_to_list(blend_dists, int)
         self.algos = parse_arg_to_list(algos, str)
         self.decimation_mode = str_or(decimation_mode, "weighted_mean")
@@ -957,7 +957,14 @@ class BinaryCudemStepDown(RasterGlobalHook):
             if np.isclose(res_str, native_res, atol=1e-9):
                 shutil.copy(src_path, step_stack)
             else:
-                self._decimate_raster(src_path, step_stack, target_res=res_str)
+                outputs = self._decimate_raster(
+                    src_path, step_stack, target_res=res_str
+                )
+                if not outputs or len(outputs) != 1 or not os.path.isfile(outputs[0]):
+                    raise RuntimeError("Native decimation did not produce one stack")
+                # MultiStack may append a region suffix. Use its actual artifact
+                # rather than assuming the requested filename was preserved.
+                step_stack = os.fspath(outputs[0])
 
             self._process_tier(
                 step_stack,

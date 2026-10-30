@@ -1,48 +1,151 @@
 name: mr-globato-crm
-description: "The standard CRM step-down, trim, and visualize pipeline."
+description: "The standard CRM side-stack, Stack QC, step-down, trim, and visualize pipeline."
 tags:
   - globato-dem
   - dem
+# A complete hook list rather than overrides of mr-globato: preset overrides
+# only change hooks the base preset already has, and mr-globato stacks with
+# multi_stack. This one stacks side-stacks with stack_combine, after Stack QC
+# has filtered the multibeam (mbdb) side-stacks.
 hooks:
-  - preset: mr-globato
+  - name: spatial-crop
+  - name: audit
+  - name: enrich
+  - name: transfer_log
+  - name: drop_class
+
+  # Side-stacks on the 1" grid. Multibeam is gridded on Stack QC's 1/9" grid
+  # instead (stack_qc_grid, listed before side_stack, which then leaves the
+  # multibeam entries alone).
+  - name: side_stack_check
     args:
-      - name: ms_binary_cudem
-        args:
-          steps: 3
-          resolutions: 1s/3s/9s/15s
-          weights:
-            - 1
-            - 0.5
-            - 0.25
-          # algos: raster_fill
-          algos: raster_fill/raster_fill/raster_fill/interp_gmt:tension=1,verbose=True
-          blend_dists: 32/16/8/4
-      - name: side_stack_check
-        args:
-          res: 1s
-          crs: "EPSG:4326+3855"
-      - name: side_stack
-        args:
-          res: 1s
-          crs: "EPSG:4326+3855"
-      - name: multi_stack
-        args:
-          res: 1s
-          crs: "EPSG:4326+3855"
-      - name: stack_combine
-        args:
-          res: 1s
-          crs: "EPSG:4326+3855"
-      - name: source_masks
-        args:
-          res: 1s
-      - name: provenance
-        args:
-          res: 1s
-      - name: raster_metadata
-        args:
-          tags: "Project=Coastal Relief Model,Version=6,Author=NCEI"
-      - name: viz_geoshade
-        args:
-          z_min: -3000
-          z_max: 1000
+      res: 1s
+      crs: "EPSG:4326+3855"
+  - name: stack_qc_grid
+    args:
+      modules: mbdb
+      res: 1s
+      qc_res: 1/9s
+      crs: "EPSG:4326+3855"
+  - name: side_stack
+    args:
+      res: 1s
+      crs: "EPSG:4326+3855"
+
+  # Multibeam filtering, in place of rq (see crm-bathy-topo). It filters on the
+  # 1/9" grids from stack_qc_grid (same modules, res, qc_res and crs) and writes
+  # the accepted measurements on the 1" grid as qc-side-stack; other modules'
+  # side-stacks pass through. The interpolation block is its working-DEM ladder,
+  # written for the 1" grid like ms_binary_cudem below; keep the two in step.
+  - name: stack_qc
+    args:
+      modules: mbdb
+      res: 1s
+      crs: "EPSG:4326+3855"
+      qc_res: 1/9s
+      aggressiveness: 2
+      terrain_restoration: 2
+      max_passes: 5
+      stop_when_stable: false
+      interpolation:
+        steps: 3
+        resolutions: 1s/3s/9s/15s
+        weights: [0.6, 0.4, 0.2]
+        algos: raster_fill/raster_fill/raster_fill/interp_gmt:tension=1
+        blend_dists: 32/16/8/4
+        barrier: osm
+        previous_tier_resampling: cubic_spline
+        bathy_max_z: "ocean:-0.01,river:0,lake:None,wetland:None,estuary:0"
+
+  - name: stack_combine
+    args:
+      res: 1s
+      crs: "EPSG:4326+3855"
+      strategy: mixed
+      weight_threshold: 3/2/1/.75/.5/.4/.3/.2/.1
+      source_artifact: qc-side-stack
+      output: "%name%_%batch_name%_stack.tif"
+
+  # Provenance from the stacked (filtered) side-stacks.
+  - name: provenance
+    args:
+      res: 1s
+      source_artifact: qc-side-stack
+      output: "%name%_%batch_name%_provenance.tif"
+  - name: source_masks
+    args:
+      res: 1s
+      source_artifact: qc-side-stack
+      output: "%name%_%batch_name%_sources.vrt"
+  - name: stack_provenance
+    args:
+      source_artifact: qc-side-stack
+      storage: disk
+      output: "%name%_%batch_name%_stack_sources.vrt"
+      vector_output: "%name%_%batch_name%_sm.gpkg"
+      group_by: MODULE/WEIGHT
+
+  - name: focus_sink
+    args:
+      target: multi_stack
+
+  - name: raster_stream
+    args:
+      stream_type: raster
+      chunk_size: 2048
+      stage: collection
+
+  - name: ms_binary_cudem
+    args:
+      steps: 3
+      resolutions: 1s/3s/9s/15s
+      # Multibeam stack weights are ~0.8-0.95, so a top tier of 0.6 grids it
+      # at 1" (with 1/0.5/0.25 it was gridded at 3"). Other datasets keep
+      # their tiers (module weights are >= 1 or <= 0.5; checked on the 330
+      # Southern California CRM tiles).
+      weights:
+        - 0.6
+        - 0.4
+        - 0.2
+      algos: raster_fill/raster_fill/raster_fill/interp_gmt:tension=1,verbose=True
+      blend_dists: 32/16/8/4
+      barrier: osm
+      previous_tier_resampling: "cubic_spline"
+      bathy_max_z: "ocean:-0.01,river:0,lake:None,wetland:None,estuary:0"
+      output: "%name%_%batch_name%.tif"
+
+  - name: focus_sink
+    args: {target: "ms_binary_cudem"}
+
+  - name: raster_metadata
+    args:
+      tags: "Project=Coastal Relief Model,Version=6,Author=NCEI"
+      bands: "Elevation (meters)"
+
+  - name: format_cog
+    args:
+      overviews: 2/4/8/16/32
+      resampling: average
+
+  - name: viz_geoshade
+    args:
+      output: "%name%_%batch_name%_hs.tif"
+      cmap: coastal_relief
+      cog: true
+      z_min: -3000
+      z_max: 1000
+
+  - name: cleanup_tmp
+    args: {"target_dir": "tmp"}
+
+  - name: copy_artifact
+    args:
+      target_dir: "%outdir%/delivery"
+      match:
+        - "%name%_%batch_name%.tif"
+
+  - name: copy_artifact
+    args:
+      target_dir: "%outdir%/delivery/hs"
+      match:
+        - "%name%_%batch_name%_hs.tif"
