@@ -23,29 +23,24 @@ def written_blocks(path):
     """Stored blocks of a tiled GeoTIFF as (block height, width, {(row, col)}).
 
     A sparse GeoTIFF block that was never written reads as zeros, so a source
-    window covering only unwritten blocks holds no measurements. None when GDAL
-    cannot tell.
+    window covering only unwritten blocks holds no measurements. None when the
+    file cannot be opened or is not a GeoTIFF.
     """
-    import warnings
-
     try:
-        from osgeo import gdal
-    except ImportError:
+        src = rasterio.open(path)
+    except rasterio.errors.RasterioIOError:
         return None
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore", FutureWarning)
-        ds = gdal.Open(str(path))
-        if ds is None:
+    with src:
+        if src.driver != "GTiff":
             return None
-        band = ds.GetRasterBand(1)
-        bx, by = band.GetBlockSize()
-        nx = (ds.RasterXSize + bx - 1) // bx
-        ny = (ds.RasterYSize + by - 1) // by
+        by, bx = src.block_shapes[0]
+        ny = (src.height + by - 1) // by
+        nx = (src.width + bx - 1) // bx
         stored = {
             (y, x)
             for y in range(ny)
             for x in range(nx)
-            if band.GetMetadataItem(f"BLOCK_OFFSET_{x}_{y}", "TIFF")
+            if src.get_tag_item(f"BLOCK_OFFSET_{x}_{y}", "TIFF", bidx=1)
         }
     return by, bx, stored
 
