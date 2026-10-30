@@ -280,6 +280,7 @@ class MRGlobatoAdapter:
         if target_srs is not None:
             for hook_name in ("multi_stack", "side_stack", "stack_combine"):
                 update(hook_name, crs=target_srs)
+
         if nodata is not None:
             update("multi_stack", nodata=nodata)
 
@@ -641,6 +642,13 @@ def process_build(
         {
             "name": "ensure-spatial-claim",
             "args": {
+                "res": increment,
+            },
+        },
+        {
+            "name": "globatize_sources",
+            "args": {
+                "dst_srs": t_srs,
                 "res": increment,
             },
         },

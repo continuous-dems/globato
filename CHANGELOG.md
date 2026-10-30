@@ -8,6 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### ADDED
+* Added draft implementation of the new `fusion-provenance` hook for use in the new side-stack workflows.
+* Added `globatize_sources` recipe modifier to set the res and dst_srs for modules in a recipe.
+* Added the `globatize_sources` modifier as a default in `globato build`
+* Added `sidestack` cli managment tool to the globato cli to inspect and clear existing sidestack files.
 * A `py.typed` marker, so type checkers read globato's type annotations in code that uses it (#284). mypy now runs on every pull request, in a new "Typecheck" workflow.
 * Added `stack_combine` to construct a MultiStack and its FusionState directly from completed side-stack artifacts, using the existing `MultiStackAccumulator` for reduction and finalization.
 * Allow `stack_combine` to consume original or QC-adjusted side-stacks, with configurable handling of missing required artifacts.

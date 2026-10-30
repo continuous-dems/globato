@@ -40,13 +40,18 @@ class StreamReproject(FetchHook):
 
     def _get_pipeline(self, entry_src_srs, region=None):
         actual_src = self.forced_src_srs or entry_src_srs or "EPSG:4326"
+        logger.debug(
+            "[stream-reproject] SRSParser(src=%r, dst=%r)",
+            actual_src,
+            self.dst_srs,
+        )
         if not actual_src:
             return None
 
         if actual_src in self._cache:
             return self._cache[actual_src]
 
-        effective_logger_level = logger.getEffectiveLevel()
+        _effective_logger_level = logger.getEffectiveLevel()
 
         # Use Transformez to generate the shift grid,
         # aligned to the source CRS
@@ -56,7 +61,6 @@ class StreamReproject(FetchHook):
             region=region,
             vert_grid=self.vert_grid,
             cache_dir=self.cache_dir,
-            verbose=effective_logger_level < 20,
         )
         horz_transformer, grid_fn = parser.get_components()
         grid_query = RasterQuery(grid_fn) if grid_fn else None
@@ -71,7 +75,15 @@ class StreamReproject(FetchHook):
 
             if self.is_point_stream(entry):
                 src_srs = entry.get("src_srs", "EPSG:4326")
-
+                logger.debug(
+                    "[stream-reproject] module=%s file=%s "
+                    "entry_src_srs=%r forced_src_srs=%r dst_srs=%r",
+                    mod.name,
+                    entry.get("dst_fn"),
+                    src_srs,
+                    self.forced_src_srs,
+                    self.dst_srs,
+                )
                 safe_region = None
                 mod_region = getattr(mod, "region", None)
                 if mod_region:
