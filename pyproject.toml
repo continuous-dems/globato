@@ -44,6 +44,8 @@ dependencies = [
     "click>=8.1.7",
     "pyyaml>=6.0.1",
     "requests>=2.31.0",
+    "Pillow>=10.1.0",
+    "filelock>=3.12.4",
 ]
 
 [project.optional-dependencies]
@@ -124,6 +126,9 @@ globato_stream_profiles = "globato.streams.profiles"
 
 [project.scripts]
 globato = "globato.cli:cli"
+raster-viz = "globato.viz.raster_viz.cli:main"
+raster-viz-catalog = "globato.viz.raster_viz.catalog_cli:main"
+raster-viz-check = "globato.viz.raster_viz.validate:main"
 perspecto = "globato.cli.perspecto:perspecto_group"
 dlim = "globato.cli.pointz:pointz_group"
 gritz = "globato.cli.gritz:gritz_group"
@@ -215,6 +220,7 @@ select = [
 [tool.ruff.lint.per-file-ignores]
 # Allow print() statements in CLI module where they are expected
 "src/globato/hooks/viz/cpt.py" = ["T201"]
+"src/globato/viz/raster_viz/{cli,catalog_cli,validate}.py" = ["T201"]
 "tests/**/*.py" = ["S", "T201"]
 
 [tool.ruff.format]
