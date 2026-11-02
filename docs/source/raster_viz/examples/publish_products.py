@@ -46,4 +46,4 @@ if __name__ == "__main__":
     for n, vector in enumerate(a.vector, 1):
         catalog.add_vector(f"vector_{n}", vector, label=Path(vector).stem)
     catalog.compare("before", "after")
-    print(catalog.publish())
+    print(catalog.publish())  # noqa: T201 - CLI output: published catalog path

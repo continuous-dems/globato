@@ -75,4 +75,4 @@ def create(root):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("output", type=Path)
-    print(create(parser.parse_args().output))
+    print(create(parser.parse_args().output))  # noqa: T201 - CLI output: published catalog path

@@ -28,4 +28,4 @@ with ProductCatalog(a.out, title="DEM with RGB background") as c:
     )
     c.add_raster("rgb", a.rgb, label="Satellite RGB", style="rgb")
     c.compare("dem", "dem")
-print(a.out)
+print(a.out)  # noqa: T201 - CLI output: published catalog path

@@ -19,7 +19,7 @@ from filelock import FileLock
 from rasterio.enums import Resampling
 from rasterio.transform import array_bounds
 from rasterio.vrt import WarpedVRT
-from rasterio.warp import calculate_default_transform, reproject
+from rasterio.warp import calculate_default_transform, reproject, transform as warp_xy
 
 from .legends import COLORMAPS, create_ramps, elevation_ramp, value_label, raster_units
 from .palette import elevation_rgba
@@ -40,6 +40,39 @@ def atomic(path, body):
 
 def safe_json(value):
     return json.dumps(value, ensure_ascii=False, allow_nan=False, indent=2)
+
+
+def sparse_elevation_cells(src, band):
+    """Collect valid source cells only for <=1% coverage, bounded to 100k cells.
+
+    Dense rasters stop scanning as soon as the budget is exceeded. Sparse
+    rasters are read by source blocks so isolated values cannot disappear in
+    preview downsampling. This changes display symbols only, never source data.
+    """
+    budget = min(100_000, src.width * src.height // 100)
+    if not budget:
+        return None
+    chunks, count = [], 0
+    for _, window in src.block_windows(int(band)):
+        a = src.read(int(band), window=window, masked=True)
+        valid = ~np.ma.getmaskarray(a) & np.isfinite(a.data)
+        count += int(np.count_nonzero(valid))
+        if count > budget:
+            return None
+        if valid.any():
+            rows, cols = np.nonzero(valid)
+            x, y = src.transform * (
+                cols + window.col_off + 0.5,
+                rows + window.row_off + 0.5,
+            )
+            chunks.append((x, y, a.data[valid].astype("float64")))
+    if not count:
+        return None
+    x, y, values = (np.concatenate(parts) for parts in zip(*chunks))
+    x, y = warp_xy(src.crs, "EPSG:3857", x, y)
+    if not np.isfinite([x, y]).all():
+        raise ValueError("Sparse source-cell coordinates cannot be projected")
+    return np.asarray(x), np.asarray(y), values
 
 
 def color_image(
@@ -277,7 +310,7 @@ class Review:
     def render_settings(self, make_3d=None):
         """Semantic preview cache key; source timestamp alone is insufficient."""
         return dict(
-            renderer_version=10,
+            renderer_version=11,
             water_level=self.water_level,
             max_side=self.max_side,
             make_3d=self.render_3d if make_3d is None else bool(make_3d),
@@ -410,6 +443,9 @@ class Review:
                 raise ValueError(
                     "A raster needs a CRS for linked geographic navigation"
                 )
+            source_cells = (
+                sparse_elevation_cells(src, band) if style == "elevation" else None
+            )
             if src.transform.b or src.transform.d:
                 # WarpedVRT below handles rotation; bounds are the full envelope.
                 pass
@@ -442,6 +478,7 @@ class Review:
                 renderer = None
             if (
                 style in {"elevation", "difference"}
+                and source_cells is None
                 and not src.transform.b
                 and not src.transform.d
             ):
@@ -492,7 +529,9 @@ class Review:
                 "band": int(band),
                 "transform": list(src.transform)[:6],
                 "preview_rendering": (
-                    "rgb_georeferenced_3band"
+                    "valid_source_cells_as_visible_dots"
+                    if source_cells is not None
+                    else "rgb_georeferenced_3band"
                     if style == "rgb"
                     else "shade_on_source_grid_then_project_RGBA"
                     if renderer is not None
@@ -521,6 +560,7 @@ class Review:
             three_d_path=path if make_3d else None,
             three_d_band=band,
             water_level=water_level,
+            source_cells=source_cells,
         )
 
     def _add_preview(
@@ -544,11 +584,12 @@ class Review:
         value_units="",
         vertical_datum="",
         water_level=0.0,
+        source_cells=None,
     ):
         from PIL import Image
 
         started = time.perf_counter() if started is None else started
-        valid = z[np.isfinite(z)]
+        valid = source_cells[2] if source_cells is not None else z[np.isfinite(z)]
         bounds = list(array_bounds(*z.shape, transform))
         # Reserve limits and 3D camera geometry under a short lock, but render
         # images outside the lock. This keeps parallel workers responsive.
@@ -622,6 +663,28 @@ class Review:
                 water_level=water_level,
             )
         )
+        if source_cells is not None:
+            from PIL import ImageDraw
+
+            # Symbols are larger than source cell footprints for visibility.
+            # Paint from the original cells, not the resampled elevation grid.
+            canvas = Image.new("RGBA", (z.shape[1], z.shape[0]))
+            draw = ImageDraw.Draw(canvas)
+            px, py = ~transform * (source_cells[0], source_cells[1])
+            colors = np.clip(
+                elevation_rgba(valid, color_limits, water_level=water_level) * 255,
+                0,
+                255,
+            ).astype("uint8")
+            radius = max(2, round(max(z.shape) / 320))
+            for x, y, color in zip(px, py, colors):
+                draw.ellipse(
+                    (x - radius, y - radius, x + radius, y + radius),
+                    fill=tuple(map(int, color)),
+                    outline=(255, 255, 255, 255),
+                    width=1,
+                )
+            image = np.asarray(canvas)
         name = hashlib.sha256((area + "\0" + key).encode()).hexdigest()[:24]
         folder = self.output / "images"
         folder.mkdir(exist_ok=True)
@@ -667,6 +730,14 @@ class Review:
             "review_seconds": time.perf_counter() - started,
             "render_settings": self.render_settings(three_d_path is not None),
         }
+        if source_cells is not None:
+            record["preview_valid_cells"] = int(np.count_nonzero(image[..., 3]))
+            record["sparse_display"] = {
+                "valid_source_cells": int(valid.size),
+                "symbol": "circle",
+                "radius_preview_pixels": radius,
+                "note": "Display symbols only; source values, cell footprints and NoData are unchanged",
+            }
         if style == "rgb" and self.render_3d:
             # Browsers often refuse WebGL texture uploads sourced directly from
             # file:// images. A companion local JS asset carries a data: URI,

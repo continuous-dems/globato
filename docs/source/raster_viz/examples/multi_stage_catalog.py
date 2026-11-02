@@ -4,7 +4,6 @@ Producer supplies *completed* files. Never copy this script's sample stages as
 mandatory names: name the products from your own processing pipeline.
 """
 
-from pathlib import Path
 from globato.viz.raster_viz.catalog import ProductCatalog
 
 

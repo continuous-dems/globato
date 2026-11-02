@@ -30,6 +30,20 @@ raster-viz /path/to/products.json --3d --mesh-side 500
 
 Stack QC and Coast Mask keep publishing schema-v1 JSON themselves. Neither hook needs to import this viewer, change its scientific settings or bundle the viewer source. Render catalogs from any other producer using exactly the same commands.
 
+## Sparse elevation rasters
+
+Sparse elevation rasters automatically display their valid source cells as visible
+colored circles in the 2D preview. This applies at up to 1% valid coverage and
+100,000 valid cells. No extra catalog fields or command arguments are needed.
+Dots use the original cell-center locations and values with the same elevation
+palette, limits and legend as the raster; the dots are unshaded. Their size is a
+display symbol, not a cell footprint. Source GeoTIFF values and NoData remain
+unchanged. Dense rasters keep their existing rendering.
+
+The existing 3D renderer remains unchanged: it displays sparse populated preview
+bins, which can differ in count from source cells. This small update adds no
+point-file input or sounding-on-DEM overlay controls.
+
 ## Inspect a directory
 
 ```bash
