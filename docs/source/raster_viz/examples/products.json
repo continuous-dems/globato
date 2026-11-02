@@ -1,0 +1,10 @@
+{
+  "schema_version": 1,
+  "title": "Generic before / after comparison (replace these paths)",
+  "running": false,
+  "products": [
+    {"key":"before","path":"../results/before.tif","label":"Before","stage":"before","style":"elevation","group":"elevation"},
+    {"key":"after","path":"../results/after.tif","label":"After","stage":"after","style":"elevation","group":"elevation"}
+  ],
+  "defaults":{"default":["before","after"]}
+}

@@ -1,0 +1,73 @@
+{
+  "schema_version": 1,
+  "title": "Coast Mask: native participant comparison",
+  "running": false,
+  "products": [
+    {
+      "key": "before",
+      "path": "before.tif",
+      "type": "raster",
+      "label": "Before masking",
+      "stage": "before",
+      "group": "participant_elevation",
+      "style": "elevation"
+    },
+    {
+      "key": "after",
+      "path": "after.tif",
+      "type": "raster",
+      "label": "Accepted measurements",
+      "stage": "after",
+      "group": "participant_elevation",
+      "style": "elevation"
+    },
+    {
+      "key": "original_water",
+      "path": "original_water.gpkg",
+      "type": "vector",
+      "label": "Original water boundary",
+      "display": {
+        "visible": false,
+        "color": "#2563eb",
+        "width": 1.8,
+        "dash": [
+          7,
+          4
+        ]
+      }
+    },
+    {
+      "key": "retention_water",
+      "path": "retention_water.gpkg",
+      "type": "vector",
+      "label": "Source-exclusion boundary",
+      "display": {
+        "visible": true,
+        "color": "#dd7314",
+        "width": 2.2,
+        "dash": []
+      }
+    },
+    {
+      "key": "refined_topology",
+      "path": "refined_topology.gpkg",
+      "type": "vector",
+      "label": "Interpolation topology (no extension)",
+      "display": {
+        "visible": false,
+        "color": "#7c3aed",
+        "width": 1.8,
+        "dash": [
+          2,
+          4
+        ]
+      }
+    }
+  ],
+  "defaults": {
+    "default": [
+      "before",
+      "after"
+    ]
+  }
+}

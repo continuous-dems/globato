@@ -11,5 +11,6 @@ cli_usage
 point_pixels
 dem_generation
 tnm_hydroflat
+../raster_viz/README
 
 ```
