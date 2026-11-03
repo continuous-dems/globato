@@ -1,0 +1,425 @@
+<!doctype html>
+<html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Raster visualization</title>
+<style>
+[hidden]{display:none!important}:root{font-family:system-ui,Arial,sans-serif;color:#21334a;background:#f3f6fa}body{margin:18px}h1{font-size:23px;margin-bottom:8px}.status,.hint{color:#53667d}p{line-height:1.45}.toolbar{display:flex;align-items:center;gap:12px;flex-wrap:wrap;background:white;padding:10px 14px;border-radius:8px}.toolbar label{display:flex;align-items:center;gap:6px}select,button,input{font:inherit}select,button{padding:6px;border:1px solid #c5ced7;border-radius:5px;background:white}.panes{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin:14px 0}.pane{background:white;padding:12px;border-radius:8px;min-width:0}.pane label{display:block;margin-bottom:8px}.pane select{width:100%}.viewport{height:520px;position:relative;background:#e5edf4;touch-action:none;overflow:hidden}.viewport canvas{width:100%;height:100%;display:block;touch-action:none}.canvas3d{display:none}.placeholder{display:none;position:absolute;inset:0;align-items:center;justify-content:center;text-align:center;padding:18px;background:#e5edf4;color:#47627d;pointer-events:none}body.mode3d .canvas2d{display:none}body.mode3d .canvas3d{display:block}body.mode3d .placeholder.show{display:flex}body:not(.mode3d) #controls3d{display:none}body.mode3d #vector-controls{display:none}.caption{min-height:42px;font-size:13px;overflow-wrap:anywhere}.hint{font-size:13px}.table-scroll{overflow:auto;margin:16px 0}table{border-collapse:collapse;background:white;font-size:13px}th,td{border:1px solid #cdd5de;padding:8px}pre{white-space:pre-wrap;overflow-wrap:anywhere;background:white;padding:12px}.events{max-height:160px;overflow:auto}summary{cursor:pointer}@media(max-width:800px){.panes{grid-template-columns:1fr}.viewport{height:360px}body{margin:9px}}
+.color-legend{margin:10px 0 0;border:1px solid #e2e8f0;border-radius:6px;padding:9px 11px;background:#fff;max-width:100%;font-size:12px;color:#354963}
+.legend-title{font-size:12px;font-weight:650;line-height:1.3;margin-bottom:6px}
+.legend-ramp{width:100%;height:18px;display:block;object-fit:fill;image-rendering:auto;border:1px solid #ccd5df;border-radius:2px;box-sizing:border-box}
+.legend-ticks{display:flex;justify-content:space-between;gap:2px;margin-top:5px;font-variant-numeric:tabular-nums}
+.legend-ticks span{min-width:0;white-space:nowrap;text-align:center;flex:1}
+.legend-ticks span:first-child{text-align:left}.legend-ticks span:last-child{text-align:right}
+.legend-explainer{font-size:11px;color:#526779;margin-top:5px}
+.rgb-controls{display:flex;align-items:center;gap:8px;margin:4px 0 9px;flex-wrap:wrap;font-size:12px;color:#43586d}
+.rgb-controls label{display:inline-flex;align-items:center;gap:5px;margin:0}.rgb-controls select{max-width:210px;min-width:100px;width:auto}
+.vector-controls{position:relative;display:inline-block;font-size:13px;color:#354963}.vector-controls summary{background:#fff;border:1px solid #c5ced7;border-radius:5px;padding:7px;white-space:nowrap;cursor:pointer}.vector-menu{position:absolute;z-index:8;top:calc(100% + 5px);left:0;width:max-content;max-width:min(320px,90vw);padding:9px 12px;border:1px solid #c5ced7;border-radius:6px;background:#fff;box-shadow:0 4px 14px #26344824}.vector-row{display:flex;gap:9px;align-items:center;padding:5px 0;cursor:pointer}.vector-row input{margin:0}.vector-swatch{display:inline-block;width:25px;height:0;border-bottom-width:3px;border-bottom-style:solid;flex-shrink:0}.vector-note{color:#65758a;font-size:11px;padding:6px 0 1px}.rgb-controls input{width:92px}.rgb-controls output{min-width:34px}.rgb-opacity-control,.rgb-transparency-control{display:inline-flex;align-items:center;gap:6px}.rgb-controls output{font-variant-numeric:tabular-nums}
+</style>
+<h1 id="title"></h1><p class="status" id="status">Initializing review…</p>
+<div class="toolbar">
+  <label id="viewselector">View <select id="viewmode"><option value="2d">2D geographic</option><option value="3d">3D interactive</option></select></label>
+  <label>Area <select id="area"></select></label>
+  <details id="vector-controls" class="vector-controls" hidden><summary id="vector-summary">Boundaries</summary><div class="vector-menu" id="vector-menu"></div></details>
+  <label title="Reload the page periodically while the visualization is being updated"><input type="checkbox" id="auto" checked> Auto-refresh</label>
+  <span class="hint">Linked views</span>
+  <span id="controls3d"><label style="display:inline-flex">Vertical exaggeration <select id="vertical"><option value="1">1×</option><option value="2">2×</option><option value="5">5×</option></select></label></span>
+  <button id="reset">Reset view</button>
+  <button id="refresh" title="Reload this page now">Refresh</button>
+</div>
+<div class="panes" id="panes"></div>
+<p id="instructions2d" class="hint">2D: wheel to zoom, drag to pan. Both panels remain geographically synchronized. NoData is transparent. RGB is selectable only as a background, not an elevation product. Adjust RGB transparency and elevation-layer opacity independently in each panel. Use Boundaries to select the outlines you want to compare.</p>
+<p id="instructions3d" class="hint" hidden>3D: drag to rotate, Shift-drag to pan, wheel to zoom. Terrain and sparse cells are displayed automatically. NoData remains empty; no elevations are invented. RGB imagery is drawn on its own georeferenced plane underneath terrain, covering the full image footprint even where terrain is NoData. RGB transparency and terrain opacity are separate controls; the imagery does not alter terrain heights. Vector overlays are 2D only.</p>
+<details id="catalog-details"><summary id="catalog-summary">Details · available products</summary><div id="catalog" class="table-scroll"></div></details>
+<details><summary>Details · diagnostics and provenance</summary><div id="tables"></div><h3>Events</h3><ul id="events" class="events"></ul><h3>Metrics</h3><pre id="metrics"></pre><h3>Selected products</h3><pre id="provenance"></pre></details>
+<script id="data" type="application/json">__REVIEW_DATA__</script>
+<script>
+'use strict';
+const D=JSON.parse(document.getElementById('data').textContent),$=s=>document.querySelector(s),panes=[];
+const key='universal_viz_v13:'+location.pathname.replace(/[^/]*$/, '');let saved={};try{saved=JSON.parse(localStorage.getItem(key)||'{}')}catch(_e){}
+window.__reviewScenes=window.__reviewScenes||{};
+let camera3d={yaw:-0.85,pitch:0.78,distance:4000,panX:0,panY:0}, user3d=false;
+const sceneRequests={};
+// Visibility is keyed by area and vector key; new layers honor catalog defaults.
+const vectorVisibilityByArea=(saved.vectorVisibilityByArea && typeof saved.vectorVisibilityByArea==='object')?saved.vectorVisibilityByArea:{};
+const vectorPalette=['#dd7314','#2563eb','#7c3aed','#16836d','#b43e65'];
+function vectors(){return D.areas[$('#area').value]?.vectors||{}}
+function vectorDisplay(layer,index){const d=layer.display||{};return {
+  visible:d.visible!==false,color:d.color||vectorPalette[index%vectorPalette.length],
+  width:d.width??1.8,dash:Array.isArray(d.dash)?d.dash:[]};}
+function selectedVectorVisibility(){const area=$('#area').value;return vectorVisibilityByArea[area]||(vectorVisibilityByArea[area]={});}
+function vectorIsVisible(key,layer,index){const savedValue=selectedVectorVisibility()[key];return typeof savedValue==='boolean'?savedValue:vectorDisplay(layer,index).visible;}
+
+function cache(){try{localStorage.setItem(key,JSON.stringify({mode:$('#viewmode').value,area:$('#area').value,vertical:$('#vertical').value,cam:camera3d,vectorVisibilityByArea,auto:$('#auto').checked,panes:panes.map(p=>({key:p.select.value,view:p.view,cam:p.cam,bg:p.bgSelect.value,opacity:Number(p.opacity.value),rgbTransparency:Number(p.rgbTransparency.value)}))}))}catch(_e){}}
+function prods(){return D.areas[$('#area').value]?.products||{}}
+// Legends are unshaded palette keys, not an attempt to undo 2D hillshade.
+// Legend PNGs come from the same scale-dependent palette code as 2D and 3D.
+function legendInfo(product){
+  if(!product||product.style==='categorical'||!Array.isArray(product.limits)||product.limits.length!==2)return null;
+  const limits=product.limits.map(Number);
+  if(!limits.every(Number.isFinite)||limits[1]<=limits[0]||product.preview_valid_cells===0)return null;
+  const ramp=product.legend?.ramp||D.legend_ramps?.[product.style];
+  if(!ramp)return null;
+  const titles={elevation:'Elevation',difference:'Elevation difference',scalar:'Value',grayscale:'Grayscale value'};
+  return {style:product.style,limits,ramp,palette:product.legend?.palette||({elevation:'water_level_anchored_bathy_land_v1',difference:'RdBu_r',scalar:'viridis',grayscale:'gray'}[product.style]||''),title:product.legend?.title||titles[product.style]||'Value',
+    units:product.legend ? (product.legend.units??'') : (product.metadata?.value_units||product.metadata?.units||''),
+    datum:product.style==='elevation' ? (product.legend ? (product.legend.datum??'') : (product.metadata?.vertical_datum||'')) : '',
+    waterLevel:product.style==='elevation' ? (product.water_level??0) : null};
+}
+function formatLegendValue(value,span){
+  if(!Number.isFinite(value))return '—';
+  if(Math.abs(value)>0&&((Math.abs(value)>=1e8)||span<1e-5))return value.toExponential(2);
+  const decimals=span>=100?1:span>=5?2:span>=.1?3:span>=.001?5:7;
+  const v=Math.abs(value)<Math.pow(10,-decimals)*.4?0:value;
+  return v.toLocaleString(undefined,{maximumFractionDigits:decimals});
+}
+function renderLegend(box,info){
+  box.replaceChildren();box.hidden=!info;if(!info)return;
+  const heading=document.createElement('div');heading.className='legend-title';
+  heading.textContent=info.title+(info.units?' ('+info.units+')':'')+(info.datum?' · '+info.datum:'');
+  const img=document.createElement('img');img.className='legend-ramp';img.src=info.ramp;img.alt='Continuous '+info.style+' color ramp, low to high';
+  const ticks=document.createElement('div');ticks.className='legend-ticks';
+  const [lo,hi]=info.limits;for(let i=0;i<=4;i++){
+    const tick=document.createElement('span');tick.textContent=formatLegendValue(lo+(hi-lo)*i/4,hi-lo);ticks.append(tick);
+  }
+  const note=document.createElement('div');note.className='legend-explainer';
+  const transition=info.style==='elevation'&&Number.isFinite(info.waterLevel)?
+    'Blue below '+formatLegendValue(info.waterLevel,hi-lo)+(info.units?' '+info.units:'')+' · ':'';
+  note.textContent=transition+'Unshaded color scale; terrain lighting may darken the displayed colors.';
+  box.append(heading,img,ticks,note);
+}
+function updateLegends(){
+  // Each pane has its own color bar; identical groups still use identical limits.
+  panes.forEach(p=>renderLegend(p.legend,legendInfo(prods()[p.select.value])));
+}
+
+function buildProductCatalog(){const rows=[];for(const [area,a] of Object.entries(D.areas||{})){
+  for(const [key,p] of Object.entries(a.products||{}))rows.push({area,key,label:p.label||key,stage:p.stage||'—',group:p.group||'—',
+    input:p.source?.path||'stream preview',status:p.terrain_3d_status||'2D only'});
+  for(const [key,v] of Object.entries(a.vectors||{}))rows.push({area,key,label:v.label||key,stage:v.stage||'—',group:'Vector overlay',input:v.source?.path||'—',status:'2D overlay'});}
+  $('#catalog-summary').textContent='Details · available products ('+rows.length+')';
+  const table=document.createElement('table'),headers=['Area','Product label','Stage','Group','Input source','3D'];
+  const tr=document.createElement('tr');for(const h of headers){const th=document.createElement('th');th.textContent=h;tr.append(th);}table.append(tr);
+  for(const p of rows){const tr=document.createElement('tr');for(const k of ['area','label','stage','group','input','status']){
+    const td=document.createElement('td');td.textContent=p[k];tr.append(td);}table.append(tr);}
+  $('#catalog').replaceChildren(table);}
+
+function selOptions(s,rows){s.replaceChildren(...rows.map(([k,v])=>{let o=document.createElement('option');o.value=k;o.textContent=v;return o}))}
+function worldToScreen(x,y,v,w,h){return [(x-v.x)/v.scale+w/2,(v.y-y)/v.scale+h/2]}
+function screenToWorld(x,y,v,w,h){return [v.x+(x-w/2)*v.scale,v.y-(y-h/2)*v.scale]}
+// The scene's navigation frame is a local metric map of Web Mercator. It is
+// derived from the group's geographic AOI, never from provider-specific data.
+function productFrame(p){const item=prods()[p.select.value],frame=item?.terrain_scene?.navigation_frame;
+  if(frame?.mercator_to_local?.length===4)return frame;
+  const group=D.areas[$('#area').value]?.groups?.[item?.group],b=group?.camera_bounds_3857||item?.bounds;
+  if(!b)return null;const cx=(b[0]+b[2])/2,cy=(b[1]+b[3])/2;
+  const lat=2*Math.atan(Math.exp(cy/6378137))-Math.PI/2,k=Math.max(.01,Math.cos(lat));
+  return {center_3857:[cx,cy],origin_xy_m:[0,0],mercator_to_local:[k,0,0,k]};}
+function mercatorToLocal(frame,x,y){if(!frame)return [0,0];
+  const [a,b,c,d]=frame.mercator_to_local,dx=x-frame.center_3857[0],dy=y-frame.center_3857[1];
+  return [frame.origin_xy_m[0]+a*dx+b*dy,frame.origin_xy_m[1]+c*dx+d*dy];}
+function localToMercator(frame,x,y){if(!frame)return [0,0];const [a,b,c,d]=frame.mercator_to_local;
+  const det=a*d-b*c;if(!Number.isFinite(det)||Math.abs(det)<1e-12)return [...frame.center_3857];
+  const dx=x-frame.origin_xy_m[0],dy=y-frame.origin_xy_m[1];
+  return [frame.center_3857[0]+(d*dx-b*dy)/det,frame.center_3857[1]+(-c*dx+a*dy)/det];}
+function metersPerMercatorY(frame){if(!frame)return 1;const [,b,,d]=frame.mercator_to_local;return Math.max(1e-9,Math.hypot(b,d));}
+const TERRAIN_FOV=.85;
+function paneHeight(p){return Math.max(1,p.viewport.getBoundingClientRect().height||520);}
+function cameraFrom2D(p){if(!p.view)return;const frame=productFrame(p),[x,y]=mercatorToLocal(frame,p.view.x,p.view.y);
+  const old=p.cam||camera3d,pitch=Math.max(.05,Math.min(1.54,old.pitch));
+  const mpp=p.view.scale*metersPerMercatorY(frame);
+  const distance=mpp*paneHeight(p)*Math.sin(pitch)/(2*Math.tan(TERRAIN_FOV/2));
+  p.cam={...old,panX:x,panY:y,distance:Math.max(.1,Math.min(1e9,distance))};}
+function viewFrom3D(p){if(!p.cam)return;const frame=productFrame(p),[x,y]=localToMercator(frame,p.cam.panX,p.cam.panY);
+  const pitch=Math.max(.05,Math.min(1.54,p.cam.pitch));
+  const scale=2*Math.tan(TERRAIN_FOV/2)*p.cam.distance/
+    (paneHeight(p)*Math.sin(pitch)*metersPerMercatorY(frame));
+  p.view={x,y,scale:Math.max(1e-8,Math.min(1e12,scale))};}
+function transferMode(oldMode,newMode){if(oldMode===newMode)return;
+  for(const p of panes){if(oldMode==='2d'&&newMode==='3d')cameraFrom2D(p);
+    else if(oldMode==='3d'&&newMode==='2d')viewFrom3D(p);}
+  // Linked camera state is carried through both representations, with each
+  // pane's own scene projection respected when the rasters use different groups.
+  if(panes[0]){if(newMode==='2d'){for(const q of panes.slice(1))q.view={...panes[0].view};}
+    else{const origin=productFrame(panes[0]),v=localToMercator(origin,panes[0].cam.panX,panes[0].cam.panY);
+      for(const q of panes.slice(1)){const xy=mercatorToLocal(productFrame(q),...v);
+        q.cam={...panes[0].cam,panX:xy[0],panY:xy[1]};}}}}
+
+function baseCamera(){const group=Object.values(D.areas[$('#area').value]?.groups||{})[0];const b=group?.camera_bounds_3857;
+  if(!b)return {yaw:-0.85,pitch:.78,distance:4000,panX:0,panY:0};
+  const latitude=(2*Math.atan(Math.exp(((b[1]+b[3])/2)/6378137))-Math.PI/2);
+  const factor=Math.max(.05,Math.cos(latitude));const span=Math.max(b[2]-b[0],b[3]-b[1])*factor;
+  return {yaw:-.85,pitch:.78,distance:Math.max(span*1.9,10),panX:0,panY:0};}
+function overlayGeometry(ctx,geom,p,w,h){
+  if(!geom)return;const typ=geom.type,coords=geom.coordinates;
+  if(typ==='GeometryCollection'){for(const g of geom.geometries||[])overlayGeometry(ctx,g,p,w,h);return;}
+  function point(c){return worldToScreen(c[0],c[1],p.view,w,h);}
+  function line(seq,close){if(!seq?.length)return;ctx.beginPath();const first=point(seq[0]);ctx.moveTo(...first);for(let i=1;i<seq.length;i++)ctx.lineTo(...point(seq[i]));if(close)ctx.closePath();ctx.stroke();}
+  if(typ==='Point'){const [x,y]=point(coords);ctx.beginPath();ctx.arc(x,y,3,0,Math.PI*2);ctx.fill();}
+  else if(typ==='MultiPoint'){for(const c of coords){const [x,y]=point(c);ctx.beginPath();ctx.arc(x,y,3,0,Math.PI*2);ctx.fill();}}
+  else if(typ==='LineString')line(coords,false);
+  else if(typ==='MultiLineString')for(const coords2 of coords)line(coords2,false);
+  else if(typ==='Polygon')for(const ring of coords)line(ring,true);
+  else if(typ==='MultiPolygon')for(const polygon of coords)for(const ring of polygon)line(ring,true);
+}
+function drawOverlays(p,ctx,w,h){
+  for(const [index,[key,layer]] of Object.entries(vectors()).entries()){
+    if(!vectorIsVisible(key,layer,index))continue;
+    const d=vectorDisplay(layer,index);
+    ctx.save();ctx.strokeStyle=d.color;ctx.fillStyle=d.color;ctx.lineWidth=d.width;
+    ctx.setLineDash(d.dash);
+    for(const geom of layer.geometry||[])overlayGeometry(ctx,geom,p,w,h);
+    ctx.restore();
+  }
+}
+function draw2d(p){if($('#viewmode').value!=='2d')return;
+  const r=p.c2.getBoundingClientRect(),dpr=window.devicePixelRatio||1;
+  p.c2.width=Math.max(1,Math.round(r.width*dpr));p.c2.height=Math.max(1,Math.round(r.height*dpr));
+  const ctx=p.c2.getContext('2d');ctx.scale(dpr,dpr);ctx.clearRect(0,0,r.width,r.height);
+  if(!p.view)return;
+  ctx.imageSmoothingEnabled=true;ctx.imageSmoothingQuality='high';
+  function imageAt(img,bounds){if(!img||!bounds)return;
+    const a=worldToScreen(bounds[0],bounds[3],p.view,r.width,r.height),z=worldToScreen(bounds[2],bounds[1],p.view,r.width,r.height);
+    ctx.drawImage(img,a[0],a[1],z[0]-a[0],z[1]-a[1]);}
+  const bg=prods()[p.bgSelect.value];
+  if(p.bgReady&&bg){ctx.save();ctx.globalAlpha=1-Number(p.rgbTransparency.value)/100;imageAt(p.bgImage,bg.bounds);ctx.restore();}
+  const product=prods()[p.select.value];
+  if(p.ready&&product){ctx.save();ctx.globalAlpha=demAlpha(p);
+    imageAt(p.image,product.bounds);ctx.restore();}
+  drawOverlays(p,ctx,r.width,r.height);
+}
+// Two independent opacities: RGB transparency affects the background image/plane,
+// while DEM opacity affects only the elevation preview/mesh in both dimensions.
+function demAlpha(p){const bg=prods()[p.bgSelect.value];return (p.bgReady&&bg?.style==='rgb')?Number(p.opacity.value)/100:1;}
+function updateBackgroundControls(p){
+  const products=prods(),hasRgb=Object.values(products).some(v=>v.style==='rgb');
+  p.rgbControls.hidden=!hasRgb;
+  const bg=products[p.bgSelect.value],fg=products[p.select.value];
+  p.rgbTransparencyControl.hidden=!p.bgReady||bg?.style!=='rgb';
+  p.opacityControl.hidden=!fg||fg.style==='rgb'||!p.bgReady||bg?.style!=='rgb';
+}
+// file:// compatible, origin-clean 3D textures are lazily loaded from a
+// companion local JS asset. RGB is not embedded in the DEM scene or product
+// dropdown, and needs no network requests or running server.
+window.__reviewRgbData=window.__reviewRgbData||{};
+const rgbScriptRequests={};
+function loadRgbDataScript(product){
+  const key=product.rgb_data_key,script=product.rgb_data_script;
+  if(!key||!script)return Promise.resolve(null);
+  if(window.__reviewRgbData[key])return Promise.resolve(window.__reviewRgbData[key]);
+  if(!rgbScriptRequests[script])rgbScriptRequests[script]=new Promise((resolve,reject)=>{
+    const tag=document.createElement('script');tag.src=script+'?v='+D.updated_epoch;
+    tag.onload=()=>resolve(window.__reviewRgbData[key]||null);
+    tag.onerror=()=>reject(new Error('RGB offline texture script unavailable: '+script));
+    document.head.append(tag);
+  });
+  return rgbScriptRequests[script];
+}
+function setBackground(p){
+  const key=p.bgSelect.value,product=prods()[key],generation=(p.bgGeneration||0)+1;
+  p.bgGeneration=generation;p.bgReady=false;p.bgImage=null;p.rgbTextureDirty=true;updateBackgroundControls(p);
+  if(!product||product.style!=='rgb'){draw2d(p);draw3d(p);cache();return;}
+  const image=new Image();p.bgImage=image;
+  image.onload=()=>{if(p.bgGeneration!==generation)return;p.bgReady=true;p.rgbTextureDirty=true;updateBackgroundControls(p);draw2d(p);draw3d(p);};
+  image.onerror=()=>{if(p.bgGeneration===generation){p.bgReady=false;updateBackgroundControls(p);draw2d(p);console.warn('RGB background preview unavailable:',product.label)}};
+  loadRgbDataScript(product).then(uri=>{
+    if(p.bgGeneration===generation)image.src=uri||(product.image+'?v='+D.updated_epoch);
+  }).catch(error=>{
+    console.warn(error.message);
+    if(p.bgGeneration===generation)image.src=product.image+'?v='+D.updated_epoch;
+  });
+  draw2d(p);draw3d(p);cache();
+}
+function fit2d(p){const subset=Object.values(prods()).filter(x=>x.bounds&&x.style!=='rgb');const all=subset.length?subset:Object.values(prods()).filter(x=>x.bounds);if(!all.length){p.view=null;return}const r=p.viewport.getBoundingClientRect(),b=[Math.min(...all.map(v=>v.bounds[0])),Math.min(...all.map(v=>v.bounds[1])),Math.max(...all.map(v=>v.bounds[2])),Math.max(...all.map(v=>v.bounds[3]))];p.view={x:(b[0]+b[2])/2,y:(b[1]+b[3])/2,scale:Math.max((b[2]-b[0])/Math.max(r.width,1),(b[3]-b[1])/Math.max(r.height,1),1e-6)*1.05};}
+function sync2d(p){if(p.view)for(const q of panes)q.view={...p.view};panes.forEach(draw2d);cache();}
+function decode64(s,Type){const raw=atob(s),bytes=new Uint8Array(raw.length);for(let i=0;i<raw.length;i++)bytes[i]=raw.charCodeAt(i);return new Type(bytes.buffer);}
+function loadScene(record){if(!record?.terrain_scene)return Promise.resolve(null);const sc=record.terrain_scene;if(window.__reviewScenes[sc.id])return Promise.resolve(window.__reviewScenes[sc.id]);if(sceneRequests[sc.id])return sceneRequests[sc.id];
+  sceneRequests[sc.id]=new Promise((resolve,reject)=>{const script=document.createElement('script');script.src=sc.script;script.onload=()=>window.__reviewScenes[sc.id]?resolve(window.__reviewScenes[sc.id]):reject(new Error('Scene script empty'));script.onerror=()=>reject(new Error('Scene asset missing: '+sc.script));document.head.append(script)});return sceneRequests[sc.id];}
+function compile(gl,type,source){const s=gl.createShader(type);gl.shaderSource(s,source);gl.compileShader(s);if(!gl.getShaderParameter(s,gl.COMPILE_STATUS))throw new Error(gl.getShaderInfoLog(s));return s;}
+function shaderProgram(gl){const vs=`#version 300 es\nin vec3 position;in vec3 color;uniform mat4 mvp;uniform float exaggeration;uniform float pointSize;uniform bool footprintMode;uniform float footprintSize;uniform float pixelHeight;uniform float projectionScale;out vec3 vColor;out vec3 vWorld;void main(){vec3 p=vec3(position.xy,position.z*exaggeration);vWorld=p;vColor=color;gl_Position=mvp*vec4(p,1.0);gl_PointSize=footprintMode ? clamp(footprintSize*projectionScale*pixelHeight/(2.0*max(gl_Position.w,0.01))*0.9,2.0,48.0) : pointSize;}`;
+  const fs=`#version 300 es\nprecision highp float;in vec3 vColor;in vec3 vWorld;uniform bool renderPoints;uniform bool footprintMode;uniform float layerOpacity;out vec4 frag;void main(){if(renderPoints){if(!footprintMode && length(gl_PointCoord-vec2(.5))>.5)discard;frag=vec4(vColor,layerOpacity);return;}vec3 n=normalize(cross(dFdx(vWorld),dFdy(vWorld)));float light=0.34+0.66*abs(dot(n,normalize(vec3(0.55,0.45,0.8))));frag=vec4(vColor*light,layerOpacity);}`;
+  const pr=gl.createProgram();gl.attachShader(pr,compile(gl,gl.VERTEX_SHADER,vs));gl.attachShader(pr,compile(gl,gl.FRAGMENT_SHADER,fs));gl.linkProgram(pr);if(!gl.getProgramParameter(pr,gl.LINK_STATUS))throw new Error(gl.getProgramInfoLog(pr));return pr;}
+function initGPU(p,scene){const gl=p.gl||(p.gl=p.c3.getContext('webgl2',{antialias:true,alpha:false}));if(!gl)throw new Error('WebGL2 unavailable in this browser');if(p.gpu){gl.deleteBuffer(p.gpu.pbuf);gl.deleteBuffer(p.gpu.cbuf);gl.deleteBuffer(p.gpu.ibuf);if(p.gpu.pointBuffer)gl.deleteBuffer(p.gpu.pointBuffer);if(p.gpu.allPointBuffer)gl.deleteBuffer(p.gpu.allPointBuffer);gl.deleteVertexArray(p.gpu.vao);}const program=p.program||(p.program=shaderProgram(gl));
+  const points=decode64(scene.points,Float32Array),colors=decode64(scene.colors,Uint8Array),indices=decode64(scene.indices,Uint32Array),pointIndices=scene.point_indices?decode64(scene.point_indices,Uint32Array):new Uint32Array(),allPointIndices=scene.all_point_indices?decode64(scene.all_point_indices,Uint32Array):pointIndices;const vao=gl.createVertexArray();gl.bindVertexArray(vao);
+  const pbuf=gl.createBuffer();gl.bindBuffer(gl.ARRAY_BUFFER,pbuf);gl.bufferData(gl.ARRAY_BUFFER,points,gl.STATIC_DRAW);let attr=gl.getAttribLocation(program,'position');gl.enableVertexAttribArray(attr);gl.vertexAttribPointer(attr,3,gl.FLOAT,false,0,0);
+  const cbuf=gl.createBuffer();gl.bindBuffer(gl.ARRAY_BUFFER,cbuf);gl.bufferData(gl.ARRAY_BUFFER,colors,gl.STATIC_DRAW);attr=gl.getAttribLocation(program,'color');gl.enableVertexAttribArray(attr);gl.vertexAttribPointer(attr,3,gl.UNSIGNED_BYTE,true,0,0);
+  const ibuf=gl.createBuffer();gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER,ibuf);gl.bufferData(gl.ELEMENT_ARRAY_BUFFER,indices,gl.STATIC_DRAW);
+  const pointBuffer=gl.createBuffer();gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER,pointBuffer);gl.bufferData(gl.ELEMENT_ARRAY_BUFFER,pointIndices,gl.STATIC_DRAW);
+  const allPointBuffer=gl.createBuffer();gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER,allPointBuffer);gl.bufferData(gl.ELEMENT_ARRAY_BUFFER,allPointIndices,gl.STATIC_DRAW);
+  gl.bindVertexArray(null);p.gpu={vao,pbuf,cbuf,ibuf,pointBuffer,allPointBuffer,paletteColors:colors,appliedBackground:null,count:indices.length,pointCount:pointIndices.length,allPointCount:allPointIndices.length};}
+function sub(a,b){return a.map((n,i)=>n-b[i])}function dot(a,b){return a.reduce((v,n,i)=>v+n*b[i],0)}function cross(a,b){return [a[1]*b[2]-a[2]*b[1],a[2]*b[0]-a[0]*b[2],a[0]*b[1]-a[1]*b[0]]}function norm(a){const n=Math.hypot(...a)||1;return a.map(x=>x/n)}
+function viewMatrix(eye,target){const z=norm(sub(eye,target)),x=norm(cross([0,0,1],z)),y=cross(z,x);return [x[0],y[0],z[0],0,x[1],y[1],z[1],0,x[2],y[2],z[2],0,-dot(x,eye),-dot(y,eye),-dot(z,eye),1];}
+function projection(fov,aspect,near,far){const f=1/Math.tan(fov/2);return [f/aspect,0,0,0,0,f,0,0,0,0,(far+near)/(near-far),-1,0,0,(2*far*near)/(near-far),0];}
+function mul(A,B){const R=new Array(16).fill(0);for(let c=0;c<4;c++)for(let r=0;r<4;r++)for(let k=0;k<4;k++)R[c*4+r]+=A[k*4+r]*B[c*4+k];return R;}
+// An imagery plane is independent of the selected terrain mesh. All four corners
+// follow georeferenced RGB bounds (EPSG:3857) into the terrain scene's metric
+// navigation frame. No elevation samples are manufactured outside the DEM.
+function backgroundShaderProgram(gl){
+  const vs=`#version 300 es\nin vec3 position;in vec2 uv;uniform mat4 mvp;uniform float exaggeration;out vec2 vUV;void main(){vUV=uv;gl_Position=mvp*vec4(position.xy,position.z*exaggeration,1.0);}`;
+  const fs=`#version 300 es\nprecision mediump float;in vec2 vUV;uniform sampler2D imageTexture;uniform float opacity;out vec4 frag;void main(){vec4 color=texture(imageTexture,vUV);frag=vec4(color.rgb,color.a*opacity);}`;
+  const pr=gl.createProgram();gl.attachShader(pr,compile(gl,gl.VERTEX_SHADER,vs));gl.attachShader(pr,compile(gl,gl.FRAGMENT_SHADER,fs));gl.linkProgram(pr);
+  if(!gl.getProgramParameter(pr,gl.LINK_STATUS))throw new Error('Background shader: '+gl.getProgramInfoLog(pr));
+  return pr;
+}
+function backgroundFloor(p){
+  const ranges=Object.values(prods()).filter(x=>x.style!=='rgb'&&x.terrain_scene?.data_elevation_range).map(x=>{
+    const a=x.terrain_scene.data_elevation_range,u=x.terrain_scene.vertical_unit_to_m||1;
+    return [Number(a[0])*u,Number(a[1])*u];}).filter(x=>x.every(Number.isFinite));
+  if(!ranges.length){const a=p.scene?.data_elevation_range||[0,1],u=p.scene?.vertical_unit_to_m||1;ranges.push([a[0]*u,a[1]*u]);}
+  const lo=Math.min(...ranges.map(v=>v[0])),hi=Math.max(...ranges.map(v=>v[1]));
+  return lo-Math.max(1,(hi-lo)*.04);
+}
+function drawBackground3d(p,mvp){
+  const bg=prods()[p.bgSelect.value];if(!p.bgReady||!p.bgImage||!bg?.bounds||!p.scene||Number(p.rgbTransparency.value)>=100)return;
+  const gl=p.gl,frame=productFrame(p);if(!frame)return;
+  const key=[p.bgSelect.value,p.scene.id,backgroundFloor(p),...bg.bounds].join('|');
+  if(!p.bgGpu){p.bgGpu={program:backgroundShaderProgram(gl),vao:gl.createVertexArray(),vbo:gl.createBuffer(),uvbo:gl.createBuffer(),texture:gl.createTexture(),planeKey:null};p.rgbTextureDirty=true;}
+  const o=p.bgGpu;
+  if(p.rgbTextureDirty){
+    gl.bindTexture(gl.TEXTURE_2D,o.texture);
+    gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL,true);
+    gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.LINEAR);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_S,gl.CLAMP_TO_EDGE);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,gl.CLAMP_TO_EDGE);
+    // Browser-produced georeferenced preview; alpha retains any RGB NoData.
+    const max=gl.getParameter(gl.MAX_TEXTURE_SIZE);
+    if(Math.max(p.bgImage.naturalWidth,p.bgImage.naturalHeight)>max){
+      const factor=max/Math.max(p.bgImage.naturalWidth,p.bgImage.naturalHeight),cv=document.createElement('canvas');
+      cv.width=Math.max(1,Math.floor(p.bgImage.naturalWidth*factor));cv.height=Math.max(1,Math.floor(p.bgImage.naturalHeight*factor));
+      cv.getContext('2d').drawImage(p.bgImage,0,0,cv.width,cv.height);
+      gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,gl.RGBA,gl.UNSIGNED_BYTE,cv);
+    }else gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,gl.RGBA,gl.UNSIGNED_BYTE,p.bgImage);
+    p.rgbTextureDirty=false;
+  }
+  if(o.planeKey!==key){
+    const [west,south,east,north]=bg.bounds,[swx,swy]=mercatorToLocal(frame,west,south),[sex,sey]=mercatorToLocal(frame,east,south),[nwx,nwy]=mercatorToLocal(frame,west,north),[nex,ney]=mercatorToLocal(frame,east,north);
+    const z=backgroundFloor(p);const verts=new Float32Array([
+      swx,swy,z, sex,sey,z, nwx,nwy,z,
+      nwx,nwy,z, sex,sey,z, nex,ney,z]);
+    const uv=new Float32Array([0,0, 1,0, 0,1, 0,1, 1,0, 1,1]);
+    gl.bindVertexArray(o.vao);gl.bindBuffer(gl.ARRAY_BUFFER,o.vbo);gl.bufferData(gl.ARRAY_BUFFER,verts,gl.STATIC_DRAW);
+    let attr=gl.getAttribLocation(o.program,'position');gl.enableVertexAttribArray(attr);gl.vertexAttribPointer(attr,3,gl.FLOAT,false,0,0);
+    gl.bindBuffer(gl.ARRAY_BUFFER,o.uvbo);gl.bufferData(gl.ARRAY_BUFFER,uv,gl.STATIC_DRAW);
+    attr=gl.getAttribLocation(o.program,'uv');gl.enableVertexAttribArray(attr);gl.vertexAttribPointer(attr,2,gl.FLOAT,false,0,0);
+    gl.bindVertexArray(null);o.planeKey=key;
+  }
+  gl.useProgram(o.program);gl.uniformMatrix4fv(gl.getUniformLocation(o.program,'mvp'),false,new Float32Array(mvp));
+  gl.uniform1f(gl.getUniformLocation(o.program,'exaggeration'),Number($('#vertical').value));
+  gl.uniform1f(gl.getUniformLocation(o.program,'opacity'),1-Number(p.rgbTransparency.value)/100);
+  gl.activeTexture(gl.TEXTURE0);gl.bindTexture(gl.TEXTURE_2D,o.texture);gl.uniform1i(gl.getUniformLocation(o.program,'imageTexture'),0);
+  gl.enable(gl.BLEND);gl.blendFunc(gl.SRC_ALPHA,gl.ONE_MINUS_SRC_ALPHA);
+  gl.depthMask(false);gl.bindVertexArray(o.vao);gl.drawArrays(gl.TRIANGLES,0,6);gl.bindVertexArray(null);gl.depthMask(true);
+}
+function renderModeForPane(p){return p.scene?.render_mode==='points'?'cells':'hybrid_cells';}
+function draw3d(p){if($('#viewmode').value!=='3d'||!p.gpu||!p.gl||!p.scene)return;const gl=p.gl,rect=p.c3.getBoundingClientRect(),dpr=Math.min(2,devicePixelRatio||1),w=Math.max(1,Math.round(rect.width*dpr)),h=Math.max(1,Math.round(rect.height*dpr));if(p.c3.width!==w||p.c3.height!==h){p.c3.width=w;p.c3.height=h;}gl.viewport(0,0,w,h);gl.clearColor(.89,.93,.97,1);gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT);gl.enable(gl.DEPTH_TEST);const c=p.cam||camera3d,dist=c.distance;
+  const product=prods()[p.select.value],limits=product?.limits||[0,0],unit=product?.terrain_scene?.vertical_unit_to_m||1;
+  const centerZ=(Number(limits[0])+Number(limits[1]))*.5*unit*Number($('#vertical').value);
+  const center=[c.panX,c.panY,centerZ],eye=[c.panX+Math.cos(c.pitch)*Math.cos(c.yaw)*dist,c.panY+Math.cos(c.pitch)*Math.sin(c.yaw)*dist,centerZ+Math.sin(c.pitch)*dist];const M=mul(projection(TERRAIN_FOV,w/h,Math.max(.01,dist*.002),Math.max(dist*30,1e6)),viewMatrix(eye,center));
+  // Draw full-extent RGB underneath the selected elevation, never colorize
+  // terrain vertices with RGB (which clipped imagery to data footprint).
+  drawBackground3d(p,M);
+  const layerOpacity=demAlpha(p);
+  if(layerOpacity<=0)return;
+  gl.enable(gl.BLEND);gl.blendFunc(gl.SRC_ALPHA,gl.ONE_MINUS_SRC_ALPHA);
+  gl.depthMask(layerOpacity>=1);
+  gl.useProgram(p.program);gl.uniformMatrix4fv(gl.getUniformLocation(p.program,'mvp'),false,new Float32Array(M));gl.uniform1f(gl.getUniformLocation(p.program,'exaggeration'),Number($('#vertical').value));gl.uniform1f(gl.getUniformLocation(p.program,'pointSize'),5*(Math.min(2,devicePixelRatio||1)));gl.uniform1f(gl.getUniformLocation(p.program,'layerOpacity'),layerOpacity);
+  const mode=renderModeForPane(p);
+  const footprints=(mode==='hybrid_cells'||mode==='cells')&&Number.isFinite(p.scene?.preview_cell_size_m)&&p.scene.preview_cell_size_m>0;
+  gl.uniform1i(gl.getUniformLocation(p.program,'footprintMode'),footprints?1:0);
+  gl.uniform1f(gl.getUniformLocation(p.program,'footprintSize'),footprints?p.scene.preview_cell_size_m:0);
+  gl.uniform1f(gl.getUniformLocation(p.program,'pixelHeight'),h);
+  gl.uniform1f(gl.getUniformLocation(p.program,'projectionScale'),1/Math.tan(TERRAIN_FOV/2));
+  gl.bindVertexArray(p.gpu.vao);
+  const hybrid=(mode==='hybrid_cells'||mode==='hybrid_points'||mode==='surface');
+  if(hybrid&&p.gpu.count){gl.uniform1i(gl.getUniformLocation(p.program,'renderPoints'),0);gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER,p.gpu.ibuf);gl.drawElements(gl.TRIANGLES,p.gpu.count,gl.UNSIGNED_INT,0);}
+  const count=mode==='surface'?0:hybrid?p.gpu.pointCount:p.gpu.allPointCount;
+  if(count){gl.uniform1i(gl.getUniformLocation(p.program,'renderPoints'),1);gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER,hybrid?p.gpu.pointBuffer:p.gpu.allPointBuffer);gl.drawElements(gl.POINTS,count,gl.UNSIGNED_INT,0);}gl.bindVertexArray(null);gl.depthMask(true);}
+function fitValid3d(){const sources=panes.filter(p=>p.scene?.data_bounds_local_xy?.length===4);
+  if(!sources.length)return;
+  const merc=[];let relief=0;
+  for(const p of sources){const [x0,y0,x1,y1]=p.scene.data_bounds_local_xy,frame=productFrame(p);
+    merc.push(localToMercator(frame,x0,y0),localToMercator(frame,x1,y1));
+    const z=p.scene.data_elevation_range||[0,0];relief=Math.max(relief,(z[1]-z[0])*(p.scene.vertical_unit_to_m||1)*Number($('#vertical').value));}
+  // When fitting a sparse 3D DEM, retain the user's independent RGB footprint
+  // in view. Do not conflate the background extent with measured terrain.
+  for(const p of panes){const bg=prods()[p.bgSelect.value];if(bg?.style==='rgb'&&Array.isArray(bg.bounds)&&bg.bounds.length===4){
+    merc.push([bg.bounds[0],bg.bounds[1]],[bg.bounds[2],bg.bounds[3]]);}}
+  const bounds=[Math.min(...merc.map(p=>p[0])),Math.min(...merc.map(p=>p[1])),Math.max(...merc.map(p=>p[0])),Math.max(...merc.map(p=>p[1]))];
+  const center=[(bounds[0]+bounds[2])/2,(bounds[1]+bounds[3])/2];
+  for(const p of panes){const fr=productFrame(p),xy=mercatorToLocal(fr,...center),sw=mercatorToLocal(fr,bounds[0],bounds[1]),ne=mercatorToLocal(fr,bounds[2],bounds[3]);
+    const span=Math.max(Math.hypot(ne[0]-sw[0],ne[1]-sw[1]),relief,2);
+    p.cam={...(p.cam||camera3d),panX:xy[0],panY:xy[1],distance:Math.max(6,span*1.8)};}
+  user3d=true;panes.forEach(draw3d);cache();}
+function sync3d(p){{camera3d={...p.cam};const geo=localToMercator(productFrame(p),p.cam.panX,p.cam.panY);
+  for(const q of panes){if(q===p)continue;const xy=mercatorToLocal(productFrame(q),...geo);
+    q.cam={...camera3d,panX:xy[0],panY:xy[1]};}}panes.forEach(draw3d);cache();}
+async function load(p){const product=prods()[p.select.value],version=D.updated_epoch;p.ready=false;p.generation=(p.generation||0)+1;const generation=p.generation;p.placeholder.classList.remove('show');p.scene=null;updateLegends();if(!product){p.caption.textContent='Waiting for raster products…';p.placeholder.textContent='Waiting for 3D product';p.placeholder.classList.add('show');return}
+  p.image=new Image();p.image.onload=()=>{if(generation!==p.generation)return;p.ready=true;draw2d(p)};p.image.onerror=()=>{if(generation===p.generation)p.caption.textContent='2D preview missing: '+product.label};p.image.src=product.image+'?v='+version;
+  p.caption.textContent=product.label+' · '+(product.stage||'product')+' · '+product.preview_shape.join(' × ')+' pixels'+(product.style==='rgb'?' · RGB display-only imagery':'; limits '+(product.limits||[]).map(x=>Number(x).toFixed(2)).join(' to '));
+  if($('#viewmode').value==='3d'){
+    if(!product.terrain_scene){p.placeholder.textContent=product.terrain_3d_status==='preparing'?'Preparing terrain mesh…':(product.terrain_3d_error||'3D not requested for this raster');p.placeholder.classList.add('show');return;}
+    try{const scene=await loadScene(product);if(generation!==p.generation)return;initGPU(p,scene);p.scene=scene;updateBackgroundControls(p);p.placeholder.classList.remove('show');p.caption.textContent+=' · '+scene.triangles.toLocaleString()+' triangles';if(scene.point_count)p.caption.textContent+=' + '+scene.point_count.toLocaleString()+' sparse bins';
+      p.caption.textContent+=' · '+(scene.all_point_count??scene.valid_samples??0).toLocaleString()+' populated bins';draw3d(p);
+      if(!user3d&&!autoFittedSparse&&panes.every(q=>q.scene||!prods()[q.select.value]?.terrain_scene)&&panes.some(q=>q.scene?.render_mode==='points')){fitValid3d();autoFittedSparse=true;}}
+    catch(e){if(generation!==p.generation)return;p.placeholder.textContent='3D unavailable: '+e.message;p.placeholder.classList.add('show');}
+  }
+  $('#provenance').textContent=JSON.stringify(Object.fromEntries(panes.map((v,i)=>['panel_'+(i+1),prods()[v.select.value]||null])),null,2);
+}
+for(let i=0;i<2;i++){
+  const section=document.createElement('section');section.className='pane';section.innerHTML='<label>Product <select></select></label><div class="rgb-controls" hidden><label>RGB background <select class="rgb-select"></select></label><span class="rgb-transparency-control" hidden><label>RGB transparency <input class="rgb-transparency" type="range" min="0" max="100" value="0" step="5" aria-label="RGB transparency"></label><output class="rgb-transparency-value">0%</output></span></div><div class="dem-opacity-controls"><span class="rgb-opacity-control" hidden><label>DEM opacity <input class="rgb-opacity" type="range" min="0" max="100" value="100" step="5" aria-label="DEM opacity"></label><output class="rgb-opacity-value">100%</output></span></div><div class="color-legend" hidden aria-label="Continuous raster color bar"></div><div class="viewport"><canvas class="canvas2d"></canvas><canvas class="canvas3d"></canvas><div class="placeholder"></div></div><p class="caption"></p>';$('#panes').append(section);
+  const p={viewport:section.querySelector('.viewport'),select:section.querySelector('label select'),bgSelect:section.querySelector('.rgb-select'),rgbControls:section.querySelector('.rgb-controls'),opacityControl:section.querySelector('.rgb-opacity-control'),opacity:section.querySelector('.rgb-opacity'),opacityLabel:section.querySelector('.rgb-opacity-value'),rgbTransparencyControl:section.querySelector('.rgb-transparency-control'),rgbTransparency:section.querySelector('.rgb-transparency'),rgbTransparencyLabel:section.querySelector('.rgb-transparency-value'),rgbTextureDirty:true,bgGpu:null,bgReady:false,bgImage:null,c2:section.querySelector('.canvas2d'),c3:section.querySelector('.canvas3d'),placeholder:section.querySelector('.placeholder'),legend:section.querySelector('.color-legend'),caption:section.querySelector('.caption'),view:null,cam:null,ready:false,image:new Image()};panes.push(p);
+  p.bgSelect.onchange=()=>setBackground(p);
+  p.opacity.oninput=()=>{p.opacityLabel.textContent=p.opacity.value+'%';draw2d(p);draw3d(p);cache()};
+  p.rgbTransparency.oninput=()=>{p.rgbTransparencyLabel.textContent=p.rgbTransparency.value+'%';draw2d(p);draw3d(p);cache()};
+  p.select.onchange=()=>{if(p.cam&&p.lastFrame){const geo=localToMercator(p.lastFrame,p.cam.panX,p.cam.panY);
+    const xy=mercatorToLocal(productFrame(p),...geo);p.cam.panX=xy[0];p.cam.panY=xy[1];}
+    p.lastFrame=productFrame(p);updateBackgroundControls(p);load(p);cache()};
+  p.c2.onwheel=e=>{e.preventDefault();if(!p.view)return;const r=p.c2.getBoundingClientRect(),x=e.clientX-r.left,y=e.clientY-r.top,b=screenToWorld(x,y,p.view,r.width,r.height);p.view.scale=Math.max(1e-8,Math.min(1e12,p.view.scale*Math.exp(Math.max(-1,Math.min(1,e.deltaY*.001)))));const a=screenToWorld(x,y,p.view,r.width,r.height);p.view.x+=b[0]-a[0];p.view.y+=b[1]-a[1];sync2d(p)};
+  let drag2=null;p.c2.onpointerdown=e=>{if(p.view){drag2=[e.clientX,e.clientY];p.c2.setPointerCapture(e.pointerId)}};p.c2.onpointermove=e=>{if(!drag2||!p.view)return;p.view.x-=(e.clientX-drag2[0])*p.view.scale;p.view.y+=(e.clientY-drag2[1])*p.view.scale;drag2=[e.clientX,e.clientY];sync2d(p)};p.c2.onpointerup=p.c2.onpointercancel=()=>drag2=null;
+  p.c3.oncontextmenu=e=>e.preventDefault();p.c3.onwheel=e=>{e.preventDefault();p.cam.distance=Math.max(.1,Math.min(1e9,p.cam.distance*Math.exp(Math.max(-1,Math.min(1,e.deltaY*.001)))));user3d=true;sync3d(p)};
+  let drag3=null;p.c3.onpointerdown=e=>{drag3=[e.clientX,e.clientY,e.button===2||e.shiftKey];p.c3.setPointerCapture(e.pointerId)};
+  p.c3.onpointermove=e=>{if(!drag3)return;const dx=e.clientX-drag3[0],dy=e.clientY-drag3[1];if(drag3[2]){const k=p.cam.distance*.0016;p.cam.panX+=(-dx*Math.sin(p.cam.yaw)-dy*Math.cos(p.cam.yaw))*k;p.cam.panY+=(dx*Math.cos(p.cam.yaw)-dy*Math.sin(p.cam.yaw))*k;}else{p.cam.yaw+=dx*.009;p.cam.pitch=Math.max(.05,Math.min(1.54,p.cam.pitch+dy*.008))}drag3=[e.clientX,e.clientY,drag3[2]];user3d=true;sync3d(p)};p.c3.onpointerup=p.c3.onpointercancel=()=>drag3=null;
+}
+function validCamera(c){return c&&['yaw','pitch','distance','panX','panY'].every(k=>Number.isFinite(c[k]))&&c.distance>0;}
+function updateVectorControls(){
+  const entries=Object.entries(vectors()),box=$('#vector-controls'),menu=$('#vector-menu');
+  box.hidden=!entries.length;menu.replaceChildren();
+  if(!entries.length)return;
+  for(const [i,[key,layer]] of entries.entries()){
+    const d=vectorDisplay(layer,i),label=document.createElement('label'),input=document.createElement('input');
+    const swatch=document.createElement('span'),name=document.createElement('span');
+    label.className='vector-row';input.type='checkbox';input.checked=vectorIsVisible(key,layer,i);
+    input.setAttribute('aria-label',layer.label||key);
+    input.onchange=()=>{selectedVectorVisibility()[key]=input.checked;updateVectorSummary();panes.forEach(draw2d);cache()};
+    swatch.className='vector-swatch';swatch.style.borderBottomColor=d.color;
+    swatch.style.borderBottomStyle=d.dash.length?(d.dash[0]<=3?'dotted':'dashed'):'solid';
+    name.textContent=layer.label||key;label.append(input,swatch,name);menu.append(label);
+  }
+  const note=document.createElement('div');note.className='vector-note';note.textContent='Display outlines only · 2D';menu.append(note);
+  updateVectorSummary();
+}
+function updateVectorSummary(){const entries=Object.entries(vectors());const active=entries.filter(([key,v],i)=>vectorIsVisible(key,v,i)).length;
+  $('#vector-summary').textContent=`Boundaries (${active}/${entries.length})`;}
+
+function refill(restore=false){updateVectorControls();const entries=Object.entries(prods());for(let i=0;i<2;i++){const p=panes[i],state=restore?saved.panes?.[i]:null;const elevations=entries.filter(([,value])=>value.style!=='rgb');selOptions(p.select,elevations.map(([key,value])=>[key,value.label]));if(elevations.length)p.select.value=elevations[Math.min(i,elevations.length-1)][0];
+    const options=[['','None'],...entries.filter(([,v])=>v.style==='rgb').map(([k,v])=>[k,v.label])];
+    selOptions(p.bgSelect,options);
+    p.bgSelect.value=(state&&prods()[state.bg]?.style==='rgb')?state.bg:(state&&state.bg==='')?'':(options[1]?.[0]||'');
+    p.opacity.value=state&&Number.isFinite(state.opacity)?Math.min(100,Math.max(0,state.opacity)):100;
+    p.rgbTransparency.value=state&&Number.isFinite(state.rgbTransparency)?Math.min(100,Math.max(0,state.rgbTransparency)):0;
+    p.rgbTransparencyLabel.textContent=p.rgbTransparency.value+'%';
+    p.opacityLabel.textContent=p.opacity.value+'%';
+    const defaults=D.areas[$('#area').value]?.defaults;if(defaults&&prods()[defaults[i]]?.style!=='rgb')p.select.value=defaults[i];if(state&&prods()[state.key]?.style!=='rgb')p.select.value=state.key;fit2d(p);if(state?.view&&['x','y','scale'].every(k=>Number.isFinite(state.view[k]))&&state.view.scale>0)p.view={...state.view};p.cam=validCamera(state?.cam)?{...state.cam}:{...camera3d};p.lastFrame=productFrame(p);setBackground(p);load(p)}if(panes[0].view)panes[1].view={...panes[0].view};panes.forEach(draw2d);}
+let activeMode=null,autoFittedSparse=false;
+function setMode(){let mode=$('#viewmode').value;if(!D.enable_3d)mode='2d';
+  if(activeMode&&mode!==activeMode)transferMode(activeMode,mode);
+  activeMode=mode;document.body.classList.toggle('mode3d',mode==='3d');$('#instructions2d').hidden=mode==='3d';$('#instructions3d').hidden=mode!=='3d';panes.forEach(p=>{updateBackgroundControls(p);load(p)});cache()}
+$('#title').textContent=D.title||'Raster visualization';document.title=$('#title').textContent;$('#status').textContent=(D.running?'Updating visualization — ':'Completed visualization — ')+new Date((D.updated_epoch||Date.now()/1000)*1000).toLocaleString()+' · '+(D.events?.at(-1)?.text||'Awaiting raster previews');
+$('#auto').checked=saved.auto!==false;$('#auto').onchange=cache;$('#refresh').onclick=()=>{cache();location.reload()};
+$('#viewselector').hidden=!D.enable_3d;$('#viewmode').value=D.enable_3d&&saved.mode==='3d'?'3d':'2d';$('#vertical').value=['1','2','5'].includes(saved.vertical)?saved.vertical:'1';$('#vertical').onchange=()=>{panes.forEach(draw3d);cache()};selOptions($('#area'),Object.keys(D.areas||{}).map(a=>[a,a]));if(D.areas?.[saved.area])$('#area').value=saved.area;
+camera3d=saved.cam&&Number.isFinite(saved.cam.distance)?{...saved.cam}:baseCamera();
+$('#area').onchange=()=>{camera3d=baseCamera();user3d=false;autoFittedSparse=false;refill();cache()};$('#viewmode').onchange=setMode;
+$('#reset').onclick=()=>{camera3d=baseCamera();for(const p of panes){fit2d(p);p.cam={...camera3d}}if($('#viewmode').value==='3d')panes.forEach(draw3d);else if(panes[0].view)sync2d(panes[0]);cache()};
+for(const ev of D.events||[]){const li=document.createElement('li');li.textContent=ev.status+': '+ev.text;$('#events').append(li)}for(const [name,t] of Object.entries(D.tables||{})){const section=document.createElement('section'),h=document.createElement('h2'),scroll=document.createElement('div'),table=document.createElement('table');h.textContent=name;scroll.className='table-scroll';for(const [i,row] of [t.columns,...t.rows].entries()){const tr=document.createElement('tr');for(const v of row){const c=document.createElement(i?'td':'th');c.textContent=v;tr.append(c)}table.append(tr)}scroll.append(table);section.append(h,scroll);$('#tables').append(section)}
+buildProductCatalog();$('#metrics').textContent=JSON.stringify(D.metrics||{},null,2);window.onresize=()=>{panes.forEach(draw2d);panes.forEach(draw3d)};refill(true);setMode();
+// Automatic refresh picks up new products after the atomic HTML publication.
+// Works on local file:// pages without fetch().
+if(D.running)setInterval(()=>{if($('#auto').checked&&!panes.some(p=>p.c3.matches(':active'))){cache();location.reload()}},Math.max(1,Number(D.refresh_interval_seconds)||15)*1000);
+</script></html>

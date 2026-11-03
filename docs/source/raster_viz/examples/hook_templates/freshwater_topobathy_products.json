@@ -1,0 +1,10 @@
+{
+  "schema_version": 1,
+  "title": "Freshwater topobathymetry (illustrative template)",
+  "products": [
+    {"key": "measured", "path": "../../measured.tif", "style": "elevation", "group": "elevation", "label": "Measured elevation", "water_level": 176.0},
+    {"key": "combined", "path": "../../combined.tif", "style": "elevation", "group": "elevation", "label": "Combined DEM"},
+    {"key": "rgb", "path": "../../RGB_10m.tif", "style": "rgb", "group": "imagery", "label": "Satellite RGB"}
+  ],
+  "defaults": {"default": ["measured", "combined"]}
+}

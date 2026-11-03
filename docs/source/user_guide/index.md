@@ -14,5 +14,6 @@ tnm_hydroflat
 stack_qc
 stack_qc_examples
 stack_qc_maintainers
+../raster_viz/README
 
 ```

@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "title": "Stack QC: context review",
+  "running": false,
+  "products": [
+    {"key": "before_measured", "path": "review/module_original_measured.tif", "label": "Original measured QC context", "stage": "before_measured", "group": "qc_measured_elevation", "style": "elevation"},
+    {"key": "after_measured", "path": "review/module_final_measured.tif", "label": "Final measured QC context", "stage": "after_measured", "group": "qc_measured_elevation", "style": "elevation"},
+    {"key": "before_interpolated", "path": "review/module_original_interpolated.tif", "label": "QC initial working interpolation", "stage": "before_interpolated", "group": "qc_working_elevation", "style": "elevation"},
+    {"key": "after_interpolated", "path": "review/combined_final_interpolated.tif", "label": "Final Globato interpolation", "stage": "after_interpolated", "group": "final_combined_elevation", "style": "elevation"}
+  ],
+  "defaults": {"default": ["before_measured", "after_measured"]}
+}
