@@ -406,7 +406,7 @@ function refill(restore=false){updateVectorControls();const entries=Object.entri
     p.rgbTransparency.value=state&&Number.isFinite(state.rgbTransparency)?Math.min(100,Math.max(0,state.rgbTransparency)):0;
     p.rgbTransparencyLabel.textContent=p.rgbTransparency.value+'%';
     p.opacityLabel.textContent=p.opacity.value+'%';
-    const defaults=D.areas[$('#area').value]?.defaults;if(defaults&&prods()[defaults[i]]?.style!=='rgb')p.select.value=defaults[i];if(state&&prods()[state.key]?.style!=='rgb')p.select.value=state.key;fit2d(p);if(state?.view&&['x','y','scale'].every(k=>Number.isFinite(state.view[k]))&&state.view.scale>0)p.view={...state.view};p.cam=validCamera(state?.cam)?{...state.cam}:{...camera3d};p.lastFrame=productFrame(p);setBackground(p);load(p)}if(panes[0].view)panes[1].view={...panes[0].view};panes.forEach(draw2d);}
+    const defaults=D.areas[$('#area').value]?.defaults;const selectable=key=>elevations.some(([candidate])=>candidate===key);if(defaults&&selectable(defaults[i]))p.select.value=defaults[i];if(state&&selectable(state.key))p.select.value=state.key;fit2d(p);if(state?.view&&['x','y','scale'].every(k=>Number.isFinite(state.view[k]))&&state.view.scale>0)p.view={...state.view};p.cam=validCamera(state?.cam)?{...state.cam}:{...camera3d};p.lastFrame=productFrame(p);setBackground(p);load(p)}if(panes[0].view)panes[1].view={...panes[0].view};panes.forEach(draw2d);}
 let activeMode=null,autoFittedSparse=false;
 function setMode(){let mode=$('#viewmode').value;if(!D.enable_3d)mode='2d';
   if(activeMode&&mode!==activeMode)transferMode(activeMode,mode);
