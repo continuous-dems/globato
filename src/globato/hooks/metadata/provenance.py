@@ -17,6 +17,7 @@ import os
 import logging
 import threading
 import hashlib
+import json
 import tempfile
 from pathlib import Path
 from urllib.parse import urlparse
@@ -27,13 +28,48 @@ from rasterio.enums import Resampling
 from rasterio.warp import reproject
 from rasterio.features import shapes
 from rasterio.windows import Window
-from pyproj import CRS as ProjCRS
 
 from fetchez.hooks import FetchHook
-from fetchez.utils import str2inc, str2bool, int_or
+from fetchez.utils import str2bool, int_or
+from pyproj import CRS
+from globato.utils import parse_increment
 from ..transforms.point_pixels import FUSION_BAND_MAP, FUSION_BANDS, PointPixels
 
 logger = logging.getLogger(__name__)
+
+
+def fusion_coverage(stream, target):
+    """Pass native state through and expose accepted count > 0 on the same grid.
+
+    Metadata records coverage, not point centroids reconstructed from source
+    statistics. Refuse mismatched grids rather than silently misplacing cells.
+    """
+    profile = next(stream)
+    if (
+        profile.get("count") != len(FUSION_BANDS)
+        or any(profile.get(k) != target[k] for k in ("width", "height", "transform"))
+        or not CRS.from_user_input(profile["crs"])
+        .to_2d()
+        .equals(CRS.from_user_input(target["crs"]).to_2d(), ignore_axis_order=True)
+    ):
+        raise ValueError(
+            "FusionState coverage needs the same horizontal CRS, bounds and "
+            "resolution as the final stack; set provenance/source_masks.res "
+            "to multi_stack.res"
+        )
+    yield profile, None, None
+    for chunk in stream:
+        window, _, data, *_ = chunk
+        if data.ndim != 3 or data.shape != (
+            len(FUSION_BANDS),
+            int(window.height),
+            int(window.width),
+        ):
+            raise ValueError("Invalid FusionState coverage chunk")
+        count = data[FUSION_BAND_MAP["count"] - 1]
+        if np.any(~np.isfinite(count)) or np.any(count < 0):
+            raise ValueError("Invalid FusionState coverage count")
+        yield chunk, window, count > 0
 
 
 class ProvenanceHook(FetchHook):
@@ -47,6 +83,9 @@ class ProvenanceHook(FetchHook):
     stage and reads each entry's FusionState artifact instead of its point
     stream, so it works with side_stack + stack_combine and reflects any
     collection-stage filtering. ``res`` must match the side-stack resolution.
+    ``group_by=recipe_id`` assigns one bit to each named YAML declaration;
+    ``module_id`` groups by Fetchez configuration instead of provider name.
+    Both instance modes write an embedded and JSON bit legend.
     """
 
     name = "provenance"
@@ -55,12 +94,27 @@ class ProvenanceHook(FetchHook):
     meta_desc = "Generate a dataset mask raster using Bit IDs."
 
     def __init__(
-        self, res="1s", output="provenance.tif", source_artifact=None, **kwargs
+        self,
+        res="1s",
+        output="provenance.tif",
+        source_artifact=None,
+        group_by="module",
+        **kwargs,
     ):
         super().__init__(**collection_stage(source_artifact, kwargs))
-        self.res = str2inc(res)
+        self.res = parse_increment(res)
         self.output = output
         self.source_artifact = source_artifact
+        self.group_by = str(group_by)
+        if self.group_by not in {"module", "module_id", "recipe_id"}:
+            raise ValueError(
+                "provenance group_by must be module, module_id or recipe_id"
+            )
+        if self.group_by != "module" and source_artifact is None:
+            raise ValueError(
+                "Instance provenance requires collection-stage source_artifact"
+            )
+        self.groups = {}
         self._initialized = False
         self.lock = threading.Lock()
 
@@ -105,8 +159,14 @@ class ProvenanceHook(FetchHook):
         }
 
         with rasterio.open(self.output, "w", **profile) as dst:
-            dst.set_band_description(1, "Module_Bitmask")
+            dst.set_band_description(
+                1,
+                "Module_Instance_Bitmask"
+                if self.group_by != "module"
+                else "Module_Bitmask",
+            )
 
+        self.profile = profile
         self._initialized = True
         logger.debug(f"Initialized Provenance Mask: {self.output}")
 
@@ -129,7 +189,30 @@ class ProvenanceHook(FetchHook):
 
             return self.module_bits[mod_name]
 
+    def _group_key(self, mod):
+        if self.group_by == "module":
+            return mod.name
+        if self.group_by == "module_id":
+            return mod.module_id()
+        identity = getattr(mod, "recipe_id", None)
+        if identity is None:
+            raise ValueError(
+                "recipe_id provenance needs modules compiled by a recipe with entry IDs"
+            )
+        return identity
+
     def run(self, entries):
+        if self.group_by != "module":
+            for mod, _ in entries:
+                identity = self._group_key(mod)
+                details = module_details(mod)
+                self.groups[identity] = details
+            if len(self.groups) > 32:
+                raise ValueError(
+                    "Instance provenance supports at most 32 module instances; use source_masks for more"
+                )
+            for identity in sorted(self.groups):
+                self._get_module_bit(identity)
         if not self._initialized and entries:
             region = next(
                 (mod.region for mod, _ in entries if getattr(mod, "region", None)), None
@@ -141,10 +224,14 @@ class ProvenanceHook(FetchHook):
             return self._run_side_stacks(entries)
 
         for mod, entry in entries:
-            if self.is_point_stream(entry):
+            fusion = (
+                self.is_raster_stream(entry)
+                and entry.get("data_type") == "fusion-state"
+            )
+            if self.is_point_stream(entry) or fusion:
                 stream = entry.get("stream")
                 bit_val = self._get_module_bit(mod.name)
-                entry["stream"] = self._intercept(stream, bit_val)
+                entry["stream"] = self._intercept(stream, bit_val, fusion=fusion)
 
                 entry.setdefault("artifacts", {})[self.name] = os.path.abspath(
                     self.output
@@ -159,7 +246,7 @@ class ProvenanceHook(FetchHook):
             return entries
         output = os.path.abspath(self.output)
         for mod, entry, path in side_stack_artifacts(entries, self.source_artifact):
-            bit_val = self._get_module_bit(mod.name)
+            bit_val = self._get_module_bit(self._group_key(mod))
             for window, count, _ in side_stack_blocks(
                 path,
                 width=self.xcount,
@@ -169,6 +256,8 @@ class ProvenanceHook(FetchHook):
             ):
                 self._or_window(window, count > 0, bit_val)
             entry.setdefault("artifacts", {})[self.name] = output
+            if self.group_by != "module":
+                entry["artifacts"]["provenance_groups"] = output + ".json"
         return entries
 
     def _or_window(self, window, has_data, bit_val):
@@ -178,9 +267,14 @@ class ProvenanceHook(FetchHook):
                 mask_data[has_data] |= bit_val
                 dst.write(mask_data, 1, window=window)
 
-    def _intercept(self, stream, bit_val):
+    def _intercept(self, stream, bit_val, *, fusion=False):
         """Pass-through stream to update mask."""
-
+        if fusion:
+            for chunk, window, coverage in fusion_coverage(stream, self.profile):
+                if coverage is not None:
+                    self._or_window(window, coverage, bit_val)
+                yield chunk
+            return
         for chunk in stream:
             self._update_mask(chunk, bit_val)
             yield chunk
@@ -213,14 +307,37 @@ class ProvenanceHook(FetchHook):
 
         if self._initialized:
             with rasterio.open(self.output, "r+") as dst:
-                tags = {}
-                for name, idx in self.module_bits.items():
-                    tags = {
-                        f"MOD_{name}": str(bit)
-                        for name, bit in self.module_bits.items()
-                    }
+                tags = {
+                    f"MOD_{name}": str(bit) for name, bit in self.module_bits.items()
+                }
                 dst.update_tags(bidx=1, **tags)
+                if self.group_by != "module":
+                    legend = dict(
+                        schema="globato_module_provenance/1",
+                        group_by=self.group_by,
+                        groups=[
+                            dict(self.groups[key], bit=bit)
+                            for key, bit in self.module_bits.items()
+                        ],
+                    )
+                    dst.update_tags(bidx=1, GROUPS=json.dumps(legend, sort_keys=True))
+            if self.group_by != "module":
+                Path(str(self.output) + ".json").write_text(
+                    json.dumps(legend, indent=2) + "\n"
+                )
             logger.debug("Finalized Provenance Mask.")
+
+
+def module_details(mod):
+    """Descriptive invocation fields; Fetchez owns its canonical identity."""
+    details = dict(
+        module=mod.name, module_id=mod.module_id(), weight=getattr(mod, "weight", 1.0)
+    )
+    for field in ("datatype", "survey_id", "recipe_id"):
+        value = getattr(mod, field, None)
+        if value is not None:
+            details[field] = str(value)
+    return details
 
 
 def source_id(entry):
@@ -298,7 +415,7 @@ def _horizontal_crs(value):
         return None
     if hasattr(value, "to_wkt"):
         value = value.to_wkt()
-    return ProjCRS.from_user_input(value).to_2d()
+    return CRS.from_user_input(value).to_2d()
 
 
 def side_stack_blocks(path, *, width, height, transform, crs):
@@ -353,6 +470,12 @@ def source_tags(mod, entry, *, resolution=True):
     }
     if resolution:
         tags["RESOLUTION"] = getattr(mod, "meta_resolution", None)
+    if callable(getattr(mod, "module_id", None)):
+        tags["MODULE_ID"] = mod.module_id()
+    for field in ("datatype", "survey_id", "recipe_id"):
+        value = getattr(mod, field, None)
+        if value is not None:
+            tags["MODULE_" + field.upper()] = str(value)
     if isinstance(entry.get("metadata"), dict):
         tags.update({str(k).upper(): v for k, v in entry["metadata"].items()})
     return tags
@@ -967,7 +1090,7 @@ class SourceMasks(FetchHook):
     ):
         super().__init__(**collection_stage(source_artifact, kwargs))
 
-        self.res = str2inc(res)
+        self.res = parse_increment(res)
         self.output = output
         self.source_artifact = source_artifact
         self.output_dir = output_dir
@@ -1017,7 +1140,11 @@ class SourceMasks(FetchHook):
             return self._run_side_stacks(entries)
 
         for mod, entry in entries:
-            if not self.is_point_stream(entry):
+            fusion = (
+                self.is_raster_stream(entry)
+                and entry.get("data_type") == "fusion-state"
+            )
+            if not self.is_point_stream(entry) and not fusion:
                 continue
 
             path = self._register(mod, entry)
@@ -1027,6 +1154,7 @@ class SourceMasks(FetchHook):
                 stream,
                 path,
                 mod.region,
+                fusion=fusion,
             )
 
             entry.setdefault("artifacts", {})[self.name] = path
@@ -1035,10 +1163,17 @@ class SourceMasks(FetchHook):
 
     def _register(self, mod, entry):
         dataset_id = source_id(entry)
+        if entry.get("contribution_id"):
+            from fetchez.entry import dataset_id as contribution_dataset_id
+
+            dataset_id = contribution_dataset_id(entry)
         src_name = os.path.basename(entry.get("dst_fn", dataset_id))
+        description = os.path.splitext(src_name)[0]
+        if getattr(mod, "recipe_id", None) is not None:
+            description = f"{mod.recipe_id}: {description}"
         return self._masks.register(
             dataset_id,
-            description=os.path.splitext(src_name)[0],
+            description=description,
             tags=source_tags(mod, entry),
         )
 
@@ -1061,7 +1196,13 @@ class SourceMasks(FetchHook):
             entry.setdefault("artifacts", {})[self.name] = path
         return entries
 
-    def _intercept(self, stream, path, region):
+    def _intercept(self, stream, path, region, *, fusion=False):
+        if fusion:
+            for chunk, window, coverage in fusion_coverage(stream, self._masks.profile):
+                if coverage is not None:
+                    MaskSet.update(path, window, coverage)
+                yield chunk
+            return
         pixel_binner = PointPixels(
             src_region=region,
             x_size=self._masks.xcount,

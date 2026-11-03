@@ -38,6 +38,18 @@ GLOBATO_SOURCE_TAG = "glob-stream"
 GLOBATO_BUILD_TAG = "globato-dem"
 
 
+def parse_increment(value):
+    """Preserve numeric CRS units; delegate suffixed increments to Fetchez.
+
+    Numeric values ending in zero must not lose their final digit when the
+    upstream parser interprets the last character as a unit suffix.
+    """
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return str2inc(value)
+
+
 def is_globato_source(meta):
     """Return whether a Fetchez component is suitable as a Globato DEM source."""
     return GLOBATO_SOURCE_TAG in meta.get("tags", [])
@@ -182,7 +194,7 @@ def globatize_modules(modules, shared_cache=None, crs=None, res=None):
 
     # Expand the Modules & Bundles
     modules = Recipe({})._expand_modules(modules)
-    res = str2inc(res)
+    res = parse_increment(res)
     for mod in modules:
         hooks = mod.setdefault("hooks", [])
 
@@ -545,7 +557,7 @@ def resolve_barrier(
             if needs_reproject:
                 geoms = [shapely_transform(transformer.transform, g) for g in geoms]
 
-            inc = str2inc(res)
+            inc = parse_increment(res)
             width = int(round(region.width / inc))
             height = int(round(region.height / inc))
             transform = from_bounds(

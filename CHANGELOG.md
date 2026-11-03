@@ -16,13 +16,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 * Added `stack_combine` to construct a MultiStack and its FusionState directly from completed side-stack artifacts, using the existing `MultiStackAccumulator` for reduction and finalization.
 * Allow `stack_combine` to consume original or QC-adjusted side-stacks, with configurable handling of missing required artifacts.
 * `source_masks`, `provenance` and `stack_provenance` take a `source_artifact` argument. With it they run at the collection stage and read each entry's FusionState side-stack artifact (original or QC-adjusted) instead of its stream, so they work in `side_stack` + `stack_combine` recipes and reflect collection-stage filtering.
+* `stack_qc` hook: Stack QC source filtering and terrain restoration (from #285) as a collection-stage hook for `side_stack` + `stack_combine` recipes. It filters the named modules' side-stacks against working DEMs built in the same process and records the accepted measurements, on the DEM grid, as `qc-side-stack` (`output_artifact`); other modules' side-stacks pass through, so `stack_combine` reads `qc-side-stack`. Detection thresholds, window sizes, plane tolerance and restoration scales, and the working-DEM settings, are hook arguments. Results are cached on the filter's own inputs only.
+* `stack_qc_grid` hook: with a finer `qc_res`, grids the filtered modules' points on Stack QC's grid during the stream stage (cached like side-stacks, recorded as `stack-qc-grid`) for `stack_qc`. Listed before `side_stack`, which then leaves those entries alone.
+* `stack_qc_review` hook: optional HTML review (before/after hillshades) of Stack QC results, written after the final DEM.
 
 ### CHANGED
 * Simplify cache identities using Fetchez's `dataset_id()` and contribution metadata instead of a separate Globato identity implementation. Retain grid, CRS, FusionState schema, and cache hash validation.
 * Updated globato build overrides to propagate resolution, CRS, and stacking configuration to `stack_combine`.
 * Updated `globato build` to use `ignore-failures` instead of `fail-fast`
+* `mr-globato-crm` and `mr-globato-cudem` are complete hook lists that stack with `side_stack` + `stack_combine`, filter multibeam with `stack_qc` (CRM: `stack_qc_grid` at 1/9") and build provenance from the stacked side-stacks. As overrides of `mr-globato` their `side_stack` and `stack_combine` entries never ran, since preset overrides only change hooks the base preset has.
+* `multi_stack` dataset ids include an entry's `contribution_id` when it has one; ids of other entries are unchanged.
+* Requires fetchez 0.12.1.
+* `crm-bathy-topo` no longer runs `rq` on NCEI multibeam (`mbdb`); the CRM preset filters it with `stack_qc` (1/9" QC for the 1" DEM) and the CUDEM preset on its own 1/9" grid. Other recipes using `global-bathy-topo` keep `rq`.
+* `mr-globato-crm` tier weights are 0.6/0.4/0.2 (were 1/0.5/0.25), so multibeam (stack weights ~0.8-0.95) is gridded at 1" instead of 3". On the 330 Southern California CRM tiles no other dataset changed tier (module weights are >= 1 or <= 0.5).
 
 ### FIXED
+* `side_stack` added point chunks that revisit cells by overwriting them, losing earlier soundings; it now adds them (side-stack cache version 2, so older caches are rebuilt). It also checks the input CRS and grid and publishes the cache file under a lock.
 * `Point2PixelStream`'s "Pixelated" log line had three placeholders and two arguments, so every point stream logged a `--- Logging error ---` traceback in place of its point count, and tests that capture INFO logs failed with `not enough arguments for format string`.
 * The `glob_sdb` module failed with `ModuleNotFoundError: No module named 'globato.cli.recipe'` as soon as it started building its training DEM (#284). It now uses `fetchez.recipe.Recipe`.
 * `GDALReader.get_read_window()` failed with `ModuleNotFoundError: No module named 'globato.streams.spatial'` whenever a region was set (#284). It now uses `fetchez.spatial.Region`, and takes the region as a `Region` or as `[w, e, s, n]` in lon/lat.
