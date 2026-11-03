@@ -1,43 +1,32 @@
-"""Filter a module's elevation sources with Stack QC before they are stacked.
+"""Filter source contributions at Fetchez's collection barrier, before assembly.
 
-A collection-stage hook for ``side_stack`` + ``stack_combine`` recipes. It
-filters each named module's sources, runs the Stack QC removal and restoration
-passes against working DEMs it builds itself (MultiStack plus
-``ms_binary_cudem``, in this process), writes each source's accepted
-measurements as a side-stack on the DEM grid, and records it as
-``output_artifact``. Entries of other modules get ``output_artifact`` pointing
-at their own side-stack, so ``stack_combine`` stacks one artifact name.
+Use ``stack_qc_grid`` at the stream stage to materialize each selected source's
+native FusionState, then one global ``stack_qc`` after all module streams finish.
+``modules`` selects targets; ``add_ref_modules`` adds fixed, unfiltered evidence.
+The target modules automatically contribute to the shared weighted working DEM
+and survey context. Each pass evaluates all targets against the same parent
+state; references never receive rejection masks. Original entry owners and
+source identities remain attached throughout publication and ``stack_combine``.
 
-To filter on a finer grid than the DEM (``qc_res``), add ``stack_qc_grid``
-(below) with the same ``modules``, ``res``, ``qc_res`` and ``crs``, before
-``side_stack``. It grids that module's points on the QC grid during the stream
-stage; ``stack_qc`` filters those grids and sums the accepted measurements onto
-the DEM grid:
+Both selectors accept names or normal recipe-style ``{module, args}`` mappings.
+Use matching selectors, res, qc_res and crs on the two hooks. Joint contexts
+require ``stack_qc_grid`` even when QC and DEM resolutions are equal. Sources
+outside the context retain their normal side-stacks for final assembly.
 
-    hooks:
-      - name: side_stack_check
-        args: {res: 1s, crs: "EPSG:4326+3855"}
-      - name: stack_qc_grid
-        args: {modules: mbdb, res: 1s, qc_res: 1/9s, crs: "EPSG:4326+3855"}
-      - name: side_stack
-        args: {res: 1s, crs: "EPSG:4326+3855"}
-      - name: stack_qc
-        args: {modules: mbdb, res: 1s, qc_res: 1/9s, crs: "EPSG:4326+3855"}
-      - name: stack_combine
-        args: {res: 1s, crs: "EPSG:4326+3855", source_artifact: qc-side-stack}
+Legacy explicit single-module recipes retain their v114 input selection and
+reduction order. New joint grids materialize current streams in private paths;
+QC decisions can be reused by exact grid content, source roles, weights,
+settings, region, working interpolation and QC code. This does not assert a
+universal upstream transform/datum fingerprint or shared immutable grid cache.
 
-Without ``qc_res``, ``stack_qc`` filters the module's DEM-grid side-stacks
-(``source_artifact``) directly and no ``stack_qc_grid`` is needed.
-
-Results are cached per module. The cache key holds only the module's sources
-(the side-stacks' contents), weight, the region, these settings and the QC
-code, so changes to other datasets or to the final DEM's tiers reuse the
-filter results.
+Raster review and regional recipes remain optional, separate consumers.
 """
 
 import logging
 import math
 import os
+from pathlib import Path
+from uuid import uuid4
 
 from fetchez.hooks import FetchHook
 from fetchez.utils import str2bool
@@ -79,11 +68,89 @@ def _names(value):
         return None
     if isinstance(value, str):
         return [v.strip() for v in value.replace(",", "/").split("/") if v.strip()]
-    return [str(v) for v in value]
+    if isinstance(value, dict):
+        value = [value]
+    result = []
+    for selector in value:
+        if isinstance(selector, dict):
+            if set(selector) - {"id", "module", "args"} or not (
+                selector.get("module") or selector.get("id")
+            ):
+                raise ValueError(
+                    "QC selectors use a recipe id or module and optional args"
+                )
+            if not isinstance(selector.get("args", {}), dict):
+                raise ValueError("QC selector args must be a mapping")
+            result.append(
+                dict(
+                    **(
+                        {"module": str(selector["module"])}
+                        if selector.get("module")
+                        else {}
+                    ),
+                    **({"id": str(selector["id"])} if selector.get("id") else {}),
+                    args=dict(selector.get("args", {})),
+                )
+            )
+        else:
+            result.append(str(selector))
+    return result
+
+
+def _selected(module, selectors):
+    """Match existing module invocations without creating aliases or new identities."""
+    if selectors is None:
+        return True
+    for selector in selectors:
+        if isinstance(selector, str):
+            # A recipe ID wins over a provider-name shorthand, even if that
+            # recipe entry has no files in this region. Explicit {module: ...}
+            # selectors still select every matching provider invocation.
+            known_ids = getattr(module, "_recipe_ids", ())
+            if selector in known_ids:
+                if selector == getattr(module, "recipe_id", None):
+                    return True
+            elif selector in {module.name, getattr(module, "recipe_id", None)}:
+                return True
+        elif ("module" not in selector or selector["module"] == module.name) and (
+            "id" not in selector or selector["id"] == getattr(module, "recipe_id", None)
+        ):
+            args = getattr(module, "_init_kwargs", {})
+            if all(
+                getattr(module, key, args.get(key)) == value
+                or str(getattr(module, key, args.get(key))) == str(value)
+                for key, value in selector.get("args", {}).items()
+            ):
+                return True
+    return False
+
+
+def _validate_recipe_selectors(entries, selectors):
+    """Catch misspelled recipe labels before streams or filtering run."""
+    if not entries:
+        return
+    owner = entries[0][0]
+    labels = getattr(owner, "_recipe_ids", None)
+    if labels is None:
+        return
+    providers = getattr(owner, "_recipe_providers", {owner.name})
+    for selector in selectors or []:
+        if (
+            isinstance(selector, str)
+            and selector not in labels
+            and selector not in providers
+        ):
+            raise ValueError(f"Unknown QC recipe id/provider: {selector}")
+        if (
+            isinstance(selector, dict)
+            and "id" in selector
+            and selector["id"] not in labels
+        ):
+            raise ValueError(f"Unknown QC recipe id: {selector['id']}")
 
 
 class StackQC(FetchHook):
-    """Stack QC filter for one module's sources (see the module docstring)."""
+    """Stack QC filter for collected target sources and optional fixed references."""
 
     name = "stack_qc"
     meta_stage = "collection"
@@ -92,8 +159,8 @@ class StackQC(FetchHook):
         "Remove elevation outliers and restore supported terrain before stacking."
     )
     _cli_help_text = (
-        "Filter a module's sources against working DEMs built from the module's own "
-        "data, restore supported ridges and valleys, then stack the accepted "
+        "Filter selected sources against a shared weighted working DEM, "
+        "restore supported ridges and valleys, then stack the accepted "
         "measurements on the DEM grid."
     )
     _cli_arg_help = {
@@ -115,11 +182,14 @@ class StackQC(FetchHook):
         "stack_strategy": "Working-DEM MultiStack strategy.",
         "stack_weight_threshold": "Working-DEM MultiStack weight tiers.",
         "interpolation": "ms_binary_cudem arguments for the working DEMs, written for the DEM grid (scaled to qc_res).",
-        "modules": "As a global hook: the module names to filter.",
+        "modules": "As a global hook: recipe entry IDs, provider names or module/args selectors; targets also supply QC evidence.",
+        "add_ref_modules": "Additional unfiltered modules in the shared QC context; selectors may use recipe-style module/args mappings.",
         "source_artifact": "Artifact holding each entry's DEM-grid side-stack (default side-stack); filtered when there is no qc_res.",
         "grid_artifact": "With qc_res: artifact holding each entry's QC-grid FusionState from stack_qc_grid (default stack-qc-grid).",
         "output_artifact": "Artifact to record the accepted side-stacks in (default qc-side-stack); other modules' entries get their source_artifact here.",
         "workers": "Processes for the geometry step (results do not depend on it).",
+        "method": "geometry (upstream) or connectivity (experimental two-pass port).",
+        "viz": "Automatically publish review products and a Raster Viz catalog after the final DEM.",
     }
 
     def __init__(
@@ -130,6 +200,8 @@ class StackQC(FetchHook):
         aggressiveness=Settings.aggressiveness,
         terrain_restoration=Settings.terrain_restoration,
         max_passes=Settings.max_passes,
+        method="geometry",
+        viz=False,
         stop_when_stable=Settings.stop_when_stable,
         consensus=Settings.consensus,
         survey_exclusion=Settings.survey_exclusion,
@@ -146,6 +218,7 @@ class StackQC(FetchHook):
         stack_weight_threshold="3/2/1/.75/.5/.4/.3/.2/.1",
         interpolation=None,
         modules=None,
+        add_ref_modules=None,
         source_artifact="side-stack",
         grid_artifact="stack-qc-grid",
         output_artifact="qc-side-stack",
@@ -164,6 +237,7 @@ class StackQC(FetchHook):
             aggressiveness=int(aggressiveness),
             terrain_restoration=int(terrain_restoration),
             max_passes=int(max_passes),
+            method=str(method).lower(),
             stop_when_stable=str2bool(stop_when_stable),
             consensus=str2bool(consensus),
             survey_exclusion=str(survey_exclusion),
@@ -177,6 +251,8 @@ class StackQC(FetchHook):
             restoration_length_scale=float(restoration_length_scale),
             restoration_fit_scale=float(restoration_fit_scale),
         )
+        self.viz = str2bool(viz)
+        self._review_receipts = []
         self.res = res
         self.crs = crs
         self.qc_res = qc_res
@@ -186,6 +262,7 @@ class StackQC(FetchHook):
             DEFAULT_INTERPOLATION if interpolation is None else interpolation
         )
         self.modules = _names(modules)
+        self.add_ref_modules = _names(add_ref_modules) or []
         self.source_artifact = str(source_artifact)
         self.grid_artifact = str(grid_artifact)
         self.output_artifact = str(output_artifact)
@@ -272,13 +349,34 @@ class StackQC(FetchHook):
 
     # -- execution --------------------------------------------------------
 
+    def final_hooks(self):
+        """Use the normal pipeline's final collection hooks for optional review."""
+        if not self.viz:
+            return ()
+        from .stack_qc_review import StackQCReview
+
+        review = StackQCReview()
+        review._qc_hooks = (self,)
+        return (review,)
+
     def run(self, entries):
         from globato.qc.stack.preparation import prepare
 
-        groups = {}
-        order = []
+        self._review_receipts.clear()
+        _validate_recipe_selectors(entries, self.modules)
+        _validate_recipe_selectors(entries, self.add_ref_modules)
+        selected, references = [], []
         for mod, entry in entries:
-            if self.modules is not None and mod.name not in self.modules:
+            target = _selected(mod, self.modules)
+            reference = _selected(mod, self.add_ref_modules)
+            if target and reference:
+                raise ValueError(
+                    f"stack_qc: {mod.name} selected for both filtering and reference"
+                )
+            if reference:
+                references.append((mod, entry))
+                continue
+            if not target:
                 # Not filtered: stack_combine reads its side-stack unchanged.
                 artifacts = entry.get("artifacts") or {}
                 if self.source_artifact in artifacts:
@@ -286,17 +384,61 @@ class StackQC(FetchHook):
                         self.output_artifact, artifacts[self.source_artifact]
                     )
                 continue
-            if id(mod) not in groups:
-                groups[id(mod)] = (mod, [])
-                order.append(id(mod))
-            groups[id(mod)][1].append((mod, entry))
-        for key in order:
-            mod, selected = groups[key]
-            prepare(self, mod, selected)
-            for _, entry in selected:
-                receipt = (entry.get("artifacts") or {}).get("stack_qc")
-                if receipt and receipt not in RESULTS:
-                    RESULTS.append(receipt)
+            selected.append((mod, entry))
+        if not selected and not references:
+            return entries
+        if self.add_ref_modules and any(
+            self is hook for mod, _ in selected for hook in getattr(mod, "hooks", ())
+        ):
+            raise ValueError(
+                "stack_qc with additional references requires global_hooks after all source streams"
+            )
+        missing_references = [
+            selector
+            for selector in self.add_ref_modules
+            if not any(_selected(mod, [selector]) for mod, _ in references)
+        ]
+        if missing_references:
+            logger.warning(
+                "stack_qc: no available source entries for reference selectors %s",
+                missing_references,
+            )
+        participants = [*selected, *references]
+        first = (selected or references)[0][0]
+        for mod, entry in participants:
+            if entry.get("_stack_qc_signature"):
+                raise ValueError(
+                    "stack_qc sources already filtered; use one global collection hook"
+                )
+            if entry.get("status") in {"failed", "error"}:
+                raise ValueError("stack_qc requires successful source streams")
+            if (
+                mod.region is None
+                or mod.region.to_list() != first.region.to_list()
+                or mod.region.srs != first.region.srs
+            ):
+                raise ValueError(
+                    "stack_qc participants require the same region and CRS"
+                )
+        joint = (
+            bool(self.add_ref_modules)
+            or len({id(mod) for mod, _ in selected}) > 1
+            or (self.modules is not None and len(self.modules) > 1)
+            or any(isinstance(s, dict) for s in self.modules or [])
+            or any(
+                s == getattr(mod, "recipe_id", None)
+                for s in self.modules or []
+                if isinstance(s, str)
+                for mod, _ in selected
+            )
+        )
+        prepare(self, first, selected, references=references, joint=joint)
+        for _, entry in selected:
+            receipt = (entry.get("artifacts") or {}).get("stack_qc")
+            if receipt and receipt not in self._review_receipts:
+                self._review_receipts.append(receipt)
+            if receipt and receipt not in RESULTS:
+                RESULTS.append(receipt)
         return entries
 
 
@@ -322,6 +464,7 @@ class StackQCGrid(FetchHook):
         "qc_res": "QC grid (as stack_qc qc_res); without it, the DEM grid.",
         "crs": "Stack CRS (as stack_qc crs).",
         "modules": "Module names to grid (as stack_qc modules).",
+        "add_ref_modules": "Additional QC reference modules, matching stack_qc.",
         "artifact": "Artifact recording each entry's QC-grid FusionState.",
         "cache_dir": "Cache directory (default: the module's cache directory).",
     }
@@ -333,6 +476,7 @@ class StackQCGrid(FetchHook):
         qc_res=None,
         modules=None,
         artifact="stack-qc-grid",
+        add_ref_modules=None,
         cache_dir=None,
         compress=True,
         **kwargs,
@@ -349,6 +493,8 @@ class StackQCGrid(FetchHook):
         self.qc_res = qc_res
         self.modules = _names(modules)
         self.artifact = str(artifact)
+        self.add_ref_modules = _names(add_ref_modules) or []
+        self._grid_generation = uuid4().hex
         self.cache_dir = cache_dir
         self.compress = str2bool(compress)
 
@@ -364,9 +510,13 @@ class StackQCGrid(FetchHook):
         from globato.hooks.transforms.point_pixels import Point2PixelStream
         from globato.qc.stack.resampling import qc_grid
 
+        _validate_recipe_selectors(entries, self.modules)
+        _validate_recipe_selectors(entries, self.add_ref_modules)
         grids = {}
         for mod, entry in entries:
-            if self.modules is not None and mod.name not in self.modules:
+            if not (
+                _selected(mod, self.modules) or _selected(mod, self.add_ref_modules)
+            ):
                 continue
             region = getattr(mod, "region", None)
             if region is None:
@@ -379,10 +529,51 @@ class StackQCGrid(FetchHook):
                 mod, "_outdir", getattr(mod, "outdir", None)
             )
             digest = sidestack_cache_key(entry, grid)
+            joint_grid = (
+                bool(self.add_ref_modules)
+                or self.modules is None
+                or len(self.modules) > 1
+                or any(isinstance(s, dict) for s in self.modules)
+                or getattr(mod, "recipe_id", None) in (self.modules or [])
+            )
+            if joint_grid:
+                # Use Fetchez contribution identity, keeping weights/invocations
+                # distinct without changing the original entry's ownership.
+                from fetchez.entry import set_contribution_id
+
+                identity_entry = dict(entry)
+                identity_entry["contribution_id"] = dict(
+                    entry.get("contribution_id") or {}
+                )
+                set_contribution_id(
+                    identity_entry,
+                    "stack_qc_grid",
+                    dict(
+                        version=1,
+                        weight=mod.weight,
+                        module_id=mod.module_id()
+                        if callable(getattr(mod, "module_id", None))
+                        else mod.name,
+                    ),
+                )
+                digest = sidestack_cache_key(identity_entry, grid)
+                cache_dir = (
+                    Path(cache_dir or ".")
+                    / "stack_qc_grid"
+                    / self._grid_generation
+                    / uuid4().hex
+                )
             path = sidestack_path(entry, cache_dir, digest)
             entry.setdefault("artifacts", {})[self.artifact] = path
 
             valid, _ = validate_sidestack(path, grid, digest)
+            # The current Fetchez stream boundary has no universal fingerprint
+            # of every upstream transform/remote datum dependency. New joint
+            # contexts therefore materialize current streams, then cache QC by
+            # their exact grid contents. Do not promote schema-only hits into a
+            # new shared immutable source cache.
+            if joint_grid:
+                valid = False
             if valid:
                 stream = read_fusion_state_stream(path)
             elif self.is_point_stream(entry):
@@ -402,6 +593,7 @@ class StackQCGrid(FetchHook):
                     grid=grid,
                     entry=entry,
                     provenance=sidestack_provenance(entry),
+                    replace_existing=joint_grid,
                 )
             else:
                 raise ValueError(
@@ -411,7 +603,18 @@ class StackQCGrid(FetchHook):
                     "side_stack_check). List stack_qc_grid before side_stack, or "
                     "remove that module's cached side-stacks and rebuild."
                 )
-            entry["stream"] = stream
+            from globato.qc.stack.profile import timed_stream
+
+            grid_profile = dict(
+                cache_hit=valid,
+                identity=digest,
+                path=path,
+                phase="source_read_reproject_and_qc_grid"
+                if not valid
+                else "qc_grid_read",
+            )
+            entry["_stack_qc_grid_profile"] = grid_profile
+            entry["stream"] = timed_stream(stream, grid_profile)
             entry["stream_type"] = "raster-stream"
             entry["data_type"] = "fusion-state"
         return entries

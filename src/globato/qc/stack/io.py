@@ -82,3 +82,21 @@ def mm(path, shape, dtype="float32", fill=0):
     a = np.lib.format.open_memmap(path, mode="w+", dtype=dtype, shape=shape)
     a[:] = fill
     return a
+
+
+def raster_profile(inventory_grid):
+    """Native grid raster profile for connectivity cleanup."""
+    from rasterio.transform import Affine
+
+    grid = inventory_grid
+    h, w = grid["shape"]
+    return dict(
+        driver="GTiff",
+        height=h,
+        width=w,
+        count=1,
+        crs=grid["crs"],
+        transform=Affine(*grid["affine"]),
+        dtype="float32",
+        nodata=-9999.0,
+    )

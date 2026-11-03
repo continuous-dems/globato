@@ -303,6 +303,7 @@ class SideStackGenerate(FetchHook):
         grid: dict,
         entry: dict,
         provenance: dict | None = None,
+        replace_existing: bool = False,
     ):
         """Write FusionState atomically while yielding identical chunks onward."""
 
@@ -385,7 +386,7 @@ class SideStackGenerate(FetchHook):
             # Publish once so another build's copy stays stable.
             with FileLock(cache_path + ".lock"):
                 valid, _ = validate_sidestack(cache_path, grid, digest)
-                if valid:
+                if valid and not replace_existing:
                     os.remove(tmp_path)
                 else:
                     os.replace(tmp_path, cache_path)

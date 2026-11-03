@@ -1,7 +1,7 @@
 """HTML before/after review of Stack QC results, written after the final DEM.
 
-Optional companion to ``stack_qc``. Put it in ``global_hooks`` after the final
-interpolation (and its ``focus_sink``), so the page can show the finished DEM:
+``stack_qc`` requests this final collection hook automatically with ``viz: true``.
+An explicit ``global_hooks`` entry remains available to customize its paths:
 
     - name: stack_qc_review
       args: {dem: "%name%_%batch_name%.tif"}
@@ -41,6 +41,7 @@ class StackQCReview(FetchHook):
         super().__init__(stage="collection", **kwargs)
         self.dem = dem
         self.output = output
+        self._qc_hooks = None
         try:
             import matplotlib  # noqa: F401
         except ImportError as exc:
@@ -82,13 +83,21 @@ class StackQCReview(FetchHook):
 
         final = self._final_dem(entries)
         receipts = []
-        for _, entry in entries:
-            path = (entry.get("artifacts") or {}).get("stack_qc")
-            if path and path not in receipts:
-                receipts.append(path)
-        for path in stack_qc.RESULTS:
-            if path not in receipts:
-                receipts.append(path)
+        if self._qc_hooks is not None:
+            # Scope automatic publication to its requester, including module
+            # hooks whose entries were replaced by focus_sink/stack_combine.
+            for hook in self._qc_hooks:
+                for path in hook._review_receipts:
+                    if path not in receipts:
+                        receipts.append(path)
+        else:
+            for _, entry in entries:
+                path = (entry.get("artifacts") or {}).get("stack_qc")
+                if path and path not in receipts:
+                    receipts.append(path)
+            for path in stack_qc.RESULTS:
+                if path not in receipts:
+                    receipts.append(path)
         if final is not None and final.is_file():
             receipts = [p for p in receipts if self._overlaps(p, final)]
         if not receipts:
@@ -113,8 +122,10 @@ class StackQCReview(FetchHook):
                 region = Region(west, east, south, north, srs=receipt.get("region_srs"))
                 result = dict(
                     receipt["result"],
+                    module=receipt["module"],
                     qc_res=receipt["stack"]["res"],
                     dem_resolution=receipt["dem_res"],
+                    context_scope=receipt.get("scope", "single_module"),
                 )
                 images = completed(
                     run,
@@ -123,6 +134,7 @@ class StackQCReview(FetchHook):
                     stack=stack,
                     region=region,
                     final=final,
+                    viz=bool(receipt.get("viz", False)),
                 )
                 (run / "review_ERROR.txt").unlink(missing_ok=True)
                 logger.info("%d figures; %s", len(images), run / "review.html")

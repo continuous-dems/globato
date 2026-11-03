@@ -29,7 +29,14 @@ def _rebuild_stack(run, root, manifest, previous, stack, region, filename):
     state.unlink(missing_ok=True)
     acc = stack.create_accumulator(region, output=str(temporary), state=str(state))
     try:
-        rebuild(acc, io.read(root / "SOURCES.json")["sources"], manifest, previous)
+        inventory = io.read(root / "SOURCES.json")
+        sources = inventory["sources"]
+        if inventory.get("reference_sources"):
+            sources = sorted(
+                [*sources, *inventory["reference_sources"]],
+                key=lambda r: r["source_id"],
+            )
+        rebuild(acc, sources, manifest, previous)
         acc.finalize(statistics=False)
         temporary.replace(output)
     finally:

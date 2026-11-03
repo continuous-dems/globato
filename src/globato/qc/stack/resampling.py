@@ -7,6 +7,7 @@ onto aligned, integer-nested output cells before native stacking across sources.
 import copy
 import math
 import re
+from contextlib import nullcontext
 
 import numpy as np
 import rasterio
@@ -236,9 +237,12 @@ def accepted_stream(
         if active_blocks is None
         else {tuple(map(int, block.split(","))) for block in active_blocks}
     )
-    with rasterio.open(path) as src, rasterio.open(mask_path) as mask:
+    with (
+        rasterio.open(path) as src,
+        rasterio.open(mask_path) if mask_path else nullcontext(None) as mask,
+    ):
         (fx, fy), (oy, ox) = alignment(src, target)
-        if (mask.shape, mask.crs, mask.transform) != (
+        if mask is not None and (mask.shape, mask.crs, mask.transform) != (
             src.shape,
             src.crs,
             src.transform,
@@ -292,7 +296,11 @@ def accepted_stream(
                         ):
                             continue
                         win = Window(sx, sy, w, h)
-                        flags = mask.read(1, window=win)
+                        flags = (
+                            mask.read(1, window=win)
+                            if mask is not None
+                            else np.zeros((h, w), dtype="uint8")
+                        )
                         if np.any((flags != 0) & (flags != 1)):
                             raise ValueError("Invalid source rejection flags")
                         for band in range(7):

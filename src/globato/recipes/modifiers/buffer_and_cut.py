@@ -14,6 +14,7 @@ desired region.
 """
 
 import logging
+import math
 from fetchez.utils import str2inc, str2bool, float_or, str_or
 from fetchez.spatial import parse_region
 from fetchez.recipes.modifiers import BaseModifier
@@ -24,7 +25,7 @@ logger = logging.getLogger(__name__)
 
 class RegionBufferModifier(BaseModifier):
     name = "buffer-and-cut"
-    meta_desc = "Expands the target region by a specified amount or percentage and appends a cut hook."
+    meta_desc = "Expands the processing region by percentage or buffer_cells and appends cut/crop hooks; cells controls delivered overlap."
     meta_category = "Globato"
     meta_aliases = ["buffer_and_cut"]
 
@@ -41,14 +42,34 @@ class RegionBufferModifier(BaseModifier):
 
     # Hooks that use the finished DEM, plus anything named viz_*. The cut and crop
     # have to run before the first of them that follows the DEM.
-    dem_consumers = ("format_cog", "cleanup_tmp", "copy_artifact")
+    dem_consumers = ("format_cog", "cleanup_tmp", "copy_artifact", "stack_qc_review")
 
     def __init__(
-        self, cells=None, pct=None, inc=None, outname=None, force=False, **kwargs
+        self,
+        cells=None,
+        pct=None,
+        inc=None,
+        outname=None,
+        force=False,
+        buffer_cells=None,
+        **kwargs,
     ):
         # None means "not given", which apply() tells apart from an explicit 0.
         self.cells = float_or(cells)
         self.pct = float_or(pct)
+        # Processing-only margin in cells of `inc`; `cells` remains the
+        # legacy delivery overlap. Neither option changes the other's meaning.
+        self.buffer_cells = None
+        if buffer_cells is not None:
+            try:
+                value = float(buffer_cells)
+            except (TypeError, ValueError, OverflowError) as exc:
+                raise ValueError("buffer_cells must be a positive integer") from exc
+            if not math.isfinite(value) or value <= 0 or not value.is_integer():
+                raise ValueError("buffer_cells must be a positive integer")
+            if pct is not None:
+                raise ValueError("Specify pct or buffer_cells for processing, not both")
+            self.buffer_cells = int(value)
         self.inc = str2inc(str_or(inc, "1"))
         # 'outname' must match the basename of the DEM the recipe writes, so the
         # cropped DEM replaces the buffered one (see apply()). Placeholders are
@@ -103,7 +124,7 @@ class RegionBufferModifier(BaseModifier):
             )
             return config
 
-        if self.cells is None and self.pct is None:
+        if self.cells is None and self.pct is None and self.buffer_cells is None:
             logger.warning(
                 f"[{self.name}] No buffer provided. Defaulting to 5% buffer."
             )
@@ -131,14 +152,27 @@ class RegionBufferModifier(BaseModifier):
             )
 
         else:
-            buffer_region = parsed_region.copy().buffer(
-                pct=pct, x_inc=self.inc, y_inc=self.inc
-            )
+            if self.buffer_cells is not None:
+                # Exactly the same Region.buffer(x_bv/y_bv) API used by the
+                # existing `cells` delivery margin, but on processing bounds.
+                # Do not interpret cells as meters or as QC-resolution pixels.
+                if not (math.isfinite(self.inc) and self.inc > 0):
+                    raise ValueError("buffer_cells requires a positive increment")
+                if self.cells is not None and self.cells >= self.buffer_cells:
+                    raise ValueError("buffer_cells must exceed delivery overlap cells")
+                buffer_region = parsed_region.copy().buffer(
+                    x_bv=self.buffer_cells * self.inc,
+                    y_bv=self.buffer_cells * self.inc,
+                )
+            else:
+                buffer_region = parsed_region.copy().buffer(
+                    pct=pct, x_inc=self.inc, y_inc=self.inc
+                )
             delivery_region = parsed_region.copy().buffer(
                 x_bv=cells * self.inc, y_bv=cells * self.inc
             )
             config["region"] = buffer_region.to_list()
-            if pct:
+            if pct or self.buffer_cells is not None:
                 logger.info(
                     f"[{self.name}] Expanded processing region to {buffer_region}."
                 )

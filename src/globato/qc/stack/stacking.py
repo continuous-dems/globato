@@ -76,7 +76,7 @@ def overlap(record, window):
 
 
 def flags(pool, manifest, record, window):
-    if manifest is None:
+    if manifest is None or record.get("role") == "reference":
         return np.zeros((int(window.height), int(window.width)), dtype="uint8")
     data = pool.ds(manifest["masks"][record["source_id"]]["mask"]).read(
         1, window=window
@@ -222,7 +222,7 @@ def rebuild(accumulator, records, manifest, previous=None, workers=1):
             for r in records:
                 src = pool.ds(r["path"])
                 r["offset"] = list(grid_offset(src, dst))
-                if manifest:
+                if manifest and r.get("role") != "reference":
                     mask = pool.ds(manifest["masks"][r["source_id"]]["mask"])
                     if grid_offset(mask, src) != (0, 0) or (
                         mask.height,

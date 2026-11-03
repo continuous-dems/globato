@@ -17,6 +17,7 @@ import os
 import logging
 import threading
 import hashlib
+import json
 import tempfile
 from pathlib import Path
 from urllib.parse import urlparse
@@ -82,6 +83,9 @@ class ProvenanceHook(FetchHook):
     stage and reads each entry's FusionState artifact instead of its point
     stream, so it works with side_stack + stack_combine and reflects any
     collection-stage filtering. ``res`` must match the side-stack resolution.
+    ``group_by=recipe_id`` assigns one bit to each named YAML declaration;
+    ``module_id`` groups by Fetchez configuration instead of provider name.
+    Both instance modes write an embedded and JSON bit legend.
     """
 
     name = "provenance"
@@ -90,12 +94,27 @@ class ProvenanceHook(FetchHook):
     meta_desc = "Generate a dataset mask raster using Bit IDs."
 
     def __init__(
-        self, res="1s", output="provenance.tif", source_artifact=None, **kwargs
+        self,
+        res="1s",
+        output="provenance.tif",
+        source_artifact=None,
+        group_by="module",
+        **kwargs,
     ):
         super().__init__(**collection_stage(source_artifact, kwargs))
         self.res = parse_increment(res)
         self.output = output
         self.source_artifact = source_artifact
+        self.group_by = str(group_by)
+        if self.group_by not in {"module", "module_id", "recipe_id"}:
+            raise ValueError(
+                "provenance group_by must be module, module_id or recipe_id"
+            )
+        if self.group_by != "module" and source_artifact is None:
+            raise ValueError(
+                "Instance provenance requires collection-stage source_artifact"
+            )
+        self.groups = {}
         self._initialized = False
         self.lock = threading.Lock()
 
@@ -140,7 +159,12 @@ class ProvenanceHook(FetchHook):
         }
 
         with rasterio.open(self.output, "w", **profile) as dst:
-            dst.set_band_description(1, "Module_Bitmask")
+            dst.set_band_description(
+                1,
+                "Module_Instance_Bitmask"
+                if self.group_by != "module"
+                else "Module_Bitmask",
+            )
 
         self.profile = profile
         self._initialized = True
@@ -165,7 +189,30 @@ class ProvenanceHook(FetchHook):
 
             return self.module_bits[mod_name]
 
+    def _group_key(self, mod):
+        if self.group_by == "module":
+            return mod.name
+        if self.group_by == "module_id":
+            return mod.module_id()
+        identity = getattr(mod, "recipe_id", None)
+        if identity is None:
+            raise ValueError(
+                "recipe_id provenance needs modules compiled by a recipe with entry IDs"
+            )
+        return identity
+
     def run(self, entries):
+        if self.group_by != "module":
+            for mod, _ in entries:
+                identity = self._group_key(mod)
+                details = module_details(mod)
+                self.groups[identity] = details
+            if len(self.groups) > 32:
+                raise ValueError(
+                    "Instance provenance supports at most 32 module instances; use source_masks for more"
+                )
+            for identity in sorted(self.groups):
+                self._get_module_bit(identity)
         if not self._initialized and entries:
             region = next(
                 (mod.region for mod, _ in entries if getattr(mod, "region", None)), None
@@ -199,7 +246,7 @@ class ProvenanceHook(FetchHook):
             return entries
         output = os.path.abspath(self.output)
         for mod, entry, path in side_stack_artifacts(entries, self.source_artifact):
-            bit_val = self._get_module_bit(mod.name)
+            bit_val = self._get_module_bit(self._group_key(mod))
             for window, count, _ in side_stack_blocks(
                 path,
                 width=self.xcount,
@@ -209,6 +256,8 @@ class ProvenanceHook(FetchHook):
             ):
                 self._or_window(window, count > 0, bit_val)
             entry.setdefault("artifacts", {})[self.name] = output
+            if self.group_by != "module":
+                entry["artifacts"]["provenance_groups"] = output + ".json"
         return entries
 
     def _or_window(self, window, has_data, bit_val):
@@ -262,7 +311,33 @@ class ProvenanceHook(FetchHook):
                     f"MOD_{name}": str(bit) for name, bit in self.module_bits.items()
                 }
                 dst.update_tags(bidx=1, **tags)
+                if self.group_by != "module":
+                    legend = dict(
+                        schema="globato_module_provenance/1",
+                        group_by=self.group_by,
+                        groups=[
+                            dict(self.groups[key], bit=bit)
+                            for key, bit in self.module_bits.items()
+                        ],
+                    )
+                    dst.update_tags(bidx=1, GROUPS=json.dumps(legend, sort_keys=True))
+            if self.group_by != "module":
+                Path(str(self.output) + ".json").write_text(
+                    json.dumps(legend, indent=2) + "\n"
+                )
             logger.debug("Finalized Provenance Mask.")
+
+
+def module_details(mod):
+    """Descriptive invocation fields; Fetchez owns its canonical identity."""
+    details = dict(
+        module=mod.name, module_id=mod.module_id(), weight=getattr(mod, "weight", 1.0)
+    )
+    for field in ("datatype", "survey_id", "recipe_id"):
+        value = getattr(mod, field, None)
+        if value is not None:
+            details[field] = str(value)
+    return details
 
 
 def source_id(entry):
@@ -395,6 +470,12 @@ def source_tags(mod, entry, *, resolution=True):
     }
     if resolution:
         tags["RESOLUTION"] = getattr(mod, "meta_resolution", None)
+    if callable(getattr(mod, "module_id", None)):
+        tags["MODULE_ID"] = mod.module_id()
+    for field in ("datatype", "survey_id", "recipe_id"):
+        value = getattr(mod, field, None)
+        if value is not None:
+            tags["MODULE_" + field.upper()] = str(value)
     if isinstance(entry.get("metadata"), dict):
         tags.update({str(k).upper(): v for k, v in entry["metadata"].items()})
     return tags
@@ -1082,10 +1163,17 @@ class SourceMasks(FetchHook):
 
     def _register(self, mod, entry):
         dataset_id = source_id(entry)
+        if entry.get("contribution_id"):
+            from fetchez.entry import dataset_id as contribution_dataset_id
+
+            dataset_id = contribution_dataset_id(entry)
         src_name = os.path.basename(entry.get("dst_fn", dataset_id))
+        description = os.path.splitext(src_name)[0]
+        if getattr(mod, "recipe_id", None) is not None:
+            description = f"{mod.recipe_id}: {description}"
         return self._masks.register(
             dataset_id,
-            description=os.path.splitext(src_name)[0],
+            description=description,
             tags=source_tags(mod, entry),
         )
 

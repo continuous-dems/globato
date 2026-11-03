@@ -18,12 +18,15 @@ class SourcePool:
         self.inv = inventory
         self.shape = tuple(inventory["grid"]["shape"])
         self.records = inventory["sources"]
+        self.reference_records = inventory.get("reference_sources", [])
+        self.all_records = [*self.records, *self.reference_records]
+        self.reference_ids = {r["source_id"] for r in self.reference_records}
         self.groups = sorted(
-            {r["group"] for r in self.records if r["group"] is not None}
+            {r["group"] for r in self.all_records if r["group"] is not None}
         )
         self.group_index = {g: i for i, g in enumerate(self.groups)}
         self.by_group = {
-            g: [r for r in self.records if r["group"] == g]
+            g: [r for r in self.all_records if r["group"] == g]
             for g in [*self.groups, None]
         }
         self.open = OrderedDict()
@@ -38,7 +41,7 @@ class SourcePool:
         # Native context blocks are 256x256. Missing index means ordinary reads.
         self.occupied = {
             r["source_id"]: {tuple(map(int, b.split(","))) for b in r["active_blocks"]}
-            for r in self.records
+            for r in self.all_records
             if "active_blocks" in r
         }
 
@@ -47,7 +50,7 @@ class SourcePool:
         # checking every record for every window on large CUDEM grids.
         self._block_sources = {}
         self._unindexed = []
-        for position, r in enumerate(self.records):
+        for position, r in enumerate(self.all_records):
             blocks = self.occupied.get(r["source_id"])
             if blocks is None:
                 self._unindexed.append(position)
@@ -72,7 +75,7 @@ class SourcePool:
                 positions.update(self._block_sources.get((y, x), ()))
         active = []
         for i in sorted(positions):
-            r = self.records[i]
+            r = self.all_records[i]
             dy, dx = r["offset"]
             height, width = r["grid"]["shape"]
             if (
@@ -164,7 +167,7 @@ class SourcePool:
                 self._window_cache[sid] = (mean, valid, weight)
                 self._window_cache_bytes += size
         rejected = np.zeros(mean.shape, bool)
-        if manifest is not None:
+        if manifest is not None and sid not in self.reference_ids:
             dy, dx = r["offset"]
             height, width = r["grid"]["shape"]
             y0, x0 = max(s[0].start, dy), max(s[1].start, dx)
@@ -182,10 +185,48 @@ class SourcePool:
         # callers may safely modify them without corrupting cached evidence.
         return mean.copy(), valid.copy(), weight.copy(), rejected
 
+    def cleanup_source(self, r, s, manifest):
+        """Compatibility with validated v64 connectivity cleanup arithmetic.
+
+        The float64 division precedes conversion to float32, matching v64;
+        the existing SourcePool.source() remains untouched for geometry.
+        """
+        shape = tuple(axis.stop - axis.start for axis in s)
+        mean = np.full(shape, np.nan, "float32")
+        weight = np.zeros(shape, "float32")
+        dy, dx = r["offset"]
+        h, w = r["grid"]["shape"]
+        y0, y1 = max(s[0].start, dy), min(s[0].stop, dy + h)
+        x0, x1 = max(s[1].start, dx), min(s[1].stop, dx + w)
+        if y1 > y0 and x1 > x0 and self.intersects(r, s):
+            win = Window(x0 - dx, y0 - dy, x1 - x0, y1 - y0)
+            dest = (
+                slice(y0 - s[0].start, y1 - s[0].start),
+                slice(x0 - s[1].start, x1 - s[1].start),
+            )
+            bands = (
+                self.ds(r["path"])
+                .read([1, 2, 3], window=win, masked=True)
+                .astype("float64")
+                .filled(np.nan)
+            )
+            self.source_read_count += 1
+            good = np.isfinite(bands).all(axis=0) & (bands[1] > 0) & (bands[2] > 0)
+            mean[dest] = np.divide(
+                bands[0],
+                bands[2],
+                out=np.full(good.shape, np.nan, "float64"),
+                where=good,
+            )
+            weight[dest] = np.where(good, bands[2], 0)
+        return mean, np.isfinite(mean), weight, self.rejection_mask(r, s, manifest)
+
     def rejection_mask(self, r, s, manifest):
         """Read only rejection flags when elevation values are not needed."""
         sh = tuple(i.stop - i.start for i in s)
         rejected = np.zeros(sh, bool)
+        if r["source_id"] in self.reference_ids:
+            return rejected
         dy, dx = r["offset"]
         height, width = r["grid"]["shape"]
         y0, x0 = max(s[0].start, dy), max(s[1].start, dx)

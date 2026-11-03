@@ -11,6 +11,7 @@ from dataclasses import dataclass, asdict
 
 @dataclass(frozen=True)
 class Settings:
+    method: str = "geometry"
     aggressiveness: int = 2
     terrain_restoration: int = 2
     max_passes: int = 4
@@ -32,6 +33,14 @@ class Settings:
     restoration_fit_scale: float = 1.0
 
     def __post_init__(self):
+        if self.method not in ("geometry", "connectivity"):
+            raise ValueError("Stack QC method must be geometry or connectivity")
+        if self.method == "connectivity" and (
+            self.max_passes != 2 or self.stop_when_stable
+        ):
+            raise ValueError(
+                "connectivity requires max_passes: 2 and stop_when_stable: false"
+            )
         object.__setattr__(self, "median_windows", tuple(self.median_windows))
         object.__setattr__(self, "flank_distances", tuple(self.flank_distances))
         if len(self.median_windows) != 3 or any(
@@ -93,6 +102,7 @@ class Settings:
     def science(self):
         """Fields that change pass decisions; part of the QC cache key."""
         return dict(
+            method=self.method,
             threshold_scale=self.threshold_scale,
             median_windows=list(self.median_windows),
             flank_distances=list(self.flank_distances),

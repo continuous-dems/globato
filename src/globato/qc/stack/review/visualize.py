@@ -411,7 +411,7 @@ def render_measurements(stack, baseline, output, *, restored=None):
     logger.info("Review PNG ready: %s", output)
 
 
-def completed(run, *, cache, result, stack, region, final):
+def completed(run, *, cache, result, stack, region, final, viz=False):
     """Publish ordered review stages and module-only review products."""
     run = Path(run)
     from .final_stages import (
@@ -445,6 +445,12 @@ def completed(run, *, cache, result, stack, region, final):
         f"terrain restoration {settings.get('terrain_restoration', 2)}; "
         f"up to {count} passes."
     )
+    if result.get("context_scope") == "joint":
+        details += (
+            " Shared QC context: filtered sources plus fixed additional references."
+        )
+        for stage in stages:
+            stage["label"] = stage["label"].replace("Module-only", "QC-context")
     if "qc_res" in result:
         details += f" QC grid: {result['qc_res']} coordinate units; final DEM grid: {result['dem_resolution']}."
     root = Path(cache)
@@ -667,5 +673,97 @@ def completed(run, *, cache, result, stack, region, final):
             image=picture("99_final_dem.png", final, "Final combined Globato DEM"),
             status="Combined Globato interpolation after all contributing modules are stacked",
         )
+    if viz and complete:
+        # Product roles are standardized by the hook, never by a regional runner.
+        # Original and filtered measured surfaces have no interpolation.
+        from .final_stages import final_measured_stack, write_measured_surface
+
+        zero_manifest = json.loads((root / "zero/MANIFEST.json").read_text())
+        from .final_stages import _rebuild_stack
+
+        original_measured = _rebuild_stack(
+            run,
+            root,
+            zero_manifest,
+            None,
+            stack,
+            region,
+            "module_original_measured_multistack.tif",
+        )
+        write_measured_surface(
+            original_measured, run / "review" / "module_original_measured.tif"
+        )
+        # Portable copies: the review catalog must work when its parent run is zipped.
+        from shutil import copy2
+
+        original_interpolated = run / "review" / "module_original_interpolated.tif"
+        final_interpolated = run / "review" / "combined_final_interpolated.tif"
+        copy2(baseline, original_interpolated)
+        copy2(final, final_interpolated)
+        scope = (
+            "qc-context" if result.get("context_scope") == "joint" else "target-module"
+        )
+        records = [
+            dict(
+                role="before_measured",
+                path="review/module_original_measured.tif",
+                interpolation=False,
+                scope=scope,
+                label="Original measured QC context",
+            ),
+            dict(
+                role="before_interpolated",
+                path="review/module_original_interpolated.tif",
+                interpolation=True,
+                scope="qc-working-grid",
+                label="QC initial working interpolation (QC grid; diagnostic)",
+            ),
+            dict(
+                role="after_measured",
+                path="review/module_final_measured.tif",
+                interpolation=False,
+                scope=scope,
+                label="Final measured QC context",
+            ),
+            dict(
+                role="after_interpolated",
+                path="review/combined_final_interpolated.tif",
+                interpolation=True,
+                scope="combined-build",
+                label="Final Globato interpolation",
+            ),
+        ]
+        # Other modules in a future global build mean the final combined DEM
+        # must not be mislabeled as a module-only interpolation.
+        for idx, stage in enumerate(stages):
+            if stage.get("image") and 0 < idx <= result["passes_completed"]:
+                records.append(
+                    dict(
+                        role=f"pass_{idx}_review",
+                        path=stage["image"],
+                        interpolation=not stage.get("status", "").startswith(
+                            "Retained measured cells; gaps open"
+                        ),
+                        label=stage["label"],
+                        scope="review",
+                    )
+                )
+        from .catalog import document, publish as publish_catalog
+
+        catalog = document(
+            records,
+            title="Stack QC context review",
+            method=settings.get("method", "geometry"),
+        )
+        catalog.update(
+            module=result.get("module", "target"),
+            notes=[
+                "Original interpolation uses Stack QC working surface on the QC grid.",
+                "After interpolation is the full combined Globato DEM; it can include other modules.",
+                "Only measured products are unfilled and source-grounded.",
+                "All paths are relative to catalog unless absolute.",
+            ],
+        )
+        publish_catalog(run / "products.json", catalog)
     publish(run, stages, complete=complete, details=details)
     return sorted((run / "review").glob("*.png"))

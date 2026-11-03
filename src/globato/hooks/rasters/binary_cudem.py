@@ -15,6 +15,7 @@ import os
 import shutil
 import json
 import logging
+from time import perf_counter
 import numpy as np
 
 import scipy.ndimage
@@ -916,6 +917,24 @@ class BinaryCudemStepDown(RasterGlobalHook):
             src.write(z.astype(rasterio.float32), 1)
 
     def process_raster(self, src_path, dst_path, entry):
+        started = perf_counter()
+        result = self._process_raster(src_path, dst_path, entry)
+        combine_profile = entry.get("artifacts", {}).get("stack_combine_profile")
+        if result and combine_profile:
+            from globato.qc.stack.profile import write_stage
+
+            profile_path = str(dst_path) + ".profile.json"
+            write_stage(
+                profile_path,
+                "final_interpolation",
+                perf_counter() - started,
+                dict(stack=src_path, combine_profile=combine_profile),
+                dict(dem=dst_path),
+            )
+            entry["artifacts"]["final_interpolation_profile"] = profile_path
+        return result
+
+    def _process_raster(self, src_path, dst_path, entry):
         previous_surface = None
         self._setup_steps(src_path)
 

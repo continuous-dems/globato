@@ -1,21 +1,14 @@
-"""Stack QC orchestration for one module's collected sources.
+"""Prepare a collected Stack QC context before native final assembly.
 
-Runs at the collection stage, after the normal stream stage has written each
-source's side-stack and before ``stack_combine`` assembles the MultiStack:
+Inventory per-owner source grids, evaluate targets with optional fixed reference
+sources using the existing WorkingSurface/engines, then publish per-source
+accepted statistics on the final DEM grid. Joint grids bind exact contents and
+source roles/weights/invocation IDs in the decision key. Legacy explicit
+single-module recipes retain their original source selection and reduction.
 
-1. Read the module's side-stacks (``source_artifact``). They are the QC grids:
-   on the DEM grid, or on a finer ``qc_res`` grid when the module has its own
-   ``side_stack`` at ``qc_res``.
-2. Run the removal/restoration passes against in-process working DEMs.
-3. Write each source's accepted measurements as a side-stack on the DEM grid
-   and record it as the entry's ``output_artifact``, so ``stack_combine``
-   stacks the filtered data. The original side-stacks are left untouched.
-
-The QC cache key covers only what can change the decisions: the module's
-sources (the side-stacks' contents), the module weight, the QC grid and region,
-the filter settings, the working-DEM settings and the QC code. Changes
-elsewhere in a recipe (another dataset's weight, a new dataset, final DEM
-tiers) reuse the cached decisions.
+References contribute evidence but never receive rejection masks. Fine-grid
+reference statistics use the same native additive aggregation with no mask.
+Original source grids and entry ownership are retained for provenance.
 """
 
 import inspect
@@ -61,11 +54,13 @@ def _on_grid(ds, expected):
     )
 
 
-def collect_sources(module, entries, root, artifact, expected):
+def collect_sources(
+    module, entries, root, artifact, expected, *, content_identity=False
+):
     """Inventory measured QC-grid sources; entries with no data come back separately."""
     records, empty = [], []
     seen = set()
-    for _, entry in entries:
+    for owner, entry in entries:
         raw = (entry.get("artifacts") or {}).get(artifact)
         if not raw or not Path(raw).is_file():
             empty.append(entry[INDEX])
@@ -89,9 +84,6 @@ def collect_sources(module, entries, root, artifact, expected):
                 empty.append(entry[INDEX])
                 continue
         sid = source_id(entry) + "|sidestack=" + tags[SIDESTACK_HASH_TAG]
-        if sid in seen:
-            raise ValueError(f"Duplicate measured source identity: {sid}")
-        seen.add(sid)
         fp = io.fingerprint(path)
         receipt = (
             root
@@ -103,6 +95,11 @@ def collect_sources(module, entries, root, artifact, expected):
         else:
             source_sha = io.sha(path)
             io.write(receipt, dict(sha256=source_sha))
+        if content_identity:
+            sid += "|qc_content=" + source_sha
+        if sid in seen:
+            raise ValueError(f"Duplicate measured source identity: {sid}")
+        seen.add(sid)
         metadata = entry.get("metadata")
         metadata = metadata if isinstance(metadata, dict) else {}
         group = entry.get("survey_id") or metadata.get("survey_id")
@@ -116,8 +113,20 @@ def collect_sources(module, entries, root, artifact, expected):
                 group=str(group).strip()
                 if group is not None and str(group).strip()
                 else None,
-                weight=module.weight,
-                module=module.name,
+                weight=owner.weight,
+                module=owner.name,
+                module_id=owner.module_id()
+                if callable(getattr(owner, "module_id", None))
+                else owner.name,
+                **(
+                    dict(
+                        recipe_id=getattr(owner, "recipe_id", None),
+                        module_datatype=getattr(owner, "datatype", None),
+                        module_survey_id=getattr(owner, "survey_id", None),
+                    )
+                    if content_identity
+                    else {}
+                ),
                 index=entry[INDEX],
                 src_srs=geom["crs"],
             )
@@ -141,20 +150,46 @@ def _code_hashes():
     from globato.hooks.rasters import binary_cudem
     from globato.hooks.sinks import multi_stack
 
-    files = {p.name: io.sha(p) for p in sorted(here.glob("*.py"))}
+    files = {
+        str(p.relative_to(here)): io.sha(p)
+        for p in sorted(here.rglob("*.py"))
+        if "review" not in p.relative_to(here).parts
+    }
     for mod in (hook_module, binary_cudem, multi_stack):
         path = Path(inspect.getfile(mod))
         files[path.name] = io.sha(path)
     return files
 
 
-def cache_key(qc, module, records, region, working):
+def cache_key(qc, module, records, region, working, *, references=(), joint=False):
     """Everything that can change the decisions, and nothing else."""
     return io.digest(
         dict(
             version=ORCHESTRATION_VERSION,
             sources=[[r["source_id"], r["source_sha256"], r["group"]] for r in records],
-            module_weight=module.weight,
+            module_weight=module.weight
+            if not joint
+            else sorted(
+                [r["source_id"], r["module_id"], r["weight"]]
+                for r in [*records, *references]
+            ),
+            **(
+                dict(
+                    scope="joint_v1",
+                    references=[
+                        [
+                            r["source_id"],
+                            r["source_sha256"],
+                            r["group"],
+                            r["module_id"],
+                            r["weight"],
+                        ]
+                        for r in references
+                    ],
+                )
+                if joint
+                else {}
+            ),
             region=region.to_list(),
             science=qc.settings.science(),
             working=working,
@@ -167,7 +202,9 @@ def result_path(cache, settings):
     return Path(cache) / ("result_" + io.digest(settings.to_dict()) + ".json")
 
 
-def run_filter(qc, module, records, region, cache, stack):
+def run_filter(
+    qc, module, records, region, cache, stack, *, profile=None, references=()
+):
     """Build the working DEMs and run the passes, or reuse the cached result."""
     done = result_path(cache, qc.settings)
     with FileLock(str(cache / ".lock")):
@@ -178,8 +215,14 @@ def run_filter(qc, module, records, region, cache, stack):
                 if io.sha(item["mask"]) != item["mask_sha256"]:
                     raise RuntimeError(f"Cached QC mask changed: {item['mask']}")
             inventory = io.read(cache / "SOURCES.json")
-            saved = {r["source_id"]: r for r in inventory["sources"]}
-            for rec in records:
+            saved = {
+                r["source_id"]: r
+                for r in [
+                    *inventory["sources"],
+                    *inventory.get("reference_sources", []),
+                ]
+            }
+            for rec in [*records, *references]:
                 rec["offset"] = saved[rec["source_id"]]["offset"]
                 rec["active_blocks"] = saved[rec["source_id"]]["active_blocks"]
             logger.info(
@@ -191,7 +234,7 @@ def run_filter(qc, module, records, region, cache, stack):
         builder = WorkingSurface(
             stack,
             qc.interpolator_hooks,
-            records,
+            sorted([*records, *references], key=lambda r: r["source_id"]),
             region,
             cache_root_for(module),
             workers=qc.workers,
@@ -199,17 +242,21 @@ def run_filter(qc, module, records, region, cache, stack):
         logger.info("Stack QC %s: building the initial working DEM", module.name)
         baseline = builder(None, cache / "baseline")
         with rasterio.open(baseline) as ds:
-            for rec in records:
+            for rec in [*records, *references]:
                 with rasterio.open(rec["path"]) as src:
                     rec["offset"] = list(grid_offset(src, ds))
                 rec["active_blocks"] = builder.previous["source_blocks"][
                     rec["source_id"]
                 ]
             inventory = dict(sources=records, grid=io.grid(ds))
+            if references:
+                inventory["reference_sources"] = list(references)
         io.write(cache / "SOURCES.json", inventory)
         result = processing.process(
             inventory, qc.settings, cache, builder, workers=qc.workers
         )
+        if profile is not None:
+            profile.extend(builder.profile_events)
     return result, False
 
 
@@ -295,18 +342,20 @@ def write_accepted(rec, masks, target, signature, path):
     return path
 
 
-def prepare(qc, module, entries):
-    """Filter one module's collected entries in place and return them.
+def prepare(qc, module, entries, *, references=(), joint=False):
+    """Filter collected targets in place, with optional fixed references.
 
     Each entry with measurements gets its accepted measurements as a DEM-grid
     side-stack in ``qc.output_artifact``; entries without any get none.
     """
     from .resampling import nested_region, output_grid
 
-    if not entries:
+    participants = [*entries, *references]
+    label = "joint" if joint else module.name
+    if not entries and not references:
         logger.info("Stack QC %s: no selected sources; nothing to filter", module.name)
         return entries
-    if any("multi_stack" in (e.get("artifacts") or {}) for _, e in entries):
+    if any("multi_stack" in (e.get("artifacts") or {}) for _, e in participants):
         raise ValueError(
             "stack_qc filters side-stacks before stack_combine, but this recipe "
             "already stacked the sources with multi_stack. Stack with "
@@ -319,7 +368,9 @@ def prepare(qc, module, entries):
     target = output_grid(dem_stack, region)
     for i, (_, entry) in enumerate(entries):
         entry[INDEX] = i
-    started = time.monotonic()
+    for i, (_, entry) in enumerate(references):
+        entry[INDEX] = i
+    started = time.perf_counter()
     if qc.qc_increment is not None:
         qc_stack = qc.stack_hook(qc.qc_increment)
         qc_region, qc_grid = nested_region(region, qc_stack, target)
@@ -327,8 +378,22 @@ def prepare(qc, module, entries):
         qc_stack, qc_region, qc_grid = dem_stack, region, target
     root = Path(qc.cache_dir or Path(module._outdir) / "stack_qc").resolve()
     root.mkdir(parents=True, exist_ok=True)
-    artifact = qc.source_artifact if qc.qc_increment is None else qc.grid_artifact
-    if not any(artifact in (e.get("artifacts") or {}) for _, e in entries):
+    artifact = (
+        qc.grid_artifact
+        if qc.qc_increment is not None
+        or all(
+            qc.grid_artifact in (entry.get("artifacts") or {})
+            for _, entry in participants
+        )
+        else qc.source_artifact
+    )
+    if joint and not all(
+        qc.grid_artifact in (entry.get("artifacts") or {}) for _, entry in participants
+    ):
+        raise ValueError(
+            "Joint stack_qc requires matching stack_qc_grid for every target/reference, even when qc_res is omitted"
+        )
+    if not any(artifact in (e.get("artifacts") or {}) for _, e in participants):
         raise ValueError(
             f"Stack QC {module.name}: no entry has a {artifact!r} artifact. "
             + (
@@ -338,20 +403,42 @@ def prepare(qc, module, entries):
                 else "Side-stack the module with side_stack first."
             )
         )
-    records, _ = collect_sources(module, entries, root, artifact, qc_grid)
-    for _, entry in entries:
+    records, _ = collect_sources(
+        module, entries, root, artifact, qc_grid, content_identity=joint
+    )
+    ref_records, _ = collect_sources(
+        module, references, root, artifact, qc_grid, content_identity=joint
+    )
+    for rec in ref_records:
+        rec["role"] = "reference"
+    if {r["source_id"] for r in records} & {r["source_id"] for r in ref_records}:
+        raise ValueError("The same source contribution cannot be target and reference")
+    # Every non-empty participant must have passed the configured grid producer.
+    for _, entry in participants:
+        if entry.get("status") not in {"empty", "skipped"} and artifact not in (
+            entry.get("artifacts") or {}
+        ):
+            raise ValueError(
+                "stack_qc: every target/reference needs a source grid; use matching stack_qc_grid modules/add_ref_modules"
+            )
+    for _, entry in participants:
         entry.pop(INDEX, None)
-    if not records:
+    if not records and not ref_records:
         logger.info("Stack QC %s: no measurements in this region", module.name)
         return entries
     working = qc.working_identity(qc_stack)
-    cache = root / cache_key(qc, module, records, qc_region, working)
+    cache = root / cache_key(
+        qc, module, records, qc_region, working, references=ref_records, joint=joint
+    )
     cache.mkdir(exist_ok=True)
     io.write(
         cache / "HOOK.json",
         dict(
-            module=module.name,
+            module=label,
             module_weight=module.weight,
+            filtered_modules=qc.modules,
+            add_ref_modules=qc.add_ref_modules,
+            scope="joint" if joint else "single_module",
             region=qc_region.to_list(),
             region_srs=qc_region.srs,
             qc_res=qc_stack.res,
@@ -361,9 +448,19 @@ def prepare(qc, module, entries):
             working=working,
         ),
     )
-    gridded = time.monotonic()
-    result, reused = run_filter(qc, module, records, qc_region, cache, qc_stack)
-    filtered = time.monotonic()
+    gridded = time.perf_counter()
+    working_events = []
+    result, reused = run_filter(
+        qc,
+        module,
+        records,
+        qc_region,
+        cache,
+        qc_stack,
+        profile=working_events,
+        references=ref_records,
+    )
+    filtered = time.perf_counter()
     masks = io.read(result["manifest"])["masks"]
     signature = result["signature"]
     tag = io.digest(
@@ -374,12 +471,15 @@ def prepare(qc, module, entries):
         )
     )[:16]
     receipt = cache / f"review_{tag}.json"
+    profile_path = cache / f"profile_{tag}.json"
     io.write(
         receipt,
         dict(
             cache=str(cache),
             result=result,
-            module=module.name,
+            module=label,
+            scope="joint" if joint else "single_module",
+            contributions=str(cache / f"contributions_{tag}.json") if joint else None,
             region=qc_region.to_list(),
             region_srs=qc_region.srs,
             stack=dict(
@@ -390,9 +490,40 @@ def prepare(qc, module, entries):
             ),
             dem_res=dem_stack.res,
             reused=reused,
+            viz=qc.viz,
+            product_spec="stack_qc_viz/1" if qc.viz else None,
+            profile=str(profile_path),
         ),
     )
     stream_target = target if qc_stack is not dem_stack else None
+    reference_outputs = {}
+    if references:
+        with FileLock(str(cache / ".references.lock")):
+            for rec in ref_records:
+                owner, entry = references[rec["index"]]
+                if stream_target is None:
+                    published = rec["path"]
+                else:
+                    published = str(
+                        write_accepted(
+                            rec,
+                            {rec["source_id"]: dict(mask=None)},
+                            stream_target,
+                            io.digest(
+                                [
+                                    rec["source_sha256"],
+                                    list(target["transform"])[:6],
+                                    target["height"],
+                                    target["width"],
+                                ]
+                            ),
+                            cache
+                            / f"references_{tag}"
+                            / (io.digest(rec["source_id"])[:24] + ".tif"),
+                        )
+                    )
+                entry.setdefault("artifacts", {})[qc.output_artifact] = published
+                reference_outputs[rec["source_id"]] = published
     by_index = {r["index"]: r for r in records}
     written = 0
     with FileLock(str(cache / ".accepted.lock")):
@@ -411,9 +542,129 @@ def prepare(qc, module, entries):
             )
             written += 1
             artifacts["stack_qc"] = str(receipt)
+            artifacts["stack_qc_profile"] = str(profile_path)
             artifacts["stack_qc_mask"] = masks[rec["source_id"]]["mask"]
             entry["_stack_qc_signature"] = signature
             artifacts[qc.output_artifact] = str(accepted)
+    from .profile import SCHEMA
+
+    finished = time.perf_counter()
+    io.write(
+        profile_path,
+        dict(
+            schema=SCHEMA,
+            clock="perf_counter",
+            module=label,
+            settings=qc.settings.to_dict(),
+            working=working,
+            scope="joint" if joint else "single_module",
+            filtered_modules=sorted({r["module"] for r in records}),
+            requested_reference_modules=qc.add_ref_modules,
+            reference_modules=sorted({r["module"] for r in ref_records}),
+            reference_inputs=[
+                dict(
+                    source_id=r["source_id"],
+                    sha256=r["source_sha256"],
+                    module=r["module"],
+                    module_id=r["module_id"],
+                    weight=r["weight"],
+                    qc_grid=references[r["index"]][1].get("_stack_qc_grid_profile"),
+                )
+                for r in ref_records
+            ],
+            region=qc_region.to_list(),
+            output_grid=dict(
+                shape=[target["height"], target["width"]],
+                transform=list(target["transform"])[:6],
+                crs=qc.crs,
+            ),
+            cache=dict(key=cache.name, filter_hit=reused),
+            phases_seconds=dict(
+                inventory_and_identity=gridded - started,
+                filter_or_cache_validation=filtered - gridded,
+                accepted_publication=finished - filtered,
+            ),
+            total_seconds=finished - started,
+            # Engine totals include their passes and working-surface calls.
+            # On a hit these are historical, never current invocation costs.
+            engine=dict(
+                timing_seconds=result.get("timing_seconds", {}),
+                origin="cached_execution" if reused else "current_execution",
+            ),
+            working_surfaces=working_events,
+            inputs=[
+                dict(
+                    source_id=r["source_id"],
+                    module=r["module"],
+                    module_id=r["module_id"],
+                    sha256=r["source_sha256"],
+                    fingerprint=r["fingerprint"],
+                    grid=r["grid"],
+                    weight=r["weight"],
+                    qc_grid=entries[r["index"]][1].get("_stack_qc_grid_profile"),
+                )
+                for r in records
+            ],
+            outputs=dict(
+                manifest=result["manifest"],
+                signature=signature,
+                accepted=[
+                    entries[r["index"]][1]["artifacts"][qc.output_artifact]
+                    for r in records
+                ],
+            ),
+            timing_semantics=(
+                "Only phases_seconds partition total_seconds. Engine and working "
+                "surface times are nested diagnostics; QC-grid producer times "
+                "precede prepare and may overlap other stream-stage consumers."
+            ),
+        ),
+    )
+    if joint:
+        contributions = []
+        for role, records_, entries_, outputs in (
+            (
+                "filter",
+                records,
+                entries,
+                {
+                    r["source_id"]: entries[r["index"]][1]["artifacts"][
+                        qc.output_artifact
+                    ]
+                    for r in records
+                },
+            ),
+            ("reference", ref_records, references, reference_outputs),
+        ):
+            for rec in records_:
+                contributions.append(
+                    dict(
+                        source_id=rec["source_id"],
+                        module=rec["module"],
+                        module_id=rec["module_id"],
+                        recipe_id=rec.get("recipe_id"),
+                        module_datatype=rec.get("module_datatype"),
+                        module_survey_id=rec.get("module_survey_id"),
+                        role=role,
+                        group=rec["group"],
+                        weight=rec["weight"],
+                        source_sha256=rec["source_sha256"],
+                        source_grid=rec["path"],
+                        output=outputs[rec["source_id"]],
+                        mask=masks[rec["source_id"]]["mask"]
+                        if role == "filter"
+                        else None,
+                    )
+                )
+        contribution_path = cache / f"contributions_{tag}.json"
+        io.write(
+            contribution_path,
+            dict(schema="stack_qc_contributions/1", sources=contributions),
+        )
+        for _, entry in participants:
+            entry.setdefault("artifacts", {})["stack_qc_contributions"] = str(
+                contribution_path
+            )
     logger.info(
         "Stack QC %s: %s; %d passes; %s source cells rejected, %s restored; "
         "%d accepted sources (QC grid %s, DEM grid %s); "
@@ -428,6 +679,6 @@ def prepare(qc, module, entries):
         dem_stack.res,
         (gridded - started) / 60,
         (filtered - gridded) / 60,
-        (time.monotonic() - filtered) / 60,
+        (time.perf_counter() - filtered) / 60,
     )
     return entries

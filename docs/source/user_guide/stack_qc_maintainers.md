@@ -15,8 +15,30 @@ Python recipe API all run it the same way.
 | | `source_windows.py`, `geometry.py`, `plane.py`, `sources.py`, `surveys.py`, `recovery.py`, `restoration.py` | The science. Tuning values come from `Settings`; defaults are the original constants. The geometry step runs its blocks in `workers` processes (results do not depend on the count). |
 | | `write_accepted` | Accepted statistics aggregated per source to the DEM grid (`resampling.accepted_stream`) and written as a side-stack, recorded as the entry's `qc-side-stack` artifact. |
 | collection (global) | `stack_combine` (`source_artifact: qc-side-stack`), `ms_binary_cudem`, ... | Unchanged. |
-| collection (global, optional) | `hooks/filters/stack_qc_review.py` | Review pages after the final DEM, from the cached results. |
+| final collection (automatic with `viz: true`, or explicit) | `hooks/filters/stack_qc_review.py` | Review pages after the final DEM, from the cached results. |
 
 Filtered entries need no special identity in `multi_stack` or provenance:
 `stack_combine` registers each accepted side-stack by its own hash tag, which
 combines the source side-stack's hash with the QC result signature.
+
+
+## Shared contexts
+
+The global collection barrier already waits for source streams. Select targets
+with `modules`, additional fixed evidence with `add_ref_modules`, and invoke
+`prepare` once. `SourcePool.records` remains target-only for mask writers;
+`all_records` includes fixed references for evidence reads/indexes and survey
+pooling. `WorkingSurface` includes both roles; reference mask flags are always
+zero. Native reference publication reuses accepted-stream aggregation without a
+mask. No engine loop, threshold or restoration implementation is changed.
+
+See `docs/stack-qc-joint-context.md` for the full file map, ownership, synchronous
+semantics, per-contribution provenance and cache constraints. New joint grid
+production intentionally rematerializes streams; do not claim schema-only cache
+hits safely bind all upstream transformation and datum dependencies.
+
+With `viz: true`, Stack QC requests its normal review publisher through
+Fetchez `FetchHook.final_hooks()`. Recipe compilation shows the appended hook;
+the native pipeline also prepares it for direct callers. Explicit global review
+configuration takes precedence. Automatic publishers are scoped to their QC
+requesters and run after all explicit global collection hooks, including crops.

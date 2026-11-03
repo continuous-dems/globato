@@ -5,6 +5,7 @@ aggressively filtered parents feed another pass; restoration runs once at end.
 """
 
 from pathlib import Path
+import time
 import numpy as np
 import rasterio
 from . import source_windows as removal, recovery, survey_coverage
@@ -31,6 +32,10 @@ def changes(before, after):
 
 
 def process(inventory, settings, cache, build, workers=1):
+    if settings.method == "connectivity":
+        from .connectivity_processing import process as connectivity_process
+
+        return connectivity_process(inventory, settings, cache, build, workers=workers)
     cache = Path(cache)
     cache.mkdir(parents=True, exist_ok=True)
     pool = SourcePool(inventory)
@@ -41,6 +46,7 @@ def process(inventory, settings, cache, build, workers=1):
 
 
 def _process(inventory, settings, cache, build, pool, workers=1):
+    started = time.perf_counter()
     memo = {}
     verified = {}
 
@@ -69,10 +75,13 @@ def _process(inventory, settings, cache, build, pool, workers=1):
     else:
         zero_path, parent = zero(pool, zero_path.parent)
     baseline = dem(zero_path, parent)
+    baseline_seconds = time.perf_counter() - started
     parent_dem = baseline
     stable = 0
     history = []
+    pass_seconds = []
     for number in range(1, settings.max_passes + 1):
+        pass_started = time.perf_counter()
         log(f"Stack QC: evaluating removal pass {number}/{settings.max_passes}")
         folder = (
             cache
@@ -111,6 +120,7 @@ def _process(inventory, settings, cache, build, pool, workers=1):
             else None
         )
         stable = stable + 1 if nearly_stable else 0
+        pass_seconds.append(time.perf_counter() - pass_started)
         history.append(
             dict(
                 pass_number=number,
@@ -130,6 +140,7 @@ def _process(inventory, settings, cache, build, pool, workers=1):
             parent_dem = current_dem
         if settings.stop_when_stable and stable >= settings.stable_consecutive_passes:
             break
+    restoration_started = time.perf_counter()
     needs_recovery = (
         settings.terrain_restoration > 0 and parent["rejected_source_cells"] > 0
     )
@@ -169,6 +180,7 @@ def _process(inventory, settings, cache, build, pool, workers=1):
             )
             final_path, final = branches[settings.terrain_restoration]
             write(done, dict(manifest=str(final_path)))
+    restoration_seconds = time.perf_counter() - restoration_started
     result = dict(
         manifest=str(final_path),
         signature=final["signature"],
@@ -178,6 +190,12 @@ def _process(inventory, settings, cache, build, pool, workers=1):
         rejected_source_cells=final["rejected_source_cells"],
         restored_source_cells=final["restored_source_cells"],
         coverage_excluded_source_cells=final.get("coverage_excluded_source_cells", 0),
+        timing_seconds=dict(
+            initial_context=baseline_seconds,
+            pass_seconds=pass_seconds,
+            restoration=restoration_seconds,
+            total=time.perf_counter() - started,
+        ),
     )
     write(cache / ("result_" + digest(settings.to_dict()) + ".json"), result)
     return result

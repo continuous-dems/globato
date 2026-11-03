@@ -1,7 +1,7 @@
 """In-process working DEMs for Stack QC.
 
 Each filter pass compares source cells with an interpolated working DEM built
-from the module's own sources: an ordinary MultiStack accumulator followed by
+from selected targets and fixed references: an ordinary MultiStack followed by
 the configured ``ms_binary_cudem`` interpolator. Everything runs in the
 calling process, so the fetchez registries, caches, patches and logging that
 the main build uses also apply to the working DEMs (barrier lookup,
@@ -43,9 +43,20 @@ class WorkingSurface:
         self.workers = workers
         self.baseline = None
         self.previous = None
+        self.profile_events = []
 
     def __call__(self, manifest, output):
+        started = time.perf_counter()
+        event = dict(manifest=str(manifest) if manifest else None, output=str(output))
+        self.profile_events.append(event)
+        try:
+            return self._surface(manifest, output, event)
+        finally:
+            event["seconds"] = time.perf_counter() - started
+
+    def _surface(self, manifest, output, event):
         if manifest and read(manifest)["rejected_source_cells"] == 0 and self.baseline:
+            event["cache"] = "zero_rejection_baseline"
             return self.baseline
         output = Path(output)
         output.mkdir(parents=True, exist_ok=True)
@@ -56,6 +67,7 @@ class WorkingSurface:
                 raise RuntimeError(f"Cached working DEM changed: {d['dem']}")
             if fingerprint(d["state"]) != d["state_fingerprint"]:
                 raise RuntimeError(f"Cached working FusionState changed: {d['state']}")
+            event["cache"] = "validated_working_surface"
             self.previous = d
             if manifest is None:
                 self.baseline = d["dem"]
@@ -67,6 +79,11 @@ class WorkingSurface:
             work.rename(output / ("interrupted_" + str(time.time_ns())))
         work.mkdir()
         d = self._build(manifest, work.resolve())
+        event.update(
+            cache="unchanged_stack" if d["timings"]["changed_blocks"] == 0 else "miss",
+            stacking=dict(d["timings"]),
+            interpolation_seconds=d["interpolation_seconds"],
+        )
         for field, filename in (("dem", "dem.tif"), ("state", "fusion.tif")):
             source = Path(d[field]).resolve()
             if source.is_relative_to(work.resolve()):
@@ -94,9 +111,13 @@ class WorkingSurface:
         for rec in self.sources:
             if fingerprint(rec["path"]) != rec["fingerprint"]:
                 raise RuntimeError(f"QC source grid changed during QC: {rec['path']}")
-            if masks and (
-                sha(masks["masks"][rec["source_id"]]["mask"])
-                != masks["masks"][rec["source_id"]]["mask_sha256"]
+            if (
+                masks
+                and rec.get("role") != "reference"
+                and (
+                    sha(masks["masks"][rec["source_id"]]["mask"])
+                    != masks["masks"][rec["source_id"]]["mask_sha256"]
+                )
             ):
                 raise RuntimeError("QC rejection mask changed during QC")
         state = str(work / "fusion.tif")
