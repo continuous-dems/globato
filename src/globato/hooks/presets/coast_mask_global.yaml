@@ -1,0 +1,9 @@
+name: coast-mask-global
+description: Global coastline refinement from explicit source declarations, then native stacking.
+hooks:
+  - name: coast_mask_side_stack
+    args: {res: 0.1111111s, crs: EPSG:4326}
+  - name: coast_mask_refine
+    args: {res: 0.1111111s, crs: EPSG:4326}
+  - name: stack_combine
+    args: {res: 0.1111111s, crs: EPSG:4326, missing: error, output: '%tile_dir%/accepted.tif'}
