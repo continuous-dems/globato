@@ -630,7 +630,7 @@ class MultiStackHook(FetchHook):
             y_inc,
             self.strategy,
         )
-       
+
         return MultiStackAccumulator(
             region=region,
             x_inc=x_inc,
