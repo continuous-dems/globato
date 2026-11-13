@@ -3,12 +3,40 @@
 
 """globato.hooks.sinks.side_stack
 
-Per-entry FusionState cache for Globato.
+Side-stack generation and cache management for Globato.
 
 A side-stack stores the exact additive FusionState produced after an entry has
 passed through its point-processing pipeline. Cache hits bypass raw source
 reading and point processing and provide the cached FusionState directly as a
 raster stream for ``multi_stack``.
+
+
+Side-stacks accumulate elevation observations into per-source
+FusionState rasters, which can be reused or combined downstream.
+
+Entry metadata
+--------------
+Side-stack hooks use internal ``_sidestack_*`` entry fields
+documented in ``SIDESTACK_ENTRY_KEYS``.
+
+These fields describe cache lookup, artifact registration,
+processing identity, completion status, and source aliases.
+
+Fresh generation
+----------------
+When ``fresh=True``, the writer uses an isolated namespace and
+publishes a completion receipt only after the input stream has
+been fully consumed and the resulting raster finalized.
+
+A registered side-stack is not necessarily completed. Consumers
+requiring completed artifacts must validate the receipt rather
+than relying on registration metadata alone.
+
+Completion receipts currently exist as entry metadata and are
+not persisted as independent sidecar files.
+
+The ``_sidestack_*`` vocabulary is internal to Globato and may
+evolve as identity handling is standardized with Fetchez.
 """
 
 from __future__ import annotations
@@ -43,6 +71,45 @@ SIDESTACK_DATATYPE = "FUSION_STATE"
 SIDESTACK_HASH_TAG = "GLOBATO_SIDESTACK_HASH"
 # Authoritative M2D additive writer; reject caches from overwrite-only writers.
 SIDESTACK_CACHE_VERSION = 2
+
+
+# Internal entry metadata used by side-stack pipeline(s).
+#
+# These keys support side-stack caching, artifact generation, completion
+# validation, and downstream consumers such as Coast Mask.
+
+SIDESTACK_ENTRY_KEYS = {
+    "_sidestack_hit": "Whether an existing side-stack cache was found.",
+    "_sidestack_path": "Path to the selected or registered side-stack.",
+    "_sidestack_hash": "Identity token used for side-stack caching.",
+    "_sidestack_identity": "Canonical side-stack identity description.",
+    "_sidestack_namespace": "Isolated directory for fresh generation.",
+    "_sidestack_registered": "Whether fresh generation was registered.",
+    "_sidestack_context": "Optional caller-provided receipt metadata.",
+    "_sidestack_processing_identity": (
+        "Source and processing identity used for artifact binding "
+        "and contribution equivalence."
+    ),
+    "_sidestack_receipt": (
+        "Completion metadata published after successful generation."
+    ),
+    "_sidestack_aliases": (
+        "Equivalent contributions recorded during source selection."
+    ),
+}
+
+
+SIDESTACK_RECEIPT_FIELDS = {
+    "schema": "Receipt schema identifier and version.",
+    "sink": "Component that generated the artifact.",
+    "namespace": "Fresh-generation namespace.",
+    "source_file": "Original source file reference.",
+    "processing_identity": "Recorded source processing identity.",
+    "context": "Caller-provided metadata frozen at registration.",
+    "registered_claims": "Weight and uncertainty values at registration.",
+    "path": "Published artifact path.",
+    "sha256": "SHA-256 checksum of the completed artifact.",
+}
 
 
 def _resolve_grid(region: Any, res: Any, crs: Any) -> dict[str, Any]:
