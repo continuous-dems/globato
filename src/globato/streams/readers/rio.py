@@ -28,6 +28,17 @@ logger = logging.getLogger(__name__)
 logging.getLogger("rasterio").setLevel(logging.ERROR)
 
 
+def _window_index(value):
+    """Snap pixel-boundary roundoff before the existing integer crop policy.
+
+    A full raster window can end at 695.9999999998 after affine inversion.
+    Truncating that loses a complete row. The tolerance is in pixel units;
+    genuine fractional crop bounds retain their existing integer behavior.
+    """
+    nearest = round(value)
+    return int(nearest if abs(value - nearest) <= 1e-7 else value)
+
+
 class RasterioReader(BaseGlobatoReader):
     """Streaming Raster Parser using Rasterio."""
 
@@ -175,10 +186,10 @@ class RasterioReader(BaseGlobatoReader):
         else:
             master_window = Window(0, 0, src.width, src.height)
 
-        y_start = int(master_window.row_off)
-        y_end = int(master_window.row_off + master_window.height)
-        x_start = int(master_window.col_off)
-        x_end = int(master_window.col_off + master_window.width)
+        y_start = _window_index(master_window.row_off)
+        y_end = _window_index(master_window.row_off + master_window.height)
+        x_start = _window_index(master_window.col_off)
+        x_end = _window_index(master_window.col_off + master_window.width)
 
         # If blocks span the full width, the file is stored in strips of block_h
         # rows. Each strip gives block_h * (cropped width) cells; take the number of
@@ -229,12 +240,12 @@ class RasterioReader(BaseGlobatoReader):
                 if not np.issubdtype(z.dtype, np.floating):
                     z = z.astype(np.float32)
 
-                mask = ~np.isnan(z)
-                if src.nodata is not None:
-                    if np.issubdtype(z.dtype, np.floating):
-                        mask &= ~np.isclose(z, src.nodata, rtol=1e-5, equal_nan=True)
-                    else:
-                        mask &= z != src.nodata
+                # Respect GDAL's authoritative validity mask, including external
+                # masks and exact nodata equality. Approximate nodata matching
+                # can discard valid elevations near the sentinel value.
+                mask = (src.read_masks(self.band_no, window=window) > 0) & np.isfinite(
+                    z
+                )
 
                 if not np.any(mask):
                     continue
