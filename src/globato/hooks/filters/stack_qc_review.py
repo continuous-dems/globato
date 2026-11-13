@@ -28,7 +28,7 @@ class StackQCReview(FetchHook):
     """Write Stack QC review pages for the filtered modules."""
 
     name = "stack_qc_review"
-    meta_stage = "collection"
+    meta_stage = "finalize"
     meta_category = "metadata"
     meta_desc = "Before/after hillshade review pages for Stack QC results."
     affects_fusion_state = False
@@ -38,7 +38,7 @@ class StackQCReview(FetchHook):
     }
 
     def __init__(self, dem=None, output=None, **kwargs):
-        super().__init__(stage="collection", **kwargs)
+        super().__init__(**kwargs)
         self.dem = dem
         self.output = output
         self._qc_hooks = None
