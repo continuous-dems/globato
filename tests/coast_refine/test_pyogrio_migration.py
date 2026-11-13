@@ -1,8 +1,5 @@
 """Regression tests for Fiona -> Pyogrio Coast Mask I/O migration.
 
-Place in tests/coast_refine/test_pyogrio_migration.py and run with:
-    pytest -q tests/coast_refine/test_pyogrio_migration.py
-
 These tests deliberately use small temporary GeoPackages. They exercise the
 public-on-disk layer contracts rather than implementation-specific I/O calls.
 """
