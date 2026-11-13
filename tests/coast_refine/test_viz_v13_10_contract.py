@@ -12,8 +12,11 @@ import sys
 import types
 from types import SimpleNamespace
 
+import geopandas as gpd
 import numpy as np
+import pyogrio
 import rasterio
+from shapely.geometry import box
 from rasterio.transform import from_origin
 
 
@@ -61,35 +64,20 @@ def tif(path):
     return path
 
 
-def vector(path):
-    # Raster Viz supports polygons and lines from GPKG/GeoJSON.
-    import fiona
-    from fiona.crs import CRS
-
-    with fiona.open(
+def vector(path, *, layer=None):
+    """Write the same polygon fixture as GeoJSON or a named GPKG layer."""
+    path = Path(path)
+    frame = gpd.GeoDataFrame(
+        geometry=[box(-118.2, 34.09, -118.19, 34.1)],
+        crs="EPSG:4326",
+    )
+    kwargs = {"layer": layer} if layer is not None else {}
+    pyogrio.write_dataframe(
+        frame,
         path,
-        "w",
-        driver="GeoJSON",
-        schema={"geometry": "Polygon", "properties": {}},
-        crs=CRS.from_epsg(4326),
-    ) as dst:
-        dst.write(
-            {
-                "geometry": {
-                    "type": "Polygon",
-                    "coordinates": [
-                        [
-                            [-118.2, 34.1],
-                            [-118.19, 34.1],
-                            [-118.19, 34.09],
-                            [-118.2, 34.09],
-                            [-118.2, 34.1],
-                        ]
-                    ],
-                },
-                "properties": {},
-            }
-        )
+        driver="GPKG" if path.suffix.lower() == ".gpkg" else "GeoJSON",
+        **kwargs,
+    )
     return path
 
 
@@ -226,34 +214,7 @@ def test_grid_native_five_products_and_independent_vectors(tmp_path):
         geometry = {}
         for name in ("original_water", "retention_water", "refined_topology"):
             p = tmp_path / f"{name}_input.gpkg"
-            import fiona
-            from fiona.crs import CRS
-
-            with fiona.open(
-                p,
-                "w",
-                driver="GPKG",
-                schema={"geometry": "Polygon", "properties": {}},
-                crs=CRS.from_epsg(4326),
-                layer="boundary",
-            ) as dst:
-                dst.write(
-                    {
-                        "geometry": {
-                            "type": "Polygon",
-                            "coordinates": [
-                                [
-                                    [-118.2, 34.1],
-                                    [-118.19, 34.1],
-                                    [-118.19, 34.09],
-                                    [-118.2, 34.09],
-                                    [-118.2, 34.1],
-                                ]
-                            ],
-                        },
-                        "properties": {},
-                    }
-                )
+            vector(p, layer="boundary")
             geometry[name] = str(p)
         artifact = SimpleNamespace(
             products=geometry, layers={k: "boundary" for k in geometry}
