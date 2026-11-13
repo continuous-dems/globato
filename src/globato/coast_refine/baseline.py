@@ -9,6 +9,7 @@ import json
 import tempfile
 from filelock import FileLock
 import geopandas as gpd
+import pyogrio
 import shapely
 from shapely.geometry import box
 from pyproj import CRS
@@ -53,14 +54,17 @@ def _local_geometry_in_context(source, context, polygon_class):
     Uniform YAML classes override attributes; osm mode preserves and validates
     each feature class attribute. No geometry buffer is applied.
     """
-    import fiona
 
-    with fiona.open(source) as collection:
-        if not collection.crs_wkt and not collection.crs:
-            raise ValueError("Local polygon file must declare its CRS")
-        source_crs = CRS.from_user_input(collection.crs_wkt or collection.crs)
-        if len(collection) == 0:
-            raise ValueError("Local vector must contain at least one polygon")
+    info = pyogrio.read_info(source)
+
+    if not info["crs"]:
+        raise ValueError("Local polygon file must declare its CRS")
+
+    if info["features"] == 0:
+        raise ValueError("Local vector must contain at least one polygon")
+
+    source_crs = CRS.from_user_input(info["crs"])
+
     # Curved projected ROI edges may reach beyond their four transformed
     # corners. Densify this read filter so valid intersecting features are
     # not omitted before the precise WGS84 intersection below.
@@ -99,21 +103,14 @@ def _local_geometry_in_context(source, context, polygon_class):
 
 
 def _write_topology(frame, path):
-    """Write classed topology, including the valid case of no local overlap."""
-    if frame.empty:
-        import fiona
-
-        with fiona.open(
-            path,
-            "w",
-            driver="GPKG",
-            layer="topology",
-            crs="EPSG:4326",
-            schema={"geometry": "MultiPolygon", "properties": {"class": "str"}},
-        ):
-            pass
-    else:
-        frame.to_file(path, layer="topology", driver="GPKG")
+    """Write classed topology, including an empty topology layer."""
+    pyogrio.write_dataframe(
+        frame,
+        path,
+        driver="GPKG",
+        layer="topology",
+        geometry_type="MultiPolygon",
+    )
 
 
 class Baseline:

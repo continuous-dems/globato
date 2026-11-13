@@ -5,10 +5,10 @@ import json
 from pathlib import Path
 from typing import Optional, Sequence
 
-import fiona
 import geopandas as gpd
+import pyogrio
 import shapely
-from shapely.geometry import MultiPolygon, Polygon, mapping
+from shapely.geometry import MultiPolygon, Polygon
 
 WATER_CLASSES = {"ocean", "water", "river", "lake", "wetland", "estuary"}
 
@@ -41,7 +41,7 @@ def _choose_layer(
 ):
     if path.suffix.lower() != ".gpkg":
         return None
-    layers = list(fiona.listlayers(path))
+    layers = pyogrio.list_layers(path)[:, 0].tolist()
     if requested:
         if requested not in layers:
             raise ValueError(
@@ -123,19 +123,21 @@ def _canonical_mask_from_gdf(
     output.parent.mkdir(parents=True, exist_ok=True)
     if output.exists():
         output.unlink()
-    schema = {
-        "geometry": "MultiPolygon",
-        "properties": {"class": "str:32", "source": "str:32"},
-    }
-    with fiona.open(
-        output, "w", driver="GPKG", layer="mask", schema=schema, crs="EPSG:4326"
-    ) as dst:
-        dst.write(
-            {
-                "geometry": mapping(geom),
-                "properties": {"class": "ocean", "source": source_label[:32]},
-            }
-        )
+    # Keep the original one-feature contract, including an empty MultiPolygon
+    # when allow_empty=True. The source field is capped at 32 characters.
+    frame = gpd.GeoDataFrame(
+        {"class": ["ocean"], "source": [str(source_label)[:32]]},
+        geometry=[geom],
+        crs="EPSG:4326",
+    )
+    pyogrio.write_dataframe(
+        frame,
+        output,
+        driver="GPKG",
+        layer="mask",
+        geometry_type="MultiPolygon",
+        promote_to_multi=True,
+    )
     return output
 
 
@@ -152,23 +154,21 @@ def normalize_existing_mask(mask_path, workdir, *, mask_layer=None, allow_empty=
 
     if path.suffix.lower() == ".gpkg" and layer == "mask":
         try:
-            with fiona.open(path, layer="mask") as src:
-                props = dict(src.schema.get("properties", {}))
-                geom_type = src.schema.get("geometry")
-                if (
-                    len(src) == 1
-                    and geom_type == "MultiPolygon"
-                    and "class" in props
-                    and "source" in props
-                    and src.crs
-                ):
-                    return path, {
-                        "mode": "existing_gpkg",
-                        "source": str(path),
-                        "layer": "mask",
-                        "normalized": False,
-                    }
-        except Exception:
+            info = pyogrio.read_info(path, layer="mask")
+            fields = set(info["fields"].tolist())
+            if (
+                info["features"] == 1
+                and info["geometry_type"] == "MultiPolygon"
+                and {"class", "source"} <= fields
+                and info["crs"]
+            ):
+                return path, {
+                    "mode": "existing_gpkg",
+                    "source": str(path),
+                    "layer": "mask",
+                    "normalized": False,
+                }
+        except (OSError, ValueError):
             pass
 
     g, used_layer = read_vector(

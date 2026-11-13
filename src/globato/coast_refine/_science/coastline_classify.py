@@ -14,6 +14,7 @@ import geopandas as gpd
 import numpy as np
 import rasterio
 import shapely
+import pyogrio
 from rasterio.features import shapes
 from scipy import ndimage
 from shapely.geometry import Point, Polygon, shape as geometry_shape
@@ -486,9 +487,7 @@ def screen_decision_audit(
     The full classifier can request the exact conflicting source-grid cells to
     *retain as water*, never as evidence for restoration.
     """
-    import fiona
-
-    available = set(fiona.listlayers(review_path))
+    available = set(pyogrio.list_layers(review_path)[:, 0].tolist())
     rows = []
     conflicts = np.zeros_like(restored, dtype=bool) if return_conflicts else None
     for layer in (
@@ -801,9 +800,7 @@ def classify_full(
     explicit_water = reject & valid
     withheld = np.zeros_like(valid)
     if review:
-        import fiona
-
-        layers = set(fiona.listlayers(review))
+        layers = set(pyogrio.list_layers(review)[:, 0].tolist())
         if "rejected_hydroflat_transition" in layers:
             explicit_water |= (
                 mask_on_grid(

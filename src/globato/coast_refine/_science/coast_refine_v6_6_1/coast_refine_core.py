@@ -5,7 +5,7 @@ import math
 from functools import lru_cache
 from pathlib import Path
 
-import fiona
+import pyogrio
 import geopandas as gpd
 import numpy as np
 import pandas as pd
@@ -15,7 +15,7 @@ from rasterio.features import rasterize, shapes
 from rasterio.windows import from_bounds
 from scipy import ndimage as ndi
 import shapely
-from shapely.geometry import MultiPolygon, Polygon, mapping, shape
+from shapely.geometry import MultiPolygon, Polygon, shape
 from shapely.ops import transform as shp_transform
 
 FOUR = ndi.generate_binary_structure(2, 1)
@@ -51,7 +51,11 @@ def load_optional_osm_evidence(path, layer="catalog", target_crs="EPSG:4326"):
     path = Path(path).expanduser().resolve()
     if not path.is_file():
         raise FileNotFoundError(path)
-    layers = list(fiona.listlayers(path)) if path.suffix.lower() == ".gpkg" else []
+    layers = (
+        pyogrio.list_layers(path)[:, 0].tolist()
+        if path.suffix.lower() == ".gpkg"
+        else []
+    )
     if path.suffix.lower() == ".gpkg":
         if layer not in layers:
             raise ValueError(
@@ -2166,80 +2170,96 @@ def clean_accepted_by_source_resolution(
 
 
 def write_dropin_mask(input_gpkg, output_gpkg, additions_geom, layer="mask"):
+    """Subtract land additions without changing baseline attributes or feature count."""
     input_gpkg = Path(input_gpkg).resolve()
     output_gpkg = Path(output_gpkg).resolve()
     if input_gpkg == output_gpkg:
         raise ValueError("Output GPKG must differ from input GPKG")
     output_gpkg.parent.mkdir(parents=True, exist_ok=True)
-    tmp = output_gpkg.with_suffix(output_gpkg.suffix + ".tmp")
+    tmp = output_gpkg.with_name(output_gpkg.stem + ".tmp.gpkg")
     if tmp.exists():
         tmp.unlink()
 
-    with fiona.open(input_gpkg, layer=layer) as src:
-        schema = src.schema.copy()
-        crs_wkt = src.crs_wkt
-        crs = src.crs
-        feats = list(src)
-        if not feats:
-            raise ValueError(f"No features in {input_gpkg}:{layer}")
-        src_crs = gpd.GeoSeries([shape(feats[0]["geometry"])], crs=crs_wkt or crs).crs
+    frame = pyogrio.read_dataframe(input_gpkg, layer=layer)
+    if frame.empty:
+        raise ValueError(f"No features in {input_gpkg}:{layer}")
+    if frame.crs is None:
+        raise ValueError(f"Missing CRS in {input_gpkg}:{layer}")
 
     add = additions_geom
     if add is None or add.is_empty:
         add_src = MultiPolygon([])
     else:
-        gs = gpd.GeoSeries([add], crs="EPSG:4326")
-        add_src = gs.to_crs(src_crs).iloc[0]
+        add_src = gpd.GeoSeries([add], crs="EPSG:4326").to_crs(frame.crs).iloc[0]
 
-    with fiona.open(
-        tmp, "w", driver="GPKG", layer=layer, schema=schema, crs_wkt=crs_wkt
-    ) as dst:
-        for feat in feats:
-            geom = shape(feat["geometry"])
-            revised = geom.difference(add_src)
-            revised = shapely.make_valid(revised)
-            revised = _polygonal(revised)
-            if revised.is_empty:
-                raise ValueError(
-                    "Refinement would erase an entire baseline feature; refusing"
-                )
-            dst.write(
-                {"geometry": mapping(revised), "properties": dict(feat["properties"])}
+    revised = []
+    for geom in frame.geometry:
+        result = _polygonal(shapely.make_valid(geom.difference(add_src)))
+        if result.is_empty:
+            raise ValueError(
+                "Refinement would erase an entire baseline feature; refusing"
             )
+        revised.append(result)
+
+    frame = frame.copy()
+    frame.geometry = gpd.GeoSeries(revised, index=frame.index, crs=frame.crs)
+    # Write the complete replacement before publishing it. Keep a .gpkg
+    # suffix so GDAL recognizes the temporary file as a GeoPackage.
+    pyogrio.write_dataframe(
+        frame,
+        tmp,
+        driver="GPKG",
+        layer=layer,
+        geometry_type="MultiPolygon",
+        promote_to_multi=True,
+    )
     tmp.replace(output_gpkg)
     return validate_dropin(input_gpkg, output_gpkg, layer=layer)
 
 
 def validate_dropin(input_gpkg, output_gpkg, layer="mask"):
+    """Check layer names, field types, geometry type, CRS and feature count."""
+    from pyproj import CRS
+
+    input_layers = pyogrio.list_layers(input_gpkg)[:, 0].tolist()
+    output_layers = pyogrio.list_layers(output_gpkg)[:, 0].tolist()
+    a = pyogrio.read_info(input_gpkg, layer=layer)
+    b = pyogrio.read_info(output_gpkg, layer=layer)
+
+    input_schema = {
+        "geometry": a["geometry_type"],
+        "properties": dict(zip(a["fields"].tolist(), a["ogr_types"], strict=True)),
+    }
+    output_schema = {
+        "geometry": b["geometry_type"],
+        "properties": dict(zip(b["fields"].tolist(), b["ogr_types"], strict=True)),
+    }
+    same_crs = bool(
+        a["crs"]
+        and b["crs"]
+        and CRS.from_user_input(a["crs"]) == CRS.from_user_input(b["crs"])
+    )
+    compatible = bool(
+        input_schema == output_schema
+        and same_crs
+        and input_layers == output_layers
+        and a["features"] == b["features"]
+    )
     result = {
         "input": str(Path(input_gpkg).resolve()),
         "output": str(Path(output_gpkg).resolve()),
         "layer": layer,
+        "input_layers": input_layers,
+        "output_layers": output_layers,
+        "input_schema": input_schema,
+        "output_schema": output_schema,
+        "input_crs_wkt": a["crs"],  # Retained key; Pyogrio may return EPSG strings.
+        "output_crs_wkt": b["crs"],
+        "input_count": a["features"],
+        "output_count": b["features"],
+        "drop_in_compatible": compatible,
     }
-    in_layers = fiona.listlayers(input_gpkg)
-    out_layers = fiona.listlayers(output_gpkg)
-    with (
-        fiona.open(input_gpkg, layer=layer) as a,
-        fiona.open(output_gpkg, layer=layer) as b,
-    ):
-        result.update(
-            input_layers=list(in_layers),
-            output_layers=list(out_layers),
-            input_schema=a.schema,
-            output_schema=b.schema,
-            input_crs_wkt=a.crs_wkt,
-            output_crs_wkt=b.crs_wkt,
-            input_count=len(a),
-            output_count=len(b),
-        )
-        same_props = a.schema.get("properties") == b.schema.get("properties")
-        same_geom = a.schema.get("geometry") == b.schema.get("geometry")
-        same_crs = (a.crs_wkt or str(a.crs)) == (b.crs_wkt or str(b.crs))
-        same_layers = list(in_layers) == list(out_layers)
-        result["drop_in_compatible"] = bool(
-            same_props and same_geom and same_crs and same_layers and len(a) == len(b)
-        )
-    if not result["drop_in_compatible"]:
+    if not compatible:
         raise RuntimeError("Output GPKG failed drop-in schema/CRS/layer validation")
     return result
 

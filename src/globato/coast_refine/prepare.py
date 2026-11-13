@@ -8,8 +8,13 @@ import subprocess
 import rasterio
 import sys
 import tempfile
+import numpy as np
+import pyogrio
+import pyogrio.raw
 import geopandas as gpd
 import shapely
+from shapely.geometry import MultiLineString
+
 from ._io import (
     digest,
     identity,
@@ -51,45 +56,51 @@ def _baseline_context(mask, aoi, context_region=None):
     return context, context_region
 
 
-def _write_lines(path, geom, role="original_coastline", crs="EPSG:4326"):
-    """Publish only linear intersections; touching corners are not coastline.
+def linear_parts(geom):
+    """Yield nonzero-length lines from nested Shapely geometries.
 
-    GEOS can return Point/MultiPoint or nested GeometryCollections when
-    boundaries meet at a vertex. Keep every LineString, including nested
-    MultiLineStrings, and publish a valid empty layer when none remains.
+    Ignore point-only intersections and empty geometries.
     """
-    import fiona
-    from shapely.geometry import MultiLineString, mapping
+    if geom is None or geom.is_empty:
+        return
 
-    def linear_parts(value):
-        if value.is_empty:
-            return
-        if value.geom_type == "LineString":
-            if value.length > 0:
-                yield value
-        elif value.geom_type in ("MultiLineString", "GeometryCollection"):
-            for child in value.geoms:
-                yield from linear_parts(child)
+    if geom.geom_type == "LineString":
+        if geom.length > 0:
+            yield geom
 
+    elif geom.geom_type in ("MultiLineString", "GeometryCollection"):
+        for child in geom.geoms:
+            yield from linear_parts(child)
+
+
+def _write_lines(path, geom, role="original_coastline", crs="EPSG:4326"):
+    """Write all coastline segments, including a valid empty layer."""
     lines = list(linear_parts(geom))
-    # Fiona replaces a named layer, not the whole GeoPackage. Raw science may
-    # have left a differently named coastline layer that would remain first.
-    Path(path).unlink(missing_ok=True)
-    with fiona.open(
+
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.unlink(missing_ok=True)
+
+    geometry = (
+        np.array(
+            [shapely.to_wkb(MultiLineString(lines))],
+            dtype=object,
+        )
+        if lines
+        else np.empty(0, dtype=object)
+    )
+    roles = np.array([role] if lines else [], dtype=object)
+
+    pyogrio.raw.write(
         path,
-        "w",
-        driver="GPKG",
+        geometry=geometry,
+        field_data=[roles],
+        fields=["role"],
         layer="mask",
+        driver="GPKG",
+        geometry_type="MultiLineString",
         crs=crs,
-        schema={"geometry": "MultiLineString", "properties": {"role": "str"}},
-    ) as dst:
-        if lines:
-            dst.write(
-                {
-                    "geometry": mapping(MultiLineString(lines)),
-                    "properties": {"role": role},
-                }
-            )
+    )
 
 
 def _publish_target_cell_coastline(pending, lattice):
@@ -434,7 +445,6 @@ def prepare_from_baseline(
 ):
     """Normalize OSM or geometry-only local input, then run the same science."""
     from filelock import FileLock
-    import fiona
     from shapely.geometry import box
     from .baseline import load_baseline, polygon_area
     from .topology import publish_topology
@@ -673,7 +683,7 @@ def prepare_from_baseline(
         # ambiguous multi-layer products rather than selecting a guessed layer.
         products = {}
         for path in sorted(pending.glob("*.gpkg")):
-            layers = fiona.listlayers(path)
+            layers = pyogrio.list_layers(path)[:, 0].tolist()
             if len(layers) != 1:
                 raise ValueError(
                     f"Expected exactly one vector layer in {path}: {layers}"

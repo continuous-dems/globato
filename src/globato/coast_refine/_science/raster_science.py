@@ -10,8 +10,9 @@ import shutil
 import subprocess
 import sys
 
+import pandas as pd
+import pyogrio
 import geopandas as gpd
-import fiona
 import numpy as np
 import rasterio
 import shapely
@@ -45,35 +46,45 @@ def read_water(path):
 
 
 def vector(path, layer, geometry, properties=None):
-    # One row can contain several clipped pieces; preserve every land hole.
+    """Write polygon geometry, or an empty polygon layer if absent."""
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
+
     geometry = polygon_water(geometry)
-    if geometry.is_empty:
-        # Fiona/GDAL round-trips a one-row empty polygon as a null geometry.
-        # Publish zero features instead, retaining a real polygon layer/CRS.
-        fields = {
-            k: "int"
-            if isinstance(v, int)
-            else "float"
-            if isinstance(v, float)
-            else "str"
-            for k, v in (properties or {}).items()
-        }
-        with fiona.open(
-            path,
-            "w",
-            driver="GPKG",
-            layer=layer,
-            crs="EPSG:4326",
-            schema={"geometry": "MultiPolygon", "properties": fields},
-        ):
-            pass
-        return
+    properties = properties or {}
+
+    # Preserve attribute types even when there are no features.
+    columns = {
+        key: pd.Series(
+            [value] if not geometry.is_empty else [],
+            dtype=(
+                "int64"
+                if isinstance(value, int)
+                else "float64"
+                if isinstance(value, float)
+                else "object"
+            ),
+        )
+        for key, value in properties.items()
+    }
+
     frame = gpd.GeoDataFrame(
-        {k: [v] for k, v in (properties or {}).items()}, geometry=[geometry], crs=4326
+        columns,
+        geometry=gpd.GeoSeries(
+            [] if geometry.is_empty else [geometry],
+            crs="EPSG:4326",
+        ),
+        crs="EPSG:4326",
     )
-    frame.to_file(path, layer=layer, driver="GPKG", engine="fiona")
+
+    pyogrio.write_dataframe(
+        frame,
+        path,
+        driver="GPKG",
+        layer=layer,
+        geometry_type="MultiPolygon",
+        promote_to_multi=True,
+    )
 
 
 def regional_water_components(water, context, seeds, baseline, *, ocean_anchor=None):
@@ -139,7 +150,10 @@ def read_polygon_layer(path, layer="mask"):
     path = Path(path)
     if not path.is_file():
         return shapely.MultiPolygon([])
-    if path.suffix.lower() == ".gpkg" and layer not in fiona.listlayers(path):
+    if (
+        path.suffix.lower() == ".gpkg"
+        and layer not in pyogrio.list_layers(path)[:, 0].tolist()
+    ):
         return shapely.MultiPolygon([])
     frame = gpd.read_file(path, layer=layer if path.suffix.lower() == ".gpkg" else None)
     if frame.empty:
@@ -1015,7 +1029,7 @@ def run(a, root):
         root / "refined_coastline.gpkg",
         layer="coastline",
         driver="GPKG",
-        engine="fiona",
+        engine="pyogrio",
     )
     for status, geometry in groups.items():
         if status != "marine":

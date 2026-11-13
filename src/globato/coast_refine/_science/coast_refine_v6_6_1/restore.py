@@ -7,7 +7,7 @@ import json
 import time
 from pathlib import Path
 
-import fiona
+import pyogrio
 import geopandas as gpd
 import shapely
 from shapely.geometry import MultiPolygon
@@ -98,28 +98,33 @@ def _write_review_gpkg(
     for name, g in layers:
         if g is None or g.empty:
             continue
-        g.to_file(path, layer=name, driver="GPKG", engine="fiona")
-    available = set(fiona.listlayers(path))
+        g.to_file(path, layer=name, driver="GPKG", engine="pyogrio", index=False)
+    available = set(pyogrio.list_layers(path)[:, 0])
     for name, g in layers:
         if g is None or g.empty:
             continue
         if name not in available:
             raise RuntimeError(f"Review layer missing after write: {name}")
-        with fiona.open(path, layer=name) as saved:
-            if len(saved) != len(g):
-                raise RuntimeError(f"Review feature count changed after write: {name}")
+        info = pyogrio.read_info(path, layer=name)
+        if info["features"] != len(g):
+            raise RuntimeError(f"Review feature count changed after write: {name}")
 
 
 def _schema_summary(mask, layer="mask"):
-    with fiona.open(mask, layer=layer) as src:
-        return {
-            "layers": list(fiona.listlayers(mask)),
-            "layer": layer,
-            "driver": src.driver,
-            "schema": src.schema,
-            "crs_wkt": src.crs_wkt,
-            "feature_count": len(src),
-        }
+    """Summarize a vector layer without loading feature geometries."""
+    info = pyogrio.read_info(mask, layer=layer)
+    properties = {
+        name: ogr_type
+        for name, ogr_type in zip(info["fields"], info["ogr_types"], strict=True)
+    }
+    return {
+        "layers": pyogrio.list_layers(mask)[:, 0].tolist(),
+        "layer": layer,
+        "driver": info["driver"],
+        "schema": {"geometry": info["geometry_type"], "properties": properties},
+        "crs_wkt": info["crs"],  # Pyogrio returns a CRS string, not necessarily WKT.
+        "feature_count": info["features"],
+    }
 
 
 def _fmt_bbox(b):

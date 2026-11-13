@@ -3,10 +3,10 @@ import hashlib
 import json
 import os
 import tempfile
-import fiona
+import numpy as np
+import pyogrio.raw
 import geopandas as gpd
 import shapely
-from shapely.geometry import mapping
 
 
 def digest(path, *, progress=None):
@@ -117,16 +117,29 @@ def read_polygon(path, layer="mask", *, crs="EPSG:4326", require_native=False):
 def write_polygon(path, geom, crs="EPSG:4326"):
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    schema = {"geometry": "MultiPolygon", "properties": {"role": "str"}}
-    with fiona.open(
-        path, "w", driver="GPKG", layer="mask", schema=schema, crs=crs
-    ) as dst:
-        if not geom.is_empty:
-            if geom.geom_type == "Polygon":
-                geom = shapely.MultiPolygon([geom])
-            if geom.geom_type != "MultiPolygon" or not geom.is_valid:
-                raise ValueError("Expected valid polygon geometry")
-            dst.write({"geometry": mapping(geom), "properties": {"role": path.stem}})
+
+    if geom.is_empty:
+        geometry = np.array([], dtype=object)
+        field_data = [np.array([], dtype=object)]
+    else:
+        if geom.geom_type == "Polygon":
+            geom = shapely.MultiPolygon([geom])
+        if geom.geom_type != "MultiPolygon" or not geom.is_valid:
+            raise ValueError("Expected valid polygon geometry")
+
+        geometry = np.array([shapely.to_wkb(geom)], dtype=object)
+        field_data = [np.array([path.stem], dtype=object)]
+
+    pyogrio.raw.write(
+        path,
+        geometry=geometry,
+        field_data=field_data,
+        fields=["role"],
+        layer="mask",
+        driver="GPKG",
+        geometry_type="MultiPolygon",
+        crs=crs,
+    )
     return path
 
 

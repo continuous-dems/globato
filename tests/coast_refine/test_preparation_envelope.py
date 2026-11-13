@@ -93,6 +93,7 @@ def test_failed_preparation_keeps_diagnostics_without_publishing_acceptance(
     from fetchez.spatial import Region
     from globato.coast_refine import prepare
     from test_global_refinement import global_recipe
+    from fetchez.core import HookExecutionError
 
     recipe, _, _ = global_recipe(tmp_path)
 
@@ -114,8 +115,15 @@ def test_failed_preparation_keeps_diagnostics_without_publishing_acceptance(
             shared_cache=tmp_path / "cache",
         )
     )
-    with pytest.raises(RuntimeError, match="forced preparation failure"):
+    with pytest.raises(
+        HookExecutionError,
+        match="forced preparation failure",
+    ) as exc_info:
         plan.execute()
+
+    assert isinstance(exc_info.value.__cause__, ValueError)
+    assert str(exc_info.value.__cause__) == "forced preparation failure"
+
     failures = list((tmp_path / "out").rglob("failure.json"))
     assert len(failures) == 1
     receipt = json.loads(failures[0].read_text())

@@ -3,7 +3,7 @@
 from pathlib import Path
 import json
 import geopandas as gpd
-import fiona
+import pyogrio
 import rasterio
 from shapely.geometry import box
 from ._io import digest, identity, read_polygon, polygonal_geometry
@@ -65,7 +65,10 @@ class MaskArtifact:
             # Current preparations and the active independent adapter both
             # seal explicit layer names; do not guess for obsolete artifacts.
             layer = product.get("layer")
-            if not isinstance(layer, str) or layer not in fiona.listlayers(target):
+            if (
+                not isinstance(layer, str)
+                or layer not in pyogrio.list_layers(target)[:, 0].tolist()
+            ):
                 raise ValueError(
                     f"Mask product has missing/wrong GeoPackage layer: {key}"
                 )
@@ -229,15 +232,15 @@ class MaskArtifact:
         self.manifest_hash = digest(self.path)
 
     def _validate_native_vector_crs(self, grid):
-        """Fail closed on mixed native vector CRSs, including empty coastlines.
+        """Validate native vector CRS and coastline geometry metadata.
 
-        Validate GeoPackage layer metadata without loading huge geometries or
-        reprojecting raster-aligned cell boundaries into geographic coordinates.
-        Original OSM/science vectors intentionally remain geographic and are
-        deliberately excluded from this target-cell contract.
+        Inspect GeoPackage layer metadata without loading geometries.
+        Original geographic OSM/science vectors are intentionally
+        excluded from this raster-aligned native-grid contract.
         """
         expected = rasterio.crs.CRS.from_user_input(grid["crs"])
-        for name in (
+
+        names = (
             "coverage",
             "refined_land",
             "refined_water",
@@ -251,24 +254,32 @@ class MaskArtifact:
                 for k in ("classified_ocean", "classified_inland_water")
                 if k in self.products
             ],
-        ):
+        )
+
+        for name in names:
             if name not in self.products:
                 raise ValueError(f"Missing authoritative native vector: {name}")
-            with fiona.open(self.products[name], layer=self.layers[name]) as src:
-                if (
-                    not src.crs_wkt
-                    or rasterio.crs.CRS.from_wkt(src.crs_wkt) != expected
-                ):
-                    raise ValueError(
-                        f"{name} CRS disagrees with native application grid {grid['crs']}"
-                    )
-                if (
-                    name == "refined_coastline"
-                    and src.schema["geometry"] != "MultiLineString"
-                ):
-                    raise ValueError(
-                        "Refined coastline must be a native multilinestring layer"
-                    )
+
+            info = pyogrio.read_info(
+                self.products[name],
+                layer=self.layers[name],
+            )
+
+            crs = info["crs"]
+            if not crs or rasterio.crs.CRS.from_user_input(crs) != expected:
+                raise ValueError(
+                    f"{name} CRS disagrees with native application grid {grid['crs']}"
+                )
+
+            if (
+                name == "refined_coastline"
+                and info["geometry_type"] != "MultiLineString"
+            ):
+                raise ValueError(
+                    "Refined coastline must be a native multilinestring layer"
+                )
+            if name == "refined_topology" and info["geometry_type"] != "MultiPolygon":
+                raise ValueError("Refined topology must be a native multipolygon layer")
 
     def _coverage_covers(self, geom, crs="EPSG:4326"):
         """Check coverage in its authoritative CRS, preserving curved edges.
