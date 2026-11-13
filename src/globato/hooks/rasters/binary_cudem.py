@@ -41,7 +41,6 @@ from fetchez.utils import (
     parse_arg_to_list,
 )
 from fetchez.registry import HookRegistry
-from globato.utils import parse_increment
 
 from .base import RasterGlobalHook
 
