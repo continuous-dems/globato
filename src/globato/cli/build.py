@@ -652,6 +652,22 @@ def process_build(
                 "res": increment,
             },
         },
+        {
+            "name": "ensure-hook",
+            "args": {
+                "when": {
+                    "hook": "stack_qc",
+                    "args": {
+                        "viz": True,
+                    },
+                },
+                "ensure": {
+                    "name": "stack_qc_review",
+                    "scope": "global",
+                    "position": "append",
+                },
+            },
+        },
     ]
 
     parsed_modifiers.extend(parse_hook_string(m) for m in modifier)

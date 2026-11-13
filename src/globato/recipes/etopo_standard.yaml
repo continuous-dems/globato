@@ -15,6 +15,16 @@ modifiers:
   - name: ensure-spatial-claim
     args:
       res: 3s
+  - name: ensure-hook
+    args:
+      when:
+        hook: stack_qc
+        args:
+          viz: true
+      ensure:
+        name: stack_qc_review
+        scope: global
+        position: append
 
 modules:
   - bundle: global-bathy-topo
