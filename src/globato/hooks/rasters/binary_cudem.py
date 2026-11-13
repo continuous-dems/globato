@@ -34,6 +34,7 @@ from fetchez.utils import (
     remove_glob2,
     str2inc,
     inc2str,
+    int_or,
     str_or,
     float_or,
     parse_hook_string,
@@ -88,12 +89,12 @@ class BinaryCudemStepDown(RasterGlobalHook):
             "interp_idw",
             "interp_scipy",
         ]
-        try:
-            self.steps = int(steps)
-        except (TypeError, ValueError) as exc:
-            raise ValueError("steps must be a nonnegative integer") from exc
-        if self.steps < 0 or str(steps).strip() != str(self.steps):
-            raise ValueError("steps must be a nonnegative integer")
+
+        self.steps = int_or(steps)
+
+        if self.steps is None or self.steps < 1:
+            raise ValueError("steps must be a positive integer")
+
         self.weights = parse_arg_to_list(weights, float)
         self.resolutions = parse_arg_to_list(resolutions, str2inc)
         self.blend_dists = parse_arg_to_list(blend_dists, int)
