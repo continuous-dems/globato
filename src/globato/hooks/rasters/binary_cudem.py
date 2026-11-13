@@ -91,7 +91,7 @@ class BinaryCudemStepDown(RasterGlobalHook):
 
         self.steps = int_or(steps)
 
-        if self.steps is None or self.steps < 1:
+        if self.steps is None or self.steps < 0:
             raise ValueError("steps must be a positive integer")
 
         self.weights = parse_arg_to_list(weights, float)
