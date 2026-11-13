@@ -27,7 +27,7 @@ classifiers = [
 ]
 
 dependencies = [
-    "fetchez>=0.12.3",
+    "fetchez>=0.13.0",
     "transformez>=1.0.0",
     "numpy>=1.26.0",
     "scipy>=1.11.2",
@@ -35,7 +35,7 @@ dependencies = [
     "laspy[lazrs,laszip]>=2.5.1",
     "rasterio>1.4.0",
     "geopandas>=1.0.0",
-    "pyogrio>=0.8.0",
+    "pyogrio>=0.12.0",
     "pandas>=2.1.2",
     "pyproj>3.6.1",
     "pyshp>=2.3.1",
@@ -218,6 +218,8 @@ select = [
 ]
 
 [tool.ruff.lint.per-file-ignores]
+# Frozen scientific CLI kernels retain their original progress output.
+"src/globato/coast_refine/_science/**/*.py" = ["T201"]
 # Allow print() statements in CLI module where they are expected
 "src/globato/hooks/viz/cpt.py" = ["T201"]
 "src/globato/viz/raster_viz/{cli,catalog_cli,validate}.py" = ["T201"]

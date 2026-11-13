@@ -298,6 +298,10 @@ def _stable(value, depth=0):
                 "dataset",
                 "results",
                 "session",
+                # Runtime execution context may reference the complete pipeline,
+                # including modules and hooks, creating recursive object graphs.
+                # It is not part of a hook's processing identity.
+                "context",
             )
         },
     }
