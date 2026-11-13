@@ -21,8 +21,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 * Simplify cache identities using Fetchez's `dataset_id()` and contribution metadata instead of a separate Globato identity implementation. Retain grid, CRS, FusionState schema, and cache hash validation.
 * Updated globato build overrides to propagate resolution, CRS, and stacking configuration to `stack_combine`.
 * Updated `globato build` to use `ignore-failures` instead of `fail-fast`
+* Resolution lists and x/y increments now use fetchez's `parse_increment_list` and `parse_increment_pair`, so they accept parenthesized fractions like `(1/9)s/(1/3)s/1s`. This covers `ms_cudem` and `ms_binary_cudem` resolutions, the `globato run` and `wafflez` resolution rescaling, and `multi_stack`/`simple_stack` `res`. An invalid increment in these lists now raises ValueError. Requires the next fetchez release.
 
 ### FIXED
+* `stream-reproject` built its vertical shift grid for every file, even when none of the file's points fell in the region. A wide-footprint source (e.g. an ENC chart or a long multibeam transit) over an inland tile with no VDatum coverage then failed with "Transformation failed to generate a shift grid", which now stops the whole run. The grid is now built only once a chunk has a point inside the grid's bounds. Until then chunks get only the horizontal transform, which matches the zero vertical shift they already got outside the grid.
 * `Point2PixelStream`'s "Pixelated" log line had three placeholders and two arguments, so every point stream logged a `--- Logging error ---` traceback in place of its point count, and tests that capture INFO logs failed with `not enough arguments for format string`.
 * The `glob_sdb` module failed with `ModuleNotFoundError: No module named 'globato.cli.recipe'` as soon as it started building its training DEM (#284). It now uses `fetchez.recipe.Recipe`.
 * `GDALReader.get_read_window()` failed with `ModuleNotFoundError: No module named 'globato.streams.spatial'` whenever a region was set (#284). It now uses `fetchez.spatial.Region`, and takes the region as a `Region` or as `[w, e, s, n]` in lon/lat.
