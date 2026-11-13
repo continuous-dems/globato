@@ -178,7 +178,11 @@ def read_fusion_state_stream(path: str):
 
 
 def file_digest(path):
-    """Content checksum for an opt-in materialization receipt."""
+    """Content checksum for an opt-in materialization receipt.
+
+    The full-file hash supports downstream artifact-integrity validation,
+    not dataset identity itself.
+    """
     value = hashlib.sha256()
     with open(path, "rb") as source:
         for chunk in iter(lambda: source.read(8 * 1024 * 1024), b""):
@@ -421,14 +425,24 @@ class SideStackCheck(FetchHook):
 
 
 class SideStackGenerate(FetchHook):
-    """Convert cache misses to FusionState, persist them, and pass state onward.
+    """Generate per-source FusionState grids from incoming point streams.
 
-    ``fresh=True`` bypasses existing cache paths, distinguishes processing
-    branches through dataset_id, and publishes ``_sidestack_receipt`` only
-    after natural EOF and atomic file publication. Optional JSON-compatible
-    ``entry['_sidestack_context']`` is frozen into that receipt for consumers.
-    The default lifecycle is preserved. The M2D additive-writer correction
-    invalidates overwrite-era caches and preserves overlapping observations.
+    By default, existing side-stack caches may be reused.
+
+    When fresh=True, generate a new side-stack without reusing an
+    existing cached result. Processing distinctions recorded in the
+    entry's contribution metadata are reflected through dataset_id.
+
+    A completion receipt (_sidestack_receipt) is published only
+    after the input stream has been fully consumed and the output
+    raster has been successfully finalized. Optional JSON-compatible
+    entry['_sidestack_context'] metadata is preserved in the receipt
+    for downstream consumers.
+
+    Overlapping input chunks are accumulated rather than overwritten,
+    ensuring all measurements contribute to the resulting FusionState.
+    The writer cache version is incremented to invalidate older
+    side-stacks created with the previous overwrite behavior.
     """
 
     name = "side_stack"
@@ -603,6 +617,21 @@ class SideStackGenerate(FetchHook):
                 cache_dir = tempfile.mkdtemp(prefix="sidestack_", dir=base)
                 entry["_sidestack_namespace"] = Path(cache_dir).name
                 entry["_sidestack_registered"] = True
+
+                # Build a completion receipt for a freshly generated side-stack.
+
+                # The receipt records the originating source, processing identity,
+                # registered source claims, caller-supplied context, output artifact,
+                # and its SHA-256 checksum.
+
+                # A receipt is attached to the entry only after the input stream has
+                # completed successfully and the output raster has been finalized
+                # and published.
+
+                # Receipts are currently in-memory entry metadata, not persistent
+                # sidecar files. They support downstream artifact validation but do
+                # not guarantee that the source or output remains unchanged afterward.
+
                 receipt = {
                     "schema": "globato.side_stack.receipt.v1",
                     "created_in_fresh_namespace": True,
