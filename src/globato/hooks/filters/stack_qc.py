@@ -350,16 +350,6 @@ class StackQC(FetchHook):
 
     # -- execution --------------------------------------------------------
 
-    def final_hooks(self):
-        """Use the normal pipeline's final collection hooks for optional review."""
-        if not self.viz:
-            return ()
-        from .stack_qc_review import StackQCReview
-
-        review = StackQCReview()
-        review._qc_hooks = (self,)
-        return (review,)
-
     def run(self, entries):
         from globato.qc.stack.preparation import prepare
 

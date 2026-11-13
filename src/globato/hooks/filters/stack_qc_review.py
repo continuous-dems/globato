@@ -41,7 +41,6 @@ class StackQCReview(FetchHook):
         super().__init__(**kwargs)
         self.dem = dem
         self.output = output
-        self._qc_hooks = None
         try:
             import matplotlib  # noqa: F401
         except ImportError as exc:
@@ -83,21 +82,13 @@ class StackQCReview(FetchHook):
 
         final = self._final_dem(entries)
         receipts = []
-        if self._qc_hooks is not None:
-            # Scope automatic publication to its requester, including module
-            # hooks whose entries were replaced by focus_sink/stack_combine.
-            for hook in self._qc_hooks:
-                for path in hook._review_receipts:
-                    if path not in receipts:
-                        receipts.append(path)
-        else:
-            for _, entry in entries:
-                path = (entry.get("artifacts") or {}).get("stack_qc")
-                if path and path not in receipts:
-                    receipts.append(path)
-            for path in stack_qc.RESULTS:
-                if path not in receipts:
-                    receipts.append(path)
+        for _, entry in entries:
+            path = (entry.get("artifacts") or {}).get("stack_qc")
+            if path and path not in receipts:
+                receipts.append(path)
+        for path in stack_qc.RESULTS:
+            if path not in receipts:
+                receipts.append(path)
         if final is not None and final.is_file():
             receipts = [p for p in receipts if self._overlaps(p, final)]
         if not receipts:

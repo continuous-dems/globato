@@ -1,100 +1,199 @@
-"""One viz flag publishes the final build without another recipe hook."""
+"""Regression tests for Stack QC review insertion via Fetchez ensure-hook.
 
-import json
-from pathlib import Path
+The modifier changes the expanded recipe, and the reporter runs at finalize,
+not through the removed StackQC.final_hooks()/prepare_final_hooks() API.
+No remote data access or actual QC/DEM calculation is needed here.
+"""
 
-import numpy as np
+from copy import deepcopy
+
 import pytest
-import rasterio
-from fetchez.core import prepare_final_hooks
-from fetchez.recipe import Recipe, RecipeContext
 
-from globato.hooks.filters import stack_qc
-from globato.hooks.filters.stack_qc import StackQC
-from globato.hooks.filters.stack_qc_review import StackQCReview
-from test_stack_qc_hook import build
+from fetchez.core import FetchContext, _run_grouped_stage
+from fetchez.recipe import Recipe
+from fetchez.recipes.modifiers.ensure_hook import EnsureHook
 
 
-@pytest.fixture(autouse=True)
-def clear_results():
-    stack_qc.RESULTS.clear()
-    yield
-    stack_qc.RESULTS.clear()
+REVIEW_RULE = {
+    "name": "ensure-hook",
+    "args": {
+        "when": {"hook": "stack_qc", "args": {"viz": True}},
+        "ensure": {"name": "stack_qc_review", "scope": "global", "position": "append"},
+    },
+}
 
 
-def test_viz_flag_publishes_catalog_after_native_dem_without_changing_science(
-    tmp_path, monkeypatch
-):
-    monkeypatch.chdir(tmp_path)
-    without = build(tmp_path, tag="off")
-    assert not list(tmp_path.glob("off/stack_qc_review/*/products.json"))
-    automatic = build(tmp_path, tag="on", qc_args=dict(viz=True))
-    (catalog,) = tmp_path.glob("on/stack_qc_review/*/products.json")
-    doc = json.loads(catalog.read_text())
-    assert {p["stage"] for p in doc["products"]} == {
-        "before_measured",
-        "after_measured",
-        "before_interpolated",
-        "after_interpolated",
+def _names(specs):
+    return [
+        (spec.get("name") if isinstance(spec, dict) else spec.name).replace("-", "_")
+        for spec in specs
+    ]
+
+
+def _config(*, viz=True, global_hooks=None, modules=None, modifiers=None):
+    return {
+        "region": [0, 1, 0, 1],
+        "global_hooks": (
+            [{"name": "stack_qc", "args": {"viz": viz}}]
+            if global_hooks is None
+            else global_hooks
+        ),
+        "modules": [] if modules is None else modules,
+        "modifiers": [deepcopy(REVIEW_RULE)] if modifiers is None else modifiers,
     }
-    assert (catalog.parent / "review.html").is_file()
-    assert not (catalog.parent / "review_ERROR.txt").exists()
-    before = Path(without[0][1]["dst_fn"])
-    after = Path(automatic[0][1]["dst_fn"])
-    with rasterio.open(before) as a, rasterio.open(after) as b:
-        assert a.transform == b.transform and a.crs == b.crs
-        np.testing.assert_array_equal(a.read(), b.read())
-        np.testing.assert_array_equal(a.read_masks(), b.read_masks())
-    final = next(p for p in doc["products"] if p["stage"] == "after_interpolated")
-    with rasterio.open(catalog.parent / final["path"]) as a, rasterio.open(after) as b:
-        np.testing.assert_array_equal(a.read(), b.read())
+
+
+def _apply(config, *, times=1):
+    result = deepcopy(config)
+    rule = EnsureHook(**REVIEW_RULE["args"])
+    for _ in range(times):
+        result = rule.apply(result)
+    return result
 
 
 @pytest.mark.parametrize("viz", [False, True])
-def test_compiled_recipe_orders_automatic_review_after_final_crop(tmp_path, viz):
-    recipe = Recipe.from_dict(
-        dict(
-            region=[0, 1, 0, 1],
-            modules=[
-                dict(module="scratch", args=dict(path=str(tmp_path / "points.xyz")))
-            ],
-            modifiers=[
-                dict(
-                    name="buffer-and-cut",
-                    args=dict(buffer_cells=4, inc="1s", outname="dem"),
-                )
-            ],
-            global_hooks=[
-                dict(name="stack_qc", args=dict(viz=viz)),
-                dict(name="ms_binary_cudem", args=dict(output="dem.tif")),
-            ],
-        )
-    )
-    plan = recipe.compile(
-        RecipeContext(name="test", region_srs="EPSG:4326", tile_dir=tmp_path)
-    )
-    names = [h.name.replace("-", "_") for h in plan.global_hooks]
+def test_stack_qc_review_injection(viz):
+    # An actual compiled plan verifies registration and finalize-stage metadata.
+    plan = Recipe.from_dict(_config(viz=viz)).compile()
+    reviews = [
+        h for h in plan.global_hooks if h.name.replace("-", "_") == "stack_qc_review"
+    ]
+    assert len(reviews) == int(viz)
     if viz:
-        assert names[-3:] == ["raster_cut", "raster_crop", "stack_qc_review"]
-        assert len(prepare_final_hooks(plan.modules, plan.global_hooks)) == len(
-            plan.global_hooks
-        )
-    else:
-        assert names[-2:] == ["raster_cut", "raster_crop"]
-    assert "stack_qc_review" not in [h["name"] for h in recipe.config["global_hooks"]]
+        assert reviews[0].stage == "finalize"
+        assert plan.global_hooks[-1] is reviews[0]
 
 
-def test_explicit_review_configuration_is_preserved_once(tmp_path):
-    qc = StackQC(viz=True)
-    explicit = StackQCReview(dem="custom.tif", output=str(tmp_path))
-    prepared = prepare_final_hooks([], [qc, explicit])
-    assert prepared == [qc, explicit]
-    assert prepared[-1].dem == "custom.tif"
+def test_explicit_review_configuration_is_preserved_once():
+    explicit = {
+        "name": "stack_qc_review",
+        "args": {"dem": "custom.tif", "output": "reports"},
+    }
+    config = _config(
+        global_hooks=[{"name": "stack_qc", "args": {"viz": True}}, explicit]
+    )
+    resolved = _apply(config)
+    reporters = [
+        spec for spec in resolved["global_hooks"] if spec["name"] == "stack_qc_review"
+    ]
+    assert reporters == [explicit]
+    assert resolved["global_hooks"][1]["args"] == explicit["args"]
+    # The compiled object must retain the user-specified constructor settings.
+    plan = Recipe.from_dict(config).compile()
+    review = next(h for h in plan.global_hooks if h.name == "stack_qc_review")
+    assert review.stage == "finalize"
+    assert str(review.dem).endswith("custom.tif")
+    assert str(review.output).endswith("reports")
 
 
-def test_automatic_publishers_are_scoped_to_their_qc_results():
-    first, second = StackQC(viz=True), StackQC(viz=True)
-    prepared = prepare_final_hooks([], [first, second])
-    assert prepared[-2]._qc_hooks[0] is first
-    assert prepared[-1]._qc_hooks[0] is second
-    assert StackQC(viz=False).final_hooks() == ()
+@pytest.mark.parametrize("name", ["stack_qc", "stack-qc"])
+def test_module_local_requester_inserts_global_reporter(name):
+    config = _config(
+        global_hooks=[],
+        modules=[
+            {
+                "module": "synthetic",
+                "hooks": [{"name": name, "args": {"viz": True}}],
+            }
+        ],
+    )
+    resolved = _apply(config)
+    assert _names(resolved["global_hooks"]) == ["stack_qc_review"]
+    assert _names(resolved["modules"][0]["hooks"]) == ["stack_qc"]
+
+
+def test_module_local_viz_false_does_not_insert_reporter():
+    config = _config(
+        global_hooks=[],
+        modules=[
+            {
+                "module": "synthetic",
+                "hooks": [{"name": "stack_qc", "args": {"viz": False}}],
+            }
+        ],
+    )
+    assert not _apply(config)["global_hooks"]
+
+
+def test_ensure_hook_is_idempotent_even_when_declared_twice():
+    config = _config(modifiers=[deepcopy(REVIEW_RULE), deepcopy(REVIEW_RULE)])
+    resolved = _apply(config, times=2)
+    assert _names(resolved["global_hooks"]).count("stack_qc_review") == 1
+    assert _names(config["global_hooks"]) == ["stack_qc"]  # original untouched
+
+
+def test_multiple_viz_requesters_share_one_unscoped_reporter():
+    config = _config(
+        global_hooks=[
+            {"name": "stack_qc", "id": "first", "args": {"viz": True}},
+            {"name": "stack_qc", "id": "second", "args": {"viz": True}},
+        ]
+    )
+    assert _names(_apply(config)["global_hooks"]).count("stack_qc_review") == 1
+
+
+def test_other_visualization_hooks_do_not_trigger_stack_qc_review():
+    config = _config(global_hooks=[{"name": "raster_viz", "args": {"viz": True}}])
+    assert _names(_apply(config)["global_hooks"]) == ["raster_viz"]
+
+
+def test_finalize_runs_after_collection_and_receives_its_output():
+    # Exercising the native grouped-stage runner catches accidental reporter
+    # migration back to collection, without invoking expensive DEM processing.
+    events = []
+    source_entry = {"dst_fn": "input.xyz", "artifacts": {}}
+
+    class SimpleModule:
+        name = "sample"
+        hooks = []
+
+    owner = SimpleModule()
+    source = [(owner, source_entry)]
+
+    class Hook:
+        def __init__(self, name, stage):
+            self.name = name
+            self.stage = stage
+
+        def run(self, entries):
+            events.append(self.name)
+            if self.name == "final_dem":
+                entries[0][1]["dst_fn"] = "dem.tif"
+                entries[0][1]["artifacts"]["stack_qc"] = "qc.json"
+            if self.name == "stack_qc_review":
+                assert entries[0][1]["dst_fn"] == "dem.tif"
+                assert entries[0][1]["artifacts"]["stack_qc"] == "qc.json"
+            return entries
+
+        def teardown(self):
+            pass
+
+    hooks = [Hook("final_dem", "collection"), Hook("stack_qc_review", "finalize")]
+    context = FetchContext()
+    collection = _run_grouped_stage(
+        "collection",
+        [owner],
+        hooks,
+        source_entries=source,
+        context=context,
+    )
+    finished = _run_grouped_stage(
+        "finalize",
+        [owner],
+        hooks,
+        source_entries=source,
+        global_entries=collection,
+        merge_local=False,
+        context=context,
+    )
+    assert events == ["final_dem", "stack_qc_review"]
+    assert finished is collection
+
+
+def test_final_stage_is_metadata_of_registered_review_hook():
+    from globato.hooks.filters.stack_qc_review import StackQCReview
+    from globato.hooks.filters.stack_qc import StackQC
+
+    assert StackQCReview.meta_stage == "finalize"
+    assert StackQCReview().stage == "finalize"
+    assert not hasattr(StackQC, "final_hooks")
