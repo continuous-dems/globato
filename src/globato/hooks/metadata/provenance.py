@@ -83,7 +83,7 @@ class ProvenanceHook(FetchHook):
     stage and reads each entry's FusionState artifact instead of its point
     stream, so it works with side_stack + stack_combine and reflects any
     collection-stage filtering. ``res`` must match the side-stack resolution.
-    ``group_by=recipe_id`` assigns one bit to each named YAML declaration;
+    ``group_by=instance_id`` assigns one bit to each named YAML declaration;
     ``module_id`` groups by Fetchez configuration instead of provider name.
     Both instance modes write an embedded and JSON bit legend.
     """
@@ -106,9 +106,9 @@ class ProvenanceHook(FetchHook):
         self.output = output
         self.source_artifact = source_artifact
         self.group_by = str(group_by)
-        if self.group_by not in {"module", "module_id", "recipe_id"}:
+        if self.group_by not in {"module", "module_id", "instance_id"}:
             raise ValueError(
-                "provenance group_by must be module, module_id or recipe_id"
+                "provenance group_by must be module, module_id or instance_id"
             )
         if self.group_by != "module" and source_artifact is None:
             raise ValueError(
@@ -194,10 +194,10 @@ class ProvenanceHook(FetchHook):
             return mod.name
         if self.group_by == "module_id":
             return mod.module_id()
-        identity = getattr(mod, "recipe_id", None)
+        identity = getattr(mod, "instance_id", None)
         if identity is None:
             raise ValueError(
-                "recipe_id provenance needs modules compiled by a recipe with entry IDs"
+                "instance_id provenance needs modules compiled by a recipe with entry IDs"
             )
         return identity
 
@@ -333,7 +333,7 @@ def module_details(mod):
     details = dict(
         module=mod.name, module_id=mod.module_id(), weight=getattr(mod, "weight", 1.0)
     )
-    for field in ("datatype", "survey_id", "recipe_id"):
+    for field in ("datatype", "survey_id", "instance_id"):
         value = getattr(mod, field, None)
         if value is not None:
             details[field] = str(value)
@@ -472,7 +472,7 @@ def source_tags(mod, entry, *, resolution=True):
         tags["RESOLUTION"] = getattr(mod, "meta_resolution", None)
     if callable(getattr(mod, "module_id", None)):
         tags["MODULE_ID"] = mod.module_id()
-    for field in ("datatype", "survey_id", "recipe_id"):
+    for field in ("datatype", "survey_id", "instance_id"):
         value = getattr(mod, field, None)
         if value is not None:
             tags["MODULE_" + field.upper()] = str(value)
@@ -1169,8 +1169,8 @@ class SourceMasks(FetchHook):
             dataset_id = contribution_dataset_id(entry)
         src_name = os.path.basename(entry.get("dst_fn", dataset_id))
         description = os.path.splitext(src_name)[0]
-        if getattr(mod, "recipe_id", None) is not None:
-            description = f"{mod.recipe_id}: {description}"
+        if getattr(mod, "instance_id", None) is not None:
+            description = f"{mod.instance_id}: {description}"
         return self._masks.register(
             dataset_id,
             description=description,

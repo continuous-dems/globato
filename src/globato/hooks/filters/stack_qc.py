@@ -106,14 +106,15 @@ def _selected(module, selectors):
             # A recipe ID wins over a provider-name shorthand, even if that
             # recipe entry has no files in this region. Explicit {module: ...}
             # selectors still select every matching provider invocation.
-            known_ids = getattr(module, "_recipe_ids", ())
+            known_ids = getattr(module, "_instance_ids", ())
             if selector in known_ids:
-                if selector == getattr(module, "recipe_id", None):
+                if selector == getattr(module, "instance_id", None):
                     return True
-            elif selector in {module.name, getattr(module, "recipe_id", None)}:
+            elif selector in {module.name, getattr(module, "instance_id", None)}:
                 return True
         elif ("module" not in selector or selector["module"] == module.name) and (
-            "id" not in selector or selector["id"] == getattr(module, "recipe_id", None)
+            "id" not in selector
+            or selector["id"] == getattr(module, "instance_id", None)
         ):
             args = getattr(module, "_init_kwargs", {})
             if all(
@@ -130,7 +131,7 @@ def _validate_recipe_selectors(entries, selectors):
     if not entries:
         return
     owner = entries[0][0]
-    labels = getattr(owner, "_recipe_ids", None)
+    labels = getattr(owner, "_instance_ids", None)
     if labels is None:
         return
     providers = getattr(owner, "_recipe_providers", {owner.name})
@@ -426,7 +427,7 @@ class StackQC(FetchHook):
             or (self.modules is not None and len(self.modules) > 1)
             or any(isinstance(s, dict) for s in self.modules or [])
             or any(
-                s == getattr(mod, "recipe_id", None)
+                s == getattr(mod, "instance_id", None)
                 for s in self.modules or []
                 if isinstance(s, str)
                 for mod, _ in selected
@@ -534,7 +535,7 @@ class StackQCGrid(FetchHook):
                 or self.modules is None
                 or len(self.modules) > 1
                 or any(isinstance(s, dict) for s in self.modules)
-                or getattr(mod, "recipe_id", None) in (self.modules or [])
+                or getattr(mod, "instance_id", None) in (self.modules or [])
             )
             if joint_grid:
                 # Use Fetchez contribution identity, keeping weights/invocations

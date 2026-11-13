@@ -120,7 +120,7 @@ def collect_sources(
                 else owner.name,
                 **(
                     dict(
-                        recipe_id=getattr(owner, "recipe_id", None),
+                        instance_id=getattr(owner, "instance_id", None),
                         module_datatype=getattr(owner, "datatype", None),
                         module_survey_id=getattr(owner, "survey_id", None),
                     )
@@ -642,7 +642,7 @@ def prepare(qc, module, entries, *, references=(), joint=False):
                         source_id=rec["source_id"],
                         module=rec["module"],
                         module_id=rec["module_id"],
-                        recipe_id=rec.get("recipe_id"),
+                        instance_id=rec.get("instance_id"),
                         module_datatype=rec.get("module_datatype"),
                         module_survey_id=rec.get("module_survey_id"),
                         role=role,
