@@ -1,0 +1,24 @@
+name: coast-refine
+description: "Lossless Coast Refine capture, native source masking, and standard stack assembly."
+hooks:
+  - name: coast_refine_capture
+  - name: side_stack
+    args:
+      skip_entry: coast_refine_deferred
+      res: 0.1111111s
+      crs: EPSG:4269+5703
+  - name: coast_refine_finalize
+    args:
+      res: 0.1111111s
+      crs: EPSG:4269+5703
+      strategy: mixed
+      weight_threshold: 0.1/0.25/0.5/0.75/1/2/3/4
+  - name: stack_combine
+    args:
+      res: 0.1111111s
+      crs: EPSG:4269+5703
+      strategy: mixed
+      weight_threshold: 0.1/0.25/0.5/0.75/1/2/3/4
+      missing: error
+      output: "%name%_%batch_name%_stack.tif"
+  - name: coast_refine_review

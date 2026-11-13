@@ -30,7 +30,7 @@ import pyogrio
 import shapely
 
 import fetchez
-from fetchez.spatial import Region
+from fetchez.spatial import Region, parse_increment_list
 from fetchez.utils import (
     remove_glob2,
     inc2str,
@@ -52,6 +52,9 @@ class BinaryCudemStepDown(RasterGlobalHook):
     """Multi-Resolution Morphological step-down."""
 
     name = "ms_binary_cudem"
+    meta_named_inputs = {
+        "barrier": ("osm", "landmask", "coastline", "glob_coast", "coast_refine")
+    }
     default_suffix = "_binary_cudem"
     meta_desc = (
         "Interpolate NoData voids using Multi Resolution Morphological stacking."
@@ -62,6 +65,9 @@ class BinaryCudemStepDown(RasterGlobalHook):
     def __init__(
         self,
         steps=3,
+        coast_mask_group=None,
+        estimate_zero=False,
+        zero_max_distance_m=40,
         weights=None,
         resolutions=None,
         algos=None,
@@ -84,9 +90,16 @@ class BinaryCudemStepDown(RasterGlobalHook):
             "interp_idw",
             "interp_scipy",
         ]
+
         self.steps = int_or(steps)
+
+        if self.steps is None or self.steps < 0:
+            raise ValueError(f"steps must be a positive integer, got {self.steps}")
+
         self.weights = parse_arg_to_list(weights, float)
-        self.resolutions = parse_arg_to_list(resolutions, parse_increment)
+        self.resolutions = (
+            parse_increment_list(resolutions) if resolutions is not None else []
+        )
         self.blend_dists = parse_arg_to_list(blend_dists, int)
         self.algos = parse_arg_to_list(algos, str)
         self.decimation_mode = str_or(decimation_mode, "weighted_mean")
@@ -94,6 +107,23 @@ class BinaryCudemStepDown(RasterGlobalHook):
         self.previous_tier_resampling = str_or(
             previous_tier_resampling, "bilinear"
         ).lower()
+        from fetchez.utils import str2bool
+
+        self.estimate_zero = str2bool(estimate_zero)
+        self.zero_max_distance_m = float(zero_max_distance_m)
+        if not np.isfinite(self.zero_max_distance_m) or self.zero_max_distance_m <= 0:
+            raise ValueError("zero_max_distance_m must be finite and positive")
+        if self.estimate_zero and coast_mask_group is None:
+            raise ValueError("estimate_zero requires coast_mask_group")
+        self.coast_mask_group = coast_mask_group
+        if coast_mask_group is not None:
+            if not isinstance(coast_mask_group, str) or not coast_mask_group.strip():
+                raise ValueError("coast_mask_group must name a published group")
+            if self.barrier not in (None, "coast_refine"):
+                raise ValueError(
+                    f"coast_mask_group conflicts with another barrier: {self.barrier!r}"
+                )
+            self.barrier = "coast_refine"
         self.keep_steps = keep_steps
 
         if self.previous_tier_mode not in {"points", "raster"}:
@@ -851,6 +881,8 @@ class BinaryCudemStepDown(RasterGlobalHook):
         previous coarse surface instead of surviving as point-scale artifacts.
         """
         with rasterio.open(step_stack, "r+") as src:
+            if getattr(self, "_coast_mask_artifact", None) is not None:
+                self._coast_mask_artifact.barrier_for(step_stack)
             data = src.read()
             ndv = src.nodata if src.nodata is not None else -9999
             z_raw = data[0].astype("float64")
@@ -938,7 +970,34 @@ class BinaryCudemStepDown(RasterGlobalHook):
         previous_surface = None
         self._setup_steps(src_path)
 
-        barrier_path = self._get_barrier(output_mode="topology")
+        if self.coast_mask_group is not None:
+            from globato.coast_refine.global_refinement import select_group_barrier
+
+            if self.estimate_zero:
+                from globato.coast_refine.boundary import publish_zero_estimate
+
+                publish_zero_estimate(
+                    entry,
+                    self.coast_mask_group,
+                    src_path,
+                    max_distance_m=self.zero_max_distance_m,
+                    min_weight=max(self.weights),
+                )
+
+            barrier_path = select_group_barrier(
+                entry,
+                self.coast_mask_group,
+                src_path,
+                boundary="estimated_zero" if self.estimate_zero else "refined",
+            )
+            from globato.coast_refine.artifact import MaskArtifact
+
+            self._coast_mask_artifact = MaskArtifact(
+                entry["artifacts"]["coast_refine_manifest"]
+            )
+        else:
+            self._coast_mask_artifact = None
+            barrier_path = self._get_barrier(output_mode="topology")
 
         d2c_path = None
         if self.inland_decay_dist > 0:

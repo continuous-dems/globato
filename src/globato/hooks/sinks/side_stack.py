@@ -3,17 +3,46 @@
 
 """globato.hooks.sinks.side_stack
 
-Per-entry FusionState cache for Globato.
+Side-stack generation and cache management for Globato.
 
 A side-stack stores the exact additive FusionState produced after an entry has
 passed through its point-processing pipeline. Cache hits bypass raw source
 reading and point processing and provide the cached FusionState directly as a
 raster stream for ``multi_stack``.
+
+
+Side-stacks accumulate elevation observations into per-source
+FusionState rasters, which can be reused or combined downstream.
+
+Entry metadata
+--------------
+Side-stack hooks use internal ``_sidestack_*`` entry fields
+documented in ``SIDESTACK_ENTRY_KEYS``.
+
+These fields describe cache lookup, artifact registration,
+processing identity, completion status, and source aliases.
+
+Fresh generation
+----------------
+When ``fresh=True``, the writer uses an isolated namespace and
+publishes a completion receipt only after the input stream has
+been fully consumed and the resulting raster finalized.
+
+A registered side-stack is not necessarily completed. Consumers
+requiring completed artifacts must validate the receipt rather
+than relying on registration metadata alone.
+
+Completion receipts currently exist as entry metadata and are
+not persisted as independent sidecar files.
+
+The ``_sidestack_*`` vocabulary is internal to Globato and may
+evolve as identity handling is standardized with Fetchez.
 """
 
 from __future__ import annotations
 
 import hashlib
+import json
 import logging
 import os
 import re
@@ -42,8 +71,47 @@ logger = logging.getLogger(__name__)
 
 SIDESTACK_DATATYPE = "FUSION_STATE"
 SIDESTACK_HASH_TAG = "GLOBATO_SIDESTACK_HASH"
-# 2: point chunks add into the cache instead of overwriting it.
+# reject caches from overwrite-only writers.
 SIDESTACK_CACHE_VERSION = 2
+
+
+# Internal entry metadata used by side-stack pipeline(s).
+#
+# These keys support side-stack caching, artifact generation, completion
+# validation, and downstream consumers such as Coast Mask.
+
+SIDESTACK_ENTRY_KEYS = {
+    "_sidestack_hit": "Whether an existing side-stack cache was found.",
+    "_sidestack_path": "Path to the selected or registered side-stack.",
+    "_sidestack_hash": "Identity token used for side-stack caching.",
+    "_sidestack_identity": "Canonical side-stack identity description.",
+    "_sidestack_namespace": "Isolated directory for fresh generation.",
+    "_sidestack_registered": "Whether fresh generation was registered.",
+    "_sidestack_context": "Optional caller-provided receipt metadata.",
+    "_sidestack_processing_identity": (
+        "Source and processing identity used for artifact binding "
+        "and contribution equivalence."
+    ),
+    "_sidestack_receipt": (
+        "Completion metadata published after successful generation."
+    ),
+    "_sidestack_aliases": (
+        "Equivalent contributions recorded during source selection."
+    ),
+}
+
+
+SIDESTACK_RECEIPT_FIELDS = {
+    "schema": "Receipt schema identifier and version.",
+    "sink": "Component that generated the artifact.",
+    "namespace": "Fresh-generation namespace.",
+    "source_file": "Original source file reference.",
+    "processing_identity": "Recorded source processing identity.",
+    "context": "Caller-provided metadata frozen at registration.",
+    "registered_claims": "Weight and uncertainty values at registration.",
+    "path": "Published artifact path.",
+    "sha256": "SHA-256 checksum of the completed artifact.",
+}
 
 
 def _resolve_grid(region: Any, res: Any, crs: Any) -> dict[str, Any]:
@@ -178,12 +246,194 @@ def read_fusion_state_stream(path: str):
             yield window, window, data, None, transform
 
 
-def sidestack_cache_key(entry, grid):
+def file_digest(path):
+    """Content checksum for an opt-in materialization receipt.
+
+    The full-file hash supports downstream artifact-integrity validation,
+    not dataset identity itself.
+    """
+    value = hashlib.sha256()
+    with open(path, "rb") as source:
+        for chunk in iter(lambda: source.read(8 * 1024 * 1024), b""):
+            value.update(chunk)
+    return value.hexdigest()
+
+
+def _stable(value, depth=0):
+    if depth > 32:
+        raise TypeError(
+            "Processing settings are cyclic or too deeply nested; "
+            "provide a finite sidestack_identity on the hook"
+        )
+    if value is None or type(value) in (str, int, bool):
+        return value
+    if isinstance(value, float):
+        return repr(value)
+    if isinstance(value, (list, tuple)):
+        return [_stable(v, depth + 1) for v in value]
+    if isinstance(value, dict):
+        return {
+            str(k): _stable(v, depth + 1)
+            for k, v in sorted(value.items())
+            if not str(k).startswith("_") and k not in ("stream", "raster_stream")
+        }
+    if hasattr(value, "wkb_hex"):
+        return {"wkb": value.normalize().wkb_hex}
+    if hasattr(value, "sidestack_identity"):
+        identity = getattr(value, "sidestack_identity")
+        return _stable(identity() if callable(identity) else identity, depth + 1)
+    try:
+        data = vars(value)
+    except TypeError:
+        return str(value)
+    return {
+        "hook": getattr(value, "name", type(value).__name__),
+        "config": {
+            str(k): _stable(v, depth + 1)
+            for k, v in sorted(data.items())
+            if not str(k).startswith("_")
+            and k
+            not in (
+                "logger",
+                "stream",
+                "raster_stream",
+                "dataset",
+                "results",
+                "session",
+                # Runtime execution context may reference the complete pipeline,
+                # including modules and hooks, creating recursive object graphs.
+                # It is not part of a hook's processing identity.
+                "context",
+            )
+        },
+    }
+
+
+def source_processing_identity(module, entry):
+    """Reuse native dataset_id with explicit processing selectors; no new ID hash."""
+    hooks = list(getattr(module, "hooks", ()) or ()) + list(
+        entry.get("hooks", ()) or ()
+    )
+    selectors = dict(
+        module=module.name,
+        data_type=_stable(entry.get("data_type")),
+        profile=_stable(entry.get("profile")),
+        source_crs=_stable(entry.get("src_srs")),
+        stack_partition=entry.get("stack_partition"),
+        module_weight=_stable(getattr(module, "weight", None)),
+        module_uncertainty=_stable(getattr(module, "uncertainty", None)),
+        entry_weight=_stable(entry.get("weight")),
+        entry_uncertainty=_stable(entry.get("uncertainty")),
+        processing=_stable(hooks),
+        source_claims=_stable(
+            {
+                k: entry.get(k)
+                for k in (
+                    "claim_required",
+                    "claim_geometry",
+                    "accepted_geometry",
+                    "excluded_geometry",
+                    "claim_priority",
+                )
+            }
+        ),
+    )
+    native = dict(entry)
+    path = Path(entry.get("dst_fn") or "")
+    asset_hash = file_digest(path) if path.is_file() else None
+    selectors["asset_sha256"] = asset_hash
+    if not native.get("url") and entry.get("dst_fn"):
+        native["url"] = path.resolve().as_uri()
+    if not native.get("checksum") and asset_hash:
+        native["checksum"] = asset_hash
+    return dict(
+        native_dataset_id=dataset_id(native, **selectors),
+        identity_checksum=native.get("checksum"),
+        asset_sha256=asset_hash,
+        upstream_contribution_id=_stable(entry.get("contribution_id")),
+        selectors=selectors,
+        identity_owner="fetchez.entry.dataset_id",
+    )
+
+
+def unique_source_contributions(entries):
+    """Select completed native source contributions once, retaining URL aliases.
+
+    Only the opt-in native processing identity participates. Different class,
+    weight and partition selectors remain distinct. Equal identities must have
+    exactly equal grid geometry and all seven statistics; conflicts fail before
+    reduction. Legacy entries without that identity retain their normal behavior.
+    """
+    selected = []
+    seen = {}
+    for module, entry in entries:
+        processing = entry.get("_sidestack_processing_identity") or {}
+        key = processing.get("native_dataset_id")
+        if not key:
+            selected.append((module, entry))
+            continue
+        if key not in seen:
+            seen[key] = entry
+            selected.append((module, entry))
+            continue
+        original = seen[key]
+        if original is entry:
+            continue
+        paths = []
+        for candidate in (original, entry):
+            path = Path((candidate.get("artifacts") or {}).get("side-stack") or "")
+            receipt = candidate.get("_sidestack_receipt") or {}
+            if (
+                not path.is_file()
+                or receipt.get("schema") != "globato.side_stack.receipt.v1"
+                or receipt.get("processing_identity")
+                != candidate.get("_sidestack_processing_identity")
+                or Path(receipt.get("path") or "").resolve() != path.resolve()
+                or receipt.get("sha256") != file_digest(path)
+            ):
+                raise ValueError(
+                    "Duplicate source lacks a valid completed native side-stack receipt"
+                )
+            paths.append(path)
+        with rasterio.open(paths[0]) as a, rasterio.open(paths[1]) as b:
+            if (
+                (a.crs, a.transform, a.shape, a.count, a.dtypes, a.descriptions)
+                != (b.crs, b.transform, b.shape, b.count, b.dtypes, b.descriptions)
+                or a.count != len(FUSION_BANDS)
+                or a.descriptions != tuple(FUSION_BANDS)
+            ):
+                raise ValueError(
+                    "Conflicting grids for one native processing identity; declare distinct source partitions"
+                )
+            for _, window in a.block_windows(1):
+                if a.read(window=window).tobytes() != b.read(window=window).tobytes():
+                    raise ValueError(
+                        "Conflicting statistics for one native processing identity; declare distinct source partitions"
+                    )
+        aliases = original.setdefault("_sidestack_aliases", [])
+        aliases.append(
+            dict(
+                source_file=str(entry.get("dst_fn") or ""),
+                source_url=entry.get("url"),
+                side_stack=str(paths[1].resolve()),
+                sha256=entry["_sidestack_receipt"]["sha256"],
+                native_dataset_id=key,
+                comparison="exact_seven_band_state",
+            )
+        )
+        aliases.extend(entry.get("_sidestack_aliases", []))
+        logger.info("Native source alias selected once: %s", entry.get("dst_fn"))
+    return selected
+
+
+def sidestack_cache_key(entry, grid, *, processing=None):
+    modifiers = {} if processing is None else {"processing": processing}
     identity = dataset_id(
         entry,
         grid=grid,
         fusion_version=FUSION_STATE_VERSION,
-        side_stack_version=SIDESTACK_CACHE_VERSION,
+        sidestack_version=SIDESTACK_CACHE_VERSION,
+        **modifiers,
     )
     return hashlib.sha256(identity.encode("utf-8")).hexdigest()[:16]
 
@@ -248,7 +498,25 @@ class SideStackCheck(FetchHook):
 
 
 class SideStackGenerate(FetchHook):
-    """Convert cache misses to FusionState, persist them, and pass state onward."""
+    """Generate per-source FusionState grids from incoming point streams.
+
+    By default, existing side-stack caches may be reused.
+
+    When fresh=True, generate a new side-stack without reusing an
+    existing cached result. Processing distinctions recorded in the
+    entry's contribution metadata are reflected through dataset_id.
+
+    A completion receipt (_sidestack_receipt) is published only
+    after the input stream has been fully consumed and the output
+    raster has been successfully finalized. Optional JSON-compatible
+    entry['_sidestack_context'] metadata is preserved in the receipt
+    for downstream consumers.
+
+    Overlapping input chunks are accumulated rather than overwritten,
+    ensuring all measurements contribute to the resulting FusionState.
+    The writer cache version is incremented to invalidate older
+    side-stacks created with the previous overwrite behavior.
+    """
 
     name = "side_stack"
     meta_stage = "stream"
@@ -259,6 +527,9 @@ class SideStackGenerate(FetchHook):
         crs="EPSG:4326",
         cache_dir=None,
         compress=True,
+        skip_entry=None,
+        *,
+        fresh=False,
         **kwargs,
     ):
         super().__init__(**kwargs)
@@ -266,6 +537,8 @@ class SideStackGenerate(FetchHook):
         self.crs = crs
         self.cache_dir = cache_dir
         self.compress = str2bool(compress)
+        self.fresh = str2bool(fresh)
+        self.skip_entry = skip_entry
 
     @staticmethod
     def _creation_profile(profile: Mapping[str, Any]) -> dict[str, Any]:
@@ -304,6 +577,7 @@ class SideStackGenerate(FetchHook):
         entry: dict,
         provenance: dict | None = None,
         replace_existing: bool = False,
+        receipt: dict | None = None,
     ):
         """Write FusionState atomically while yielding identical chunks onward."""
 
@@ -375,8 +649,7 @@ class SideStackGenerate(FetchHook):
                         )
 
                     # Point chunks can revisit the same cells. FusionState is
-                    # additive; overwriting would silently discard earlier
-                    # soundings on cache reuse.
+                    # additive.
                     dst.write(dst.read(window=window) + data, window=window)
                     point_count += int(np.sum(data[FUSION_BAND_MAP["count"] - 1]))
                     yield window, buff_win, data, ndv, transform
@@ -391,6 +664,12 @@ class SideStackGenerate(FetchHook):
                 else:
                     os.replace(tmp_path, cache_path)
             completed = True
+            if receipt is not None:
+                entry["_sidestack_receipt"] = {
+                    **receipt,
+                    "path": str(Path(cache_path).resolve()),
+                    "sha256": file_digest(cache_path),
+                }
             logger.debug("Side-stack cached: %s", os.path.basename(cache_path))
 
         finally:
@@ -407,12 +686,26 @@ class SideStackGenerate(FetchHook):
         )
 
         for mod, entry in entries:
+            if self.skip_entry and entry.get(self.skip_entry):
+                continue
+            if self.fresh and (
+                entry.get("_sidestack_hit") or entry.get("_sidestack_path")
+            ):
+                raise ValueError("Fresh side_stack requires an unbound source stream")
             if entry.get("_sidestack_hit"):
                 continue
 
             region = getattr(mod, "region", None)
             if not region or not self.is_point_stream(entry):
                 continue
+
+            stream_crs = CRS.from_user_input(entry.get("src_srs", "EPSG:4326"))
+            target_crs = CRS.from_user_input(self.crs) if self.crs else None
+            if stream_crs != target_crs:
+                raise ValueError(
+                    f"side_stack input CRS {stream_crs} differs from grid CRS "
+                    f"{target_crs}; add stream_reproject before side_stack"
+                )
 
             cache_dir = self.cache_dir or getattr(
                 mod,
@@ -421,12 +714,63 @@ class SideStackGenerate(FetchHook):
             )
 
             grid = _resolve_grid(region, self.res, self.crs)
-            digest = sidestack_cache_key(entry, grid)
+            receipt = None
+            processing = None
+            if self.fresh:
+                # Opt-in branch identity uses Fetchez's existing dataset_id;
+                # no separate source registry or alternate rasterizer.
+                processing = source_processing_identity(mod, entry)
+                entry["_sidestack_processing_identity"] = processing
+                base = Path(
+                    cache_dir or os.path.dirname(str(entry.get("dst_fn", "."))) or "."
+                )
+                base.mkdir(parents=True, exist_ok=True)
+                cache_dir = tempfile.mkdtemp(prefix="sidestack_", dir=base)
+                entry["_sidestack_namespace"] = Path(cache_dir).name
+                entry["_sidestack_registered"] = True
+
+                # Build a completion receipt for a freshly generated side-stack.
+
+                # The receipt records the originating source, processing identity,
+                # registered source claims, caller-supplied context, output artifact,
+                # and its SHA-256 checksum.
+
+                # A receipt is attached to the entry only after the input stream has
+                # completed successfully and the output raster has been finalized
+                # and published.
+
+                # Receipts are currently in-memory entry metadata, not persistent
+                # sidecar files. They support downstream artifact validation but do
+                # not guarantee that the source or output remains unchanged afterward.
+
+                receipt = {
+                    "schema": "globato.side_stack.receipt.v1",
+                    "created_in_fresh_namespace": True,
+                    "sink": "globato.side_stack",
+                    "namespace": entry["_sidestack_namespace"],
+                    "source_file": str(entry.get("dst_fn") or ""),
+                    "processing_identity": processing,
+                    "context": json.loads(
+                        json.dumps(entry.get("_sidestack_context", {}), sort_keys=True)
+                    ),
+                    "registered_claims": {
+                        "entry_weight": entry.get("weight"),
+                        "entry_uncertainty": entry.get("uncertainty"),
+                        "module_weight": getattr(mod, "weight", None),
+                        "module_uncertainty": getattr(mod, "uncertainty", None),
+                    },
+                }
+                receipt = json.loads(json.dumps(receipt, sort_keys=True))
+            digest = sidestack_cache_key(entry, grid, processing=processing)
             cache_path = entry.get("_sidestack_path") or sidestack_path(
                 entry,
                 cache_dir,
                 digest,
             )
+            if self.fresh:
+                entry["_sidestack_hash"] = digest
+                entry["_sidestack_path"] = cache_path
+                entry.pop("_sidestack_receipt", None)
 
             valid, reason = validate_sidestack(cache_path, grid, digest)
 
@@ -452,6 +796,7 @@ class SideStackGenerate(FetchHook):
                 grid=grid,
                 entry=entry,
                 provenance=sidestack_provenance(entry),
+                receipt=receipt,
             )
             entry["stream_type"] = "raster-stream"
             entry["data_type"] = "fusion-state"

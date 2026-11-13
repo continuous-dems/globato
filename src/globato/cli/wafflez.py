@@ -31,7 +31,7 @@ from fetchez.utils import (
     compile_sources,
 )
 from globato.utils import globatize_modules, make_recipe_config
-from fetchez.spatial import yield_parsed_regions
+from fetchez.spatial import parse_increment_list, yield_parsed_regions
 
 logger = logging.getLogger(__name__)
 
@@ -197,10 +197,7 @@ def wafflez_run(
                     # Fallback to the new increment if none exist
                     old_res = args.get("resolutions", [increment])
 
-                    if isinstance(old_res, str):
-                        old_res_list = [str2inc(x) for x in old_res.split("/")]
-                    else:
-                        old_res_list = [str2inc(str(x)) for x in old_res]
+                    old_res_list = parse_increment_list(old_res)
 
                     num_steps = len(old_res_list)
                     old_base_res = old_res_list[0] if num_steps > 0 else increment

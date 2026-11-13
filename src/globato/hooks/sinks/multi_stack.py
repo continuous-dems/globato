@@ -34,7 +34,7 @@ from rasterio.enums import ColorInterp
 from rasterio.windows import Window
 
 from fetchez.hooks import FetchHook
-from fetchez.spatial import Region
+from fetchez.spatial import Region, parse_increment_pair
 from fetchez.utils import BOLD, CYAN, colorize, format_dataset_id, str2bool
 
 from ..transforms.point_pixels import (
@@ -621,15 +621,16 @@ class MultiStackHook(FetchHook):
         self, region, *, output, state=None, resume=False, sparse_state=False
     ):
         """Create an independent native state without changing this hook's lifecycle."""
-        if isinstance(self.res, str) and self.res.endswith("s"):
-            inc = float(self.res[:-1]) / 3600.0
-            x_inc, y_inc = inc, inc
-        elif "/" in str(self.res):
-            x_inc, y_inc = map(float, self.res.split("/"))
-        else:
-            inc = float(self.res)
-            x_inc, y_inc = inc, inc
 
+        x_inc, y_inc = parse_increment_pair(self.res)
+        logger.info(
+            "Initializing MultiStack: %s @ %s,%s (%s)",
+            self.output,
+            x_inc,
+            y_inc,
+            self.strategy,
+        )
+       
         return MultiStackAccumulator(
             region=region,
             x_inc=x_inc,
