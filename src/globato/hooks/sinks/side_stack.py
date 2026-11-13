@@ -298,6 +298,7 @@ def _stable(value, depth=0):
                 "dataset",
                 "results",
                 "session",
+                "context",
             )
         },
     }
