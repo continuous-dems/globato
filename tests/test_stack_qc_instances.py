@@ -7,7 +7,12 @@ import numpy as np
 import pytest
 import rasterio
 from fetchez.spatial import Region
-from globato.hooks.filters.stack_qc import _selected
+from fetchez.core import HookExecutionError
+from globato.hooks.filters.stack_qc import (
+    _selected,
+    _known_instance_ids,
+    _validate_recipe_selectors,
+)
 from globato.hooks.metadata.provenance import ProvenanceHook, source_tags
 from globato.hooks.transforms.point_pixels import FUSION_BANDS, FUSION_STATE_VERSION
 
@@ -130,13 +135,18 @@ def test_recipe_entry_ids_are_unique_without_changing_provider_cache(
         dict(id="bag_reference", module="nos_hydro", args={"datatype": "bag"}),
     ]
     mods = recipe._init_modules(definitions)
-    assert [m.recipe_id for m in mods] == [
+    assert [m.instance_id for m in mods] == [
         "xyz_input",
         "xyz_reference",
         "bag_reference",
     ]
     assert mods[0].module_id() == mods[1].module_id()
-    assert [_selected(m, ["xyz_input"]) for m in mods] == [True, False, False]
+    known_ids = frozenset(m.instance_id for m in mods)
+    assert [_selected(m, ["xyz_input"], known_ids=known_ids) for m in mods] == [
+        True,
+        False,
+        False,
+    ]
     assert [_selected(m, [{"id": "xyz_reference"}]) for m in mods] == [
         False,
         True,
@@ -146,17 +156,21 @@ def test_recipe_entry_ids_are_unique_without_changing_provider_cache(
         _selected(m, [{"module": "nos_hydro", "args": {"datatype": "xyz"}}])
         for m in mods
     ] == [True, True, False]
-    with pytest.raises(ValueError, match="Duplicate module entry id"):
+    with pytest.raises(ValueError, match="Duplicate module instance id"):
         recipe._init_modules([definitions[0], definitions[0]])
     auto = recipe._init_modules([dict(module="nos_hydro"), dict(module="nos_hydro")])
-    assert [m.recipe_id for m in auto] == ["entry_1", "entry_2"]
+    assert [m.instance_id for m in auto] == ["entry_1", "entry_2"]
 
 
-def test_recipe_id_takes_priority_over_a_provider_shorthand():
-    a = owner("nos_hydro", "a", datatype="xyz", recipe_id="nos_hydro")
-    b = owner("nos_hydro", "b", datatype="bag", recipe_id="bag")
-    a._recipe_ids = b._recipe_ids = frozenset(["nos_hydro", "bag"])
-    assert _selected(a, ["nos_hydro"]) and not _selected(b, ["nos_hydro"])
+def test_instance_id_takes_priority_over_a_provider_shorthand():
+    a = owner("nos_hydro", "a", datatype="xyz", instance_id="nos_hydro")
+    b = owner("nos_hydro", "b", datatype="bag", instance_id="bag")
+    known_ids = frozenset({a.instance_id, b.instance_id})
+    assert _selected(a, ["nos_hydro"], known_ids=known_ids)
+    assert not _selected(b, ["nos_hydro"], known_ids=known_ids)
+    # A provider selector is intentionally different from an instance selector.
+    assert _selected(a, ["nos_hydro"], known_ids=frozenset())
+    assert _selected(b, ["nos_hydro"], known_ids=frozenset())
     assert _selected(a, [{"module": "nos_hydro"}]) and _selected(
         b, [{"module": "nos_hydro"}]
     )
@@ -164,8 +178,8 @@ def test_recipe_id_takes_priority_over_a_provider_shorthand():
 
 def test_recipe_provenance_separates_identical_provider_configurations(tmp_path):
     mods = [
-        owner("nos_hydro", "same-config", datatype="xyz", recipe_id="one"),
-        owner("nos_hydro", "same-config", datatype="xyz", recipe_id="two"),
+        owner("nos_hydro", "same-config", datatype="xyz", instance_id="one"),
+        owner("nos_hydro", "same-config", datatype="xyz", instance_id="two"),
     ]
     entries = []
     for column, mod in enumerate(mods):
@@ -181,23 +195,33 @@ def test_recipe_provenance_separates_identical_provider_configurations(tmp_path)
         )
     out = tmp_path / "recipe_entries.tif"
     hook = ProvenanceHook(
-        res="1", output=str(out), source_artifact="qc-side-stack", group_by="recipe_id"
+        res="1",
+        output=str(out),
+        source_artifact="qc-side-stack",
+        group_by="instance_id",
     )
     hook.run(entries)
     hook.teardown()
     legend = json.loads(Path(str(out) + ".json").read_text())
-    assert {g["recipe_id"] for g in legend["groups"]} == {"one", "two"}
+    assert {g["instance_id"] for g in legend["groups"]} == {"one", "two"}
     with rasterio.open(out) as ds:
         assert set(np.unique(ds.read(1))) == {0, 1, 2}
 
 
-def test_identical_recipe_entries_can_have_different_qc_roles(tmp_path, monkeypatch):
+def test_identical_recipe_entries_select_distinct_qc_roles_but_reject_duplicate_evidence(
+    tmp_path, monkeypatch
+):
+    """Instance IDs select roles; duplicate physical contributions remain one source.
+
+    The two invocations below intentionally use the same provider configuration
+    and input. Different recipe labels must not allow self-validation as an
+    independent reference. The QC preparation layer should reject the collision.
+    """
     from fetchez.recipe import Recipe
     from fetchez.core import run_fetchez
     from test_stack_qc_hook import FixtureMB, points, INTERPOLATION
     from globato.hooks.filters.stack_qc import StackQC, StackQCGrid
     from globato.hooks.sinks.side_stack import SideStackGenerate
-    from globato.qc.stack import io
 
     monkeypatch.chdir(tmp_path)
     region = Region(350000, 350192, 3749808, 3750000, srs="EPSG:32611")
@@ -219,6 +243,16 @@ def test_identical_recipe_entries_can_have_different_qc_roles(tmp_path, monkeypa
         global_region_srs="EPSG:32611",
     )
     assert mods[0].module_id() == mods[1].module_id()
+    assert {mod.instance_id for mod in mods} == {"target_copy", "reference_copy"}
+    known_ids = frozenset(mod.instance_id for mod in mods)
+    assert [_selected(mod, ["target_copy"], known_ids=known_ids) for mod in mods] == [
+        True,
+        False,
+    ]
+    assert [
+        _selected(mod, ["reference_copy"], known_ids=known_ids) for mod in mods
+    ] == [False, True]
+
     for mod in mods:
         mod.run()
     shared = dict(
@@ -227,36 +261,28 @@ def test_identical_recipe_entries_can_have_different_qc_roles(tmp_path, monkeypa
         res="3",
         crs="EPSG:32611",
     )
-    run_fetchez(
-        mods,
-        threads=1,
-        ignore_failures=False,
-        global_hooks=[
-            StackQCGrid(**shared),
-            SideStackGenerate(res="3", crs="EPSG:32611"),
-            StackQC(
-                **shared,
-                max_passes=5,
-                stop_when_stable=False,
-                terrain_restoration=2,
-                interpolation=INTERPOLATION,
-                cache_dir=str(tmp_path / "qc"),
-                workers=1,
-            ),
-        ],
-    )
-    inv = io.read(next((tmp_path / "qc").glob("*/SOURCES.json")))
-    assert inv["sources"][0]["recipe_id"] == "target_copy"
-    assert inv["reference_sources"][0]["recipe_id"] == "reference_copy"
-    assert inv["sources"][0]["source_id"] != inv["reference_sources"][0]["source_id"]
-    assert {r["group"] for r in [*inv["sources"], *inv["reference_sources"]]} == {
-        "synthetic-acquisition"
-    }
-    receipt = io.read(next((tmp_path / "qc").glob("*/contributions_*.json")))
-    assert {(r["recipe_id"], r["role"]) for r in receipt["sources"]} == {
-        ("target_copy", "filter"),
-        ("reference_copy", "reference"),
-    }
+    with pytest.raises(
+        HookExecutionError,
+        match="The same source contribution cannot be target and reference",
+    ):
+        run_fetchez(
+            mods,
+            threads=1,
+            ignore_failures=False,
+            global_hooks=[
+                StackQCGrid(**shared),
+                SideStackGenerate(res="3", crs="EPSG:32611"),
+                StackQC(
+                    **shared,
+                    max_passes=5,
+                    stop_when_stable=False,
+                    terrain_restoration=2,
+                    interpolation=INTERPOLATION,
+                    cache_dir=str(tmp_path / "qc"),
+                    workers=1,
+                ),
+            ],
+        )
 
 
 def test_dav_class_branches_reuse_native_contribution_identity(tmp_path, monkeypatch):
@@ -346,10 +372,10 @@ def test_dav_class_branches_reuse_native_contribution_identity(tmp_path, monkeyp
             ),
         ],
     )
-    assert {entry["contribution_id"]["recipe"] for _, entry in entries} == {
-        "ground",
-        "bottom",
-    }
+    assert {mod.instance_id for mod, _ in entries} == {"ground", "bottom"}
+    # Recipe invocation labels never implicitly become contribution metadata.
+    assert all("recipe" not in entry["contribution_id"] for _, entry in entries)
+    # DropClass must identify the actual transformation, not its recipe label.
     assert len({dataset_id(entry) for _, entry in entries}) == 2
     assert all(
         entry["contribution_id"]["reader_profile"] == "original" for _, entry in entries
@@ -359,20 +385,86 @@ def test_dav_class_branches_reuse_native_contribution_identity(tmp_path, monkeyp
         with rasterio.open(rec["path"]) as ds:
             assert ds.read(2).sum() == 32
     assert (
-        inv["sources"][0]["recipe_id"] == "ground"
-        and inv["reference_sources"][0]["recipe_id"] == "bottom"
+        inv["sources"][0]["instance_id"] == "ground"
+        and inv["reference_sources"][0]["instance_id"] == "bottom"
     )
 
 
-def test_unknown_recipe_labels_fail_before_streams_are_consumed():
+@pytest.mark.parametrize("hook_type", ["stack_qc", "stack_qc_grid"])
+@pytest.mark.parametrize(
+    "selector",
+    [
+        "typo",
+        {"id": "missing"},
+        {"module": "missing_provider"},
+        {"id": "xyz", "module": "dav"},
+        {"module": "nos_hydro", "args": {"datatype": "bag"}},
+    ],
+)
+def test_unknown_recipe_labels_fail_before_streams_are_consumed(hook_type, selector):
+    """Recipe-wide validation uses context.plan, not private module attributes."""
+    from fetchez.core import FetchContext
     from globato.hooks.filters.stack_qc import StackQC, StackQCGrid
 
-    mod = owner("nos_hydro", "config", datatype="xyz", recipe_id="xyz")
-    mod._recipe_ids = frozenset(["xyz"])
-    mod._recipe_providers = frozenset(["nos_hydro"])
-    for hook in [StackQC(modules=["typo"]), StackQCGrid(modules=["typo"])]:
-        with pytest.raises(ValueError, match="Unknown QC recipe"):
-            hook.run([(mod, {})])
+    mod = owner("nos_hydro", "config", datatype="xyz", instance_id="xyz")
+    plan = SimpleNamespace(
+        modules=[mod],
+        modules_by_id={"xyz": mod},
+    )
+    hook_class = StackQC if hook_type == "stack_qc" else StackQCGrid
+    hook = hook_class(modules=[selector])
+    hook.context = FetchContext(plan=plan)
+
+    # Validation is the first action: malformed selectors never reach input streams.
+    with pytest.raises(ValueError, match="Unknown or unmatched Stack QC selector"):
+        hook.run([(mod, {"stream": iter(())})])
+
+
+def test_recipe_selector_validation_allows_configured_modules_without_entries():
+    """Modules without regional data remain valid selectors in a complete plan."""
+    present = owner("nos_hydro", "xyz", datatype="xyz", instance_id="xyz")
+    absent = owner("dav", "survey", survey_id=4912, instance_id="lidar")
+    plan = SimpleNamespace(
+        modules=[present, absent],
+        modules_by_id={"xyz": present, "lidar": absent},
+    )
+    _validate_recipe_selectors(["lidar", {"id": "lidar", "module": "dav"}], plan)
+    assert _known_instance_ids(plan, [(present, {})]) == frozenset({"xyz", "lidar"})
+    assert _known_instance_ids(None, [(present, {})]) == frozenset({"xyz"})
+
+
+def test_recipe_selector_matches_instance_id_without_changing_dataset_identity():
+    """Changing recipe labels alone must not change the processed dataset ID."""
+    from fetchez.entry import dataset_id
+
+    a = owner("nos_hydro", "same", instance_id="target")
+    b = owner("nos_hydro", "same", instance_id="reference")
+    entry = {"url": "https://example.invalid/source.xyz", "data_type": "xyz"}
+    known_ids = frozenset({"target", "reference"})
+    assert _selected(a, ["target"], known_ids=known_ids)
+    assert not _selected(b, ["target"], known_ids=known_ids)
+    a_entry = dict(entry)
+    b_entry = dict(entry)
+    assert dataset_id(a_entry) == dataset_id(b_entry)
+    # Different effective processing, unlike instance labels, changes identity.
+    from fetchez.entry import set_contribution_id
+
+    set_contribution_id(b_entry, "dropclass", {"classes": [29], "invert": True})
+    assert dataset_id(a_entry) != dataset_id(b_entry)
+
+
+@pytest.mark.parametrize("hook_type", ["stack_qc", "stack_qc_grid"])
+def test_direct_hook_execution_without_recipe_plan_uses_entry_owner_ids(hook_type):
+    """Direct run_fetchez-style hooks have a context but no compiled plan."""
+    from fetchez.core import FetchContext
+    from globato.hooks.filters.stack_qc import StackQC, StackQCGrid
+
+    mod = owner("nos_hydro", "config", instance_id="xyz")
+    hook_class = StackQC if hook_type == "stack_qc" else StackQCGrid
+    hook = hook_class(modules=["other"])
+    hook.context = FetchContext()  # plan is None for direct run_fetchez().
+    entry = {"url": "https://example.invalid/input.xyz"}
+    assert hook.run([(mod, entry)]) == [(mod, entry)]
 
 
 def test_generic_catalog_keeps_entry_labels_and_measured_pass_semantics():
@@ -433,8 +525,8 @@ def test_source_masks_reuse_contribution_id_for_same_file_views(tmp_path):
     from globato.hooks.metadata.provenance import SourceMasks
 
     mods = [
-        owner("dav", "same", recipe_id="ground", survey_id=4912),
-        owner("dav", "same", recipe_id="bottom", survey_id=4912),
+        owner("dav", "same", instance_id="ground", survey_id=4912),
+        owner("dav", "same", instance_id="bottom", survey_id=4912),
     ]
     entries = []
     for column, mod in enumerate(mods):
@@ -446,7 +538,7 @@ def test_source_masks_reuse_contribution_id_for_same_file_views(tmp_path):
                 dict(
                     url="https://test/same.laz",
                     dst_fn="same.laz",
-                    contribution_id={"recipe": mod.recipe_id},
+                    contribution_id={"dropclass": {"partition": mod.instance_id}},
                     artifacts={"qc-side-stack": str(path)},
                 ),
             )
@@ -465,4 +557,7 @@ def test_source_masks_reuse_contribution_id_for_same_file_views(tmp_path):
     assert len({entry["artifacts"]["source-masks"] for _, entry in entries}) == 2
     with rasterio.open(output) as ds:
         assert ds.count == 2 and len(set(ds.descriptions)) == 2
-        assert {ds.tags(i)["MODULE_RECIPE_ID"] for i in [1, 2]} == {"ground", "bottom"}
+        assert {ds.tags(i)["MODULE_INSTANCE_ID"] for i in [1, 2]} == {
+            "ground",
+            "bottom",
+        }

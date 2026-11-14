@@ -97,20 +97,16 @@ def _names(value):
     return result
 
 
-def _selected(module, selectors):
+def _selected(module, selectors, *, known_ids=frozenset()):
     """Match existing module invocations without creating aliases or new identities."""
     if selectors is None:
         return True
     for selector in selectors:
         if isinstance(selector, str):
-            # A recipe ID wins over a provider-name shorthand, even if that
-            # recipe entry has no files in this region. Explicit {module: ...}
-            # selectors still select every matching provider invocation.
-            known_ids = getattr(module, "_instance_ids", ())
             if selector in known_ids:
-                if selector == getattr(module, "instance_id", None):
+                if getattr(module, "instance_id", None) == selector:
                     return True
-            elif selector in {module.name, getattr(module, "instance_id", None)}:
+            elif module.name == selector:
                 return True
         elif ("module" not in selector or selector["module"] == module.name) and (
             "id" not in selector
@@ -126,28 +122,28 @@ def _selected(module, selectors):
     return False
 
 
-def _validate_recipe_selectors(entries, selectors):
-    """Catch misspelled recipe labels before streams or filtering run."""
-    if not entries:
+def _known_instance_ids(plan, entries):
+    """Use complete recipe identities when available, entry owners otherwise."""
+    modules = plan.modules if plan is not None else [mod for mod, _ in entries]
+    return frozenset(
+        instance_id
+        for mod in modules
+        if (instance_id := getattr(mod, "instance_id", None)) is not None
+    )
+
+
+def _validate_recipe_selectors(selectors, plan=None):
+    """Validate requested modules against the complete realized recipe."""
+    if not selectors or plan is None:
         return
-    owner = entries[0][0]
-    labels = getattr(owner, "_instance_ids", None)
-    if labels is None:
-        return
-    providers = getattr(owner, "_recipe_providers", {owner.name})
-    for selector in selectors or []:
-        if (
-            isinstance(selector, str)
-            and selector not in labels
-            and selector not in providers
+
+    known_ids = frozenset(plan.modules_by_id)
+
+    for selector in selectors:
+        if not any(
+            _selected(mod, [selector], known_ids=known_ids) for mod in plan.modules
         ):
-            raise ValueError(f"Unknown QC recipe id/provider: {selector}")
-        if (
-            isinstance(selector, dict)
-            and "id" in selector
-            and selector["id"] not in labels
-        ):
-            raise ValueError(f"Unknown QC recipe id: {selector['id']}")
+            raise ValueError(f"Unknown or unmatched Stack QC selector: {selector!r}")
 
 
 class StackQC(FetchHook):
@@ -354,12 +350,14 @@ class StackQC(FetchHook):
         from globato.qc.stack.preparation import prepare
 
         self._review_receipts.clear()
-        _validate_recipe_selectors(entries, self.modules)
-        _validate_recipe_selectors(entries, self.add_ref_modules)
+        plan = getattr(getattr(self, "context", None), "plan", None)
+        _validate_recipe_selectors(self.modules, plan)
+        _validate_recipe_selectors(self.add_ref_modules, plan)
+        known_ids = _known_instance_ids(plan, entries)
         selected, references = [], []
         for mod, entry in entries:
-            target = _selected(mod, self.modules)
-            reference = _selected(mod, self.add_ref_modules)
+            target = _selected(mod, self.modules, known_ids=known_ids)
+            reference = _selected(mod, self.add_ref_modules, known_ids=known_ids)
             if target and reference:
                 raise ValueError(
                     f"stack_qc: {mod.name} selected for both filtering and reference"
@@ -387,7 +385,9 @@ class StackQC(FetchHook):
         missing_references = [
             selector
             for selector in self.add_ref_modules
-            if not any(_selected(mod, [selector]) for mod, _ in references)
+            if not any(
+                _selected(mod, [selector], known_ids=known_ids) for mod, _ in references
+            )
         ]
         if missing_references:
             logger.warning(
@@ -501,12 +501,15 @@ class StackQCGrid(FetchHook):
         from globato.hooks.transforms.point_pixels import Point2PixelStream
         from globato.qc.stack.resampling import qc_grid
 
-        _validate_recipe_selectors(entries, self.modules)
-        _validate_recipe_selectors(entries, self.add_ref_modules)
+        plan = getattr(getattr(self, "context", None), "plan", None)
+        _validate_recipe_selectors(self.modules, plan)
+        _validate_recipe_selectors(self.add_ref_modules, plan)
+        known_ids = _known_instance_ids(plan, entries)
         grids = {}
         for mod, entry in entries:
             if not (
-                _selected(mod, self.modules) or _selected(mod, self.add_ref_modules)
+                _selected(mod, self.modules, known_ids=known_ids)
+                or _selected(mod, self.add_ref_modules, known_ids=known_ids)
             ):
                 continue
             region = getattr(mod, "region", None)

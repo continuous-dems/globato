@@ -13,6 +13,9 @@ Drops the classification from the point stream
 
 import logging
 import numpy as np
+
+from fetchez.entry import set_contribution_id
+
 from .base import GlobatoFilter
 
 logger = logging.getLogger(__name__)
@@ -44,6 +47,16 @@ class DropClass(GlobatoFilter):
             for _mod, entry in entries:
                 if self.is_point_stream(entry):
                     entry["stack_partition"] = self.stack_partition
+
+                set_contribution_id(
+                    entry,
+                    "dropclass",
+                    {
+                        "classes": self.target_classes,
+                        "invert": self.invert,
+                        "partition": self.stack_partition,
+                    },
+                )
         return super().run(entries)
 
     def filter_chunk(self, chunk):
