@@ -17,6 +17,7 @@ import logging
 import rasterio
 from fetchez.hooks import FetchHook
 from fetchez.utils import str2bool
+from globato.hooks.rasters.base import carry_metadata
 
 logger = logging.getLogger(__name__)
 
@@ -45,7 +46,7 @@ class RasterWrite(FetchHook):
         self.artifact_id = artifact_id or self.name
         self.inline = str2bool(inline)
 
-    def _write_stream(self, stream, dst_fn):
+    def _write_stream(self, stream, dst_fn, source_path=None):
         """Generator that intercepts the stream, writes to disk, and yields onward."""
 
         profile = next(stream)
@@ -69,23 +70,33 @@ class RasterWrite(FetchHook):
 
                 yield window, buff_win, data, ndv, transform
 
+        if source_path:
+            carry_metadata(source_path, dst_fn)
+
     def run(self, entries):
         for mod, entry in entries:
-            stream = entry.get("stream")
+            stream = entry.get("stream") or entry.get("raster_stream")
             base = os.path.splitext(entry.get("dst_fn", "out"))[0]
             dst_fn = self.output_path or f"{base}{self.suffix}.tif"
 
-            if self.is_raster_stream(entry):
+            if stream is not None and (
+                self.is_raster_stream(entry) or entry.get("raster_stream") is not None
+            ):
                 # It's an active stream. Write it chunk by chunk!
-                writer_generator = self._write_stream(stream, dst_fn)
+                writer_generator = self._write_stream(
+                    stream, dst_fn, source_path=entry.get("dst_fn")
+                )
 
                 if self.inline:
-                    entry["raster_stream"] = writer_generator
+                    entry["stream"] = writer_generator
+                    entry["stream_type"] = "raster-stream"
+                    entry.pop("raster_stream", None)
                 else:
                     logger.info(f"Writing raster stream to disk: {dst_fn}")
                     for _ in writer_generator:
                         pass
-                    del entry["raster_stream"]
+                    entry.pop("raster_stream", None)
+                    entry.pop("stream", None)
                     entry["dst_fn"] = dst_fn
 
             else:
