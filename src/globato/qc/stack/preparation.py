@@ -21,8 +21,7 @@ from filelock import FileLock
 
 from pyproj import CRS
 
-from fetchez.entry import dataset_id
-
+from globato.hooks.metadata.provenance import source_id
 from globato.hooks.sinks.side_stack import SIDESTACK_DATATYPE, SIDESTACK_HASH_TAG
 from . import io, processing
 from .context import WorkingSurface, cache_root_for
@@ -84,7 +83,7 @@ def collect_sources(
             if tags.get("GLOBATO_POINT_COUNT") == "0":
                 empty.append(entry[INDEX])
                 continue
-        sid = dataset_id(entry) + "|sidestack=" + tags[SIDESTACK_HASH_TAG]
+        sid = source_id(entry) + "|sidestack=" + tags[SIDESTACK_HASH_TAG]
         fp = io.fingerprint(path)
         receipt = (
             root
