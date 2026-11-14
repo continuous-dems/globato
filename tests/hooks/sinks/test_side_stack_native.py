@@ -89,8 +89,8 @@ def test_side_stack_refuses_untransformed_crs(tmp_path):
         stream_type="point-stream",
         stream=iter([native_points([-10])]),
     )
-    SideStackGenerate(res="3", crs="EPSG:32611").run([(module, entry)])
     with pytest.raises(ValueError, match="stream_reproject"):
+        SideStackGenerate(res="3", crs="EPSG:32611").run([(module, entry)])
         list(entry["stream"])
 
 
