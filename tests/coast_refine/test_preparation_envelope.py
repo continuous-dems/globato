@@ -10,6 +10,7 @@ from rasterio.transform import from_origin
 from shapely.geometry import box
 
 from globato.coast_refine.prepare import prepare_from_baseline
+from globato.coast_refine.selection import horizontal_crs
 
 
 @pytest.mark.parametrize("uniform_water", [False, True])
@@ -18,6 +19,12 @@ def test_native_anchor_does_not_discard_geographic_preparation_scope(
     tmp_path, uniform_water, eps
 ):
     evidence = tmp_path / "evidence.tif"
+    # This test is about sub-cell envelope padding, not datum conversion.
+    # Preparation works internally in EPSG:4326, so the evidence uses a
+    # WGS 84 horizontal datum (still compound, so the horizontal-only view is
+    # exercised). Every horizontal step is then a no-op, and the result
+    # cannot depend on which PROJ grids are installed or downloadable.
+    crs = "EPSG:4326+5703"
     transform = from_origin(-118.70, 34.045, 1 / 32400, 1 / 32400)
     data = np.arange(64 * 64, dtype="float32").reshape(64, 64)
     with rasterio.open(
@@ -29,21 +36,24 @@ def test_native_anchor_does_not_discard_geographic_preparation_scope(
         count=1,
         dtype="float32",
         nodata=-9999,
-        crs=5498,
+        crs=crs,
         transform=transform,
     ) as ds:
         ds.write(data, 1)
     with rasterio.open(evidence) as ds:
         native = tuple(ds.bounds)
+        # The AOI and mask use the raster's own horizontal CRS, so eps is
+        # exactly the overhang being tested.
+        vector_crs = horizontal_crs(ds.crs)
     # A preparation AOI can overhang the native anchor after horizontal
     # projection/chord construction or the existing GEOS scope guard.
     # This is larger than ULP noise, but much smaller than one native cell.
     aoi = box(native[0] - eps, native[1] - eps, native[2] + eps, native[3] + eps)
     area = tmp_path / "aoi.gpkg"
-    gpd.GeoDataFrame(geometry=[aoi], crs=4326).to_file(area)
+    gpd.GeoDataFrame(geometry=[aoi], crs=vector_crs).to_file(area)
     polygon = aoi.buffer(0.001) if uniform_water else box(-118, 33, -117, 34)
     mask = tmp_path / "water.gpkg"
-    gpd.GeoDataFrame(geometry=[polygon], crs=4326).to_file(mask)
+    gpd.GeoDataFrame(geometry=[polygon], crs=vector_crs).to_file(mask)
     original = evidence.read_bytes()
     artifact = prepare_from_baseline(
         evidence,
@@ -76,7 +86,7 @@ def test_native_anchor_does_not_discard_geographic_preparation_scope(
         height=2,
         count=1,
         dtype="float32",
-        crs=5498,
+        crs=crs,
         transform=from_origin(
             native[0] - 10 * transform.a, native[3], transform.a, -transform.e
         ),
