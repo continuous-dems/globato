@@ -84,6 +84,7 @@ def river_case(tmp_path_factory):
     )
 
 
+@pytest.mark.slow
 @pytest.mark.parametrize("selection", MODES)
 def test_five_selections_share_osm_and_local_attribute_logic(
     river_case, tmp_path, selection

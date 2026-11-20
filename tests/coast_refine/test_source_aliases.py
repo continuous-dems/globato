@@ -3,11 +3,13 @@
 import copy
 import shutil
 from pathlib import Path
+import pytest
 
 import yaml
 from test_global_refinement import global_recipe, invoke
 
 
+@pytest.mark.slow
 def test_url_alias_has_one_contribution_and_preserves_native_processing_lineage(
     tmp_path,
 ):

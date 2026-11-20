@@ -80,6 +80,7 @@ def test_shifted_reference_and_complement_partition():
     assert np.all(result | ~result)
 
 
+@pytest.mark.slow
 @pytest.mark.parametrize("mapped_edge", [36, 60])
 def test_continuous_topobathy_preparation_corrects_either_side(tmp_path, mapped_edge):
     import geopandas as gpd

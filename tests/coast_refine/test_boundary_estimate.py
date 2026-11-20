@@ -82,6 +82,7 @@ def completed(tmp_path):
     return tmp_path, collection, index, group, estimate
 
 
+@pytest.mark.slow
 def test_native_estimate_uses_complete_stack_and_preserves_masked_sources(completed):
     root, collection, index, group, estimate = completed
     record = json.loads(Path(estimate["receipt"]).read_text())
@@ -132,6 +133,7 @@ def test_native_estimate_uses_complete_stack_and_preserves_masked_sources(comple
         assert not np.any(changed & ~np.ma.getmaskarray(z) & (z.data <= 0))
 
 
+@pytest.mark.slow
 def test_low_weight_evidence_abstains_exactly_and_stale_support_fails(completed):
     _, _, _, group, estimate = completed
     artifact = MaskArtifact(group["manifest"])
@@ -162,6 +164,7 @@ def test_low_weight_evidence_abstains_exactly_and_stale_support_fails(completed)
         validate(artifact, Path(estimate["receipt"]))
 
 
+@pytest.mark.slow
 def test_registered_native_solver_can_select_estimated_boundary(tmp_path):
     recipe, _ = boundary_recipe(tmp_path, interpolation=True)
     invoke(tmp_path, recipe)
