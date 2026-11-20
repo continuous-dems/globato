@@ -1,0 +1,49 @@
+
+name: Conda compatibility
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  conda-tests:
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        shell: bash -el {0}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Miniforge
+        uses: conda-incubator/setup-miniconda@v4
+        with:
+          miniforge-version: latest
+          activate-environment: globato-test
+          python-version: "3.12"
+          channels: conda-forge
+          conda-remove-defaults: "true"
+          channel-priority: strict
+
+      - name: Install geospatial dependencies
+        run: |
+          conda install -y \
+            gdal proj rasterio pyogrio geopandas \
+            shapely pyproj numpy scipy pytest laspy
+
+      - name: Install Globato
+        run: |
+          python -m pip install -e ".[test]"
+
+      - name: Inspect geospatial environment
+        run: |
+          conda list
+          python -c "import rasterio, pyproj, pyogrio; print('Rasterio:', rasterio.__version__); print('PROJ:', pyproj.proj_version_str); print('Pyogrio:', pyogrio.__version__)"
+
+      - name: Run tests
+        env:
+          PROJ_NETWORK: "ON"
+        run: |
+          python -m pytest -q -m "not slow"
