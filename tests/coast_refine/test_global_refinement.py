@@ -89,6 +89,7 @@ def invoke(root, recipe):
     return json.loads(indexes[0].read_text())
 
 
+@pytest.mark.slow
 def test_split_authorities_build_one_unfilled_mosaic_and_preserve_evidence_only(
     tmp_path,
 ):
@@ -133,6 +134,7 @@ def test_split_authorities_build_one_unfilled_mosaic_and_preserve_evidence_only(
     assert list(catalog["groups"]) == ["authority"]
 
 
+@pytest.mark.slow
 def test_independent_groups_need_no_barrier_selection_until_interpolation(tmp_path):
     recipe, _, _ = global_recipe(tmp_path, groups=True)
     invoke(tmp_path, recipe)
@@ -168,6 +170,7 @@ def test_global_configuration_cannot_be_put_on_source_declaration():
         CoastMaskRefine(binding_group="a")
 
 
+@pytest.mark.slow
 def test_named_barrier_runs_existing_native_interpolator(tmp_path):
     recipe, _, obj = global_recipe(tmp_path)
     cell = 1 / 32400

@@ -407,6 +407,7 @@ def native_recipe(tmp_path, *, compressed=False, interpolation=False):
     return recipe, terrain, source
 
 
+@pytest.mark.slow
 @pytest.mark.parametrize("compressed", [False, True], ids=["LAS", "LAZ"])
 def test_registered_standalone_cli_masks_each_class_branch_and_reruns(
     tmp_path, compressed

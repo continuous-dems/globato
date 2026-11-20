@@ -12,6 +12,7 @@ from shapely.geometry import box
 from globato.coast_refine.prepare import prepare_from_baseline
 
 
+@pytest.mark.slow
 @pytest.mark.parametrize("uniform_water", [False, True])
 @pytest.mark.parametrize("eps", [2e-10, 2e-12, 2e-13])
 def test_native_anchor_does_not_discard_geographic_preparation_scope(
