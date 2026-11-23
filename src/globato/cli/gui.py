@@ -10,7 +10,7 @@ import click
 import logging
 from importlib import resources
 
-from fetchez.utils import FetchezMainCommand
+from fetchez.cli.utils import FetchezMainCommand
 
 logger = logging.getLogger(__name__)
 

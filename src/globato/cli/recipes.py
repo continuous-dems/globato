@@ -13,7 +13,7 @@ Discoverability and documentation for globato dem recipes.
 
 import click
 
-from fetchez.utils import FetchezMainGroup
+from fetchez.cli.utils import FetchezMainGroup
 from fetchez.cli.recipes import list_recipes, info_recipe
 
 for param in list_recipes.params:

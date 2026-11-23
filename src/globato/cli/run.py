@@ -22,12 +22,11 @@ import logging
 
 from fetchez.recipe import Recipe
 from fetchez.registry import RecipeRegistry
-from fetchez.utils import (
-    str2inc,
-    FetchezMainCommand,
-)
-from globato.utils import globatize_modules
+from fetchez.cli.utils import FetchezMainCommand
+from fetchez.utils import str2inc
 from fetchez.spatial import parse_increment_list, yield_parsed_regions
+
+from globato.utils import globatize_modules
 
 logger = logging.getLogger(__name__)
 

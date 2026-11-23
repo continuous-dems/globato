@@ -14,9 +14,9 @@ import click
 import yaml
 
 from fetchez.recipe import Recipe
+from fetchez.cli.utils import FetchezMainCommand
 from fetchez.utils import (
     parse_hook_string,
-    FetchezMainCommand,
     compile_sources,
 )
 from fetchez.registry import HookRegistry

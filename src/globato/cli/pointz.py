@@ -15,10 +15,9 @@ import logging
 import click
 import yaml
 from fetchez.recipe import Recipe
+from fetchez.cli.utils import FetchezMainGroup, FetchezMainCommand
 from fetchez.utils import (
     parse_hook_string,
-    FetchezMainGroup,
-    FetchezMainCommand,
     str2inc,
     compile_sources,
 )

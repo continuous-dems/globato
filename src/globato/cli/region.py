@@ -12,7 +12,7 @@ import json
 import math
 import sys
 
-from fetchez.utils import FetchezMainGroup, FetchezMainCommand
+from fetchez.cli.utils import FetchezMainGroup, FetchezMainCommand
 from fetchez.spatial import yield_parsed_regions
 
 REGION_COMMANDS = ["echo", "buffer", "split", "transform"]
