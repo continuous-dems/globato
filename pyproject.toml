@@ -231,7 +231,7 @@ exclude = ["*.md"]
 
 [tool.pytest.ini_options]
 markers = [
-    "health: marks tests that require live network access to external APIs (run with '-m health')"
+    "slow: expensive end-to-end and scientific integration tests",
 ]
 filterwarnings = [
     "ignore::pydantic.warnings.PydanticDeprecatedSince20",
