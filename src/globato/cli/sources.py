@@ -17,7 +17,8 @@ import click
 from fetchez.api import search_modules, list_modules, search_bundles, list_bundles
 from fetchez.recipe import Recipe
 from fetchez.registry import ModuleRegistry
-from fetchez.utils import truncate_string
+
+# from fetchez.utils import truncate_string
 from fetchez.cli.utils import FetchezMainGroup, FetchezMainCommand
 
 
@@ -61,10 +62,8 @@ def sources_list(search):
                 or meta.get("desc", "No Description provided").strip().split("\n")[0]
             ).strip()
 
-            truncated_desc = truncate_string(desc, 40)
-            click.echo(
-                f"  {click.style(name, bold=True, fg='yellow'):<35} : {truncated_desc}"
-            )
+            # truncated_desc = truncate_string(desc, 40)
+            click.echo(f"  {click.style(name, bold=True, fg='yellow'):<35} : {desc}")
             count += 1
 
     click.echo("-" * 60)
