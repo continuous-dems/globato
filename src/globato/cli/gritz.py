@@ -14,7 +14,7 @@ import click
 import time
 import numpy as np
 
-from fetchez.utils import FetchezMainGroup, FetchezMainCommand
+from fetchez.cli.utils import FetchezMainGroup, FetchezMainCommand
 
 
 def generate_gritz_receipt(src_path, dst_path, op_name, elapsed):
