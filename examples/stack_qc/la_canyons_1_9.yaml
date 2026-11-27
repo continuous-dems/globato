@@ -1,0 +1,83 @@
+# NAD83 geographic study bounds in west/east/south/north order.
+# Side-stacks are combined with stack_combine so stack_qc can filter them.
+project:
+  name: stack_qc_la_canyons_1_9
+region:
+- -118.35
+- -118.25
+- 33.6
+- 33.67
+region_srs: EPSG:4269
+execution:
+  threads: 4
+modules:
+- module: mbdb
+  args:
+    weight: 1
+    want_inf: true
+    use_cache: true
+  hooks:
+  - name: set_srs
+    args:
+      srs: EPSG:4326+vdatum:msl
+  - name: stream_data
+  - name: stream_reproject
+    args:
+      dst_srs: EPSG:4269+5703
+  - name: stack_qc
+    args:
+      res: .111111111111s
+      crs: EPSG:4269+5703
+      aggressiveness: 2
+      terrain_restoration: 2
+      max_passes: 5
+      stop_when_stable: false
+      interpolation:
+        steps: 5
+        resolutions: .111111111111s/.333333333333s/1s/3s/9s/15s
+        weights: 2/1/.5/.25/.1
+        blend_dists: 64/32/16/8/4/2
+        algos: raster_fill/raster_fill/raster_fill/raster_fill/raster_fill/interp_gmt:tension=.95
+        previous_tier_resampling: cubic_spline
+        barrier: null
+        inland_decay_dist: 0
+global_hooks:
+- name: spatial_crop
+- name: side_stack_check
+  args:
+    res: .111111111111s
+    crs: EPSG:4269+5703
+- name: side_stack
+  args:
+    res: .111111111111s
+    crs: EPSG:4269+5703
+- name: stack_combine
+  args:
+    res: .111111111111s
+    crs: EPSG:4269+5703
+    strategy: mixed
+    weight_threshold: 3/2/1/.75/.5/.4/.3/.2/.1
+    source_artifact: qc-side-stack
+    output: source_stack.tif
+- name: focus_sink
+  args:
+    target: multi_stack
+- name: raster_stream
+  args:
+    stream_type: raster
+    stage: collection
+- name: ms_binary_cudem
+  args:
+    steps: 5
+    resolutions: .111111111111s/.333333333333s/1s/3s/9s/15s
+    weights: 2/1/.5/.25/.1
+    blend_dists: 64/32/16/8/4/2
+    algos: raster_fill/raster_fill/raster_fill/raster_fill/raster_fill/interp_gmt:tension=.95
+    previous_tier_resampling: cubic_spline
+    barrier: null
+    inland_decay_dist: 0
+    keep_steps: false
+    output: final_dem.tif
+- name: stack_qc_review
+  args:
+    dem: final_dem.tif

@@ -17,6 +17,8 @@ from __future__ import annotations
 import logging
 import os
 import tempfile
+import json
+from time import perf_counter
 from pathlib import Path
 
 import rasterio
@@ -180,7 +182,34 @@ class StackCombine(FetchHook):
             )
 
     def run(self, entries):
+        started = perf_counter()
         sources = self._sources(entries, self.source_artifact, self.missing)
+        contributions = sorted(
+            {
+                entry.get("artifacts", {}).get("stack_qc_contributions")
+                for _, entry in entries
+                if entry.get("artifacts", {}).get("stack_qc_contributions")
+            }
+        )
+        if contributions:
+            identities = {}
+            for path in contributions:
+                for record in json.loads(Path(path).read_text())["sources"]:
+                    identities[str(Path(record["output"]).resolve())] = record[
+                        "source_id"
+                    ]
+            for path in sources:
+                if path not in identities:
+                    with rasterio.open(path) as src:
+                        tags = src.tags()
+                    identities[path] = (
+                        (tags.get("GLOBATO_SOURCE_ID") or "")
+                        + "|"
+                        + (tags.get("GLOBATO_SIDESTACK_HASH") or Path(path).name)
+                    )
+            # New joint contexts reduce in source-identity order. Legacy recipes
+            # retain their original reduction order for frozen preservation.
+            sources.sort(key=lambda path: identities[path])
         if not sources:
             logger.info("stack_combine: no side-stack artifacts; nothing to assemble")
             return entries
@@ -262,6 +291,31 @@ class StackCombine(FetchHook):
             artifacts[self.name] = str(output_path)
             artifacts["multi_stack"] = str(output_path)
             artifacts["fusion-state"] = str(state_path)
+
+        profiles = sorted(
+            {
+                entry.get("artifacts", {}).get("stack_qc_profile")
+                for _, entry in entries
+                if entry.get("artifacts", {}).get("stack_qc_profile")
+            }
+        )
+        if profiles:
+            from globato.qc.stack.profile import write_stage
+
+            profile_path = str(output_path) + ".profile.json"
+            write_stage(
+                profile_path,
+                "stack_combine",
+                perf_counter() - started,
+                dict(
+                    sources=sources, qc_profiles=profiles, contributions=contributions
+                ),
+                dict(stack=str(output_path), state=str(state_path)),
+            )
+            for _, entry in entries:
+                entry["artifacts"]["stack_combine_profile"] = profile_path
+                if len(contributions) == 1:
+                    entry["artifacts"]["stack_qc_contributions"] = contributions[0]
 
         logger.info(
             "Combined %d side-stacks: %s (state: %s)",

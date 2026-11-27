@@ -1,0 +1,511 @@
+{
+  "reference": "v15.0.1",
+  "checks": 72,
+  "result": "all source masks and receipt counts identical",
+  "cases": [
+    {
+      "case": "valley/off/R0",
+      "signature": "c357f925f8b424dbe181692c936e39434325dc7b0e65fc0ac147bd11504bb94d",
+      "rejected": 14850,
+      "restored": 0,
+      "excluded": null
+    },
+    {
+      "case": "valley/off/R1",
+      "signature": "742f6f0e593d5822674c1fb665f14839c8e6930e27ffbcd9a3ad4fa810e6bfb8",
+      "rejected": 9822,
+      "restored": 5028,
+      "excluded": null
+    },
+    {
+      "case": "valley/off/R2",
+      "signature": "c3395da2f3be23e0a84369699769c5319e881df1e3df6c6b15a0303218c44bcf",
+      "rejected": 8058,
+      "restored": 6792,
+      "excluded": null
+    },
+    {
+      "case": "valley/off/R3",
+      "signature": "c3395da2f3be23e0a84369699769c5319e881df1e3df6c6b15a0303218c44bcf",
+      "rejected": 8058,
+      "restored": 6792,
+      "excluded": null
+    },
+    {
+      "case": "valley/near-complete/R0",
+      "signature": "c357f925f8b424dbe181692c936e39434325dc7b0e65fc0ac147bd11504bb94d",
+      "rejected": 14850,
+      "restored": 0,
+      "excluded": 0
+    },
+    {
+      "case": "valley/near-complete/R1",
+      "signature": "742f6f0e593d5822674c1fb665f14839c8e6930e27ffbcd9a3ad4fa810e6bfb8",
+      "rejected": 9822,
+      "restored": 5028,
+      "excluded": 0
+    },
+    {
+      "case": "valley/near-complete/R2",
+      "signature": "c3395da2f3be23e0a84369699769c5319e881df1e3df6c6b15a0303218c44bcf",
+      "rejected": 8058,
+      "restored": 6792,
+      "excluded": 0
+    },
+    {
+      "case": "valley/near-complete/R3",
+      "signature": "c3395da2f3be23e0a84369699769c5319e881df1e3df6c6b15a0303218c44bcf",
+      "rejected": 8058,
+      "restored": 6792,
+      "excluded": 0
+    },
+    {
+      "case": "valley/redundant/R0",
+      "signature": "e44ad676d20bac811caddd5f15173d0d02b6e57352ae0d8e7556bc8ff11645bd",
+      "rejected": 30828,
+      "restored": 0,
+      "excluded": 15978
+    },
+    {
+      "case": "valley/redundant/R1",
+      "signature": "d4d43a71af9996127127fb3f14b22e209b9767748b740250286bb47168fbd2f7",
+      "rejected": 25800,
+      "restored": 5028,
+      "excluded": 15978
+    },
+    {
+      "case": "valley/redundant/R2",
+      "signature": "2f350cd93ed54b07869153775abaf4f0ac1ba6ea352550a13a99e771fcbb124d",
+      "rejected": 24036,
+      "restored": 6792,
+      "excluded": 15978
+    },
+    {
+      "case": "valley/redundant/R3",
+      "signature": "2f350cd93ed54b07869153775abaf4f0ac1ba6ea352550a13a99e771fcbb124d",
+      "rejected": 24036,
+      "restored": 6792,
+      "excluded": 15978
+    },
+    {
+      "case": "valley/off/single_R2",
+      "signature": "c3395da2f3be23e0a84369699769c5319e881df1e3df6c6b15a0303218c44bcf",
+      "rejected": 8058,
+      "restored": 6792,
+      "excluded": null
+    },
+    {
+      "case": "valley/near-complete/single_R2",
+      "signature": "c3395da2f3be23e0a84369699769c5319e881df1e3df6c6b15a0303218c44bcf",
+      "rejected": 8058,
+      "restored": 6792,
+      "excluded": 0
+    },
+    {
+      "case": "valley/redundant/single_R2",
+      "signature": "2f350cd93ed54b07869153775abaf4f0ac1ba6ea352550a13a99e771fcbb124d",
+      "rejected": 24036,
+      "restored": 6792,
+      "excluded": 15978
+    },
+    {
+      "case": "reject/zero/L1/CFalse",
+      "signature": "9db78aa22e24fbc5a90f2b12fefb56443e5dee267c27d2a817df712d91ce7d45",
+      "rejected": 126,
+      "restored": null,
+      "excluded": null
+    },
+    {
+      "case": "reject/zero/L1/CTrue",
+      "signature": "9db78aa22e24fbc5a90f2b12fefb56443e5dee267c27d2a817df712d91ce7d45",
+      "rejected": 126,
+      "restored": null,
+      "excluded": null
+    },
+    {
+      "case": "reject/zero/L2/CFalse",
+      "signature": "9db78aa22e24fbc5a90f2b12fefb56443e5dee267c27d2a817df712d91ce7d45",
+      "rejected": 126,
+      "restored": null,
+      "excluded": null
+    },
+    {
+      "case": "reject/zero/L2/CTrue",
+      "signature": "9db78aa22e24fbc5a90f2b12fefb56443e5dee267c27d2a817df712d91ce7d45",
+      "rejected": 126,
+      "restored": null,
+      "excluded": null
+    },
+    {
+      "case": "reject/zero/L3/CFalse",
+      "signature": "c586aed23ed30196de8c74bcb22594b05627a04a329a8342639647dae447ea9b",
+      "rejected": 4698,
+      "restored": null,
+      "excluded": null
+    },
+    {
+      "case": "reject/zero/L3/CTrue",
+      "signature": "c586aed23ed30196de8c74bcb22594b05627a04a329a8342639647dae447ea9b",
+      "rejected": 4698,
+      "restored": null,
+      "excluded": null
+    },
+    {
+      "case": "reject/removed/L1/CFalse",
+      "signature": "fe2e3b290857cf1fcff65d97d76d2d00c716d7fb57430fbc8d5a273d37ed3c73",
+      "rejected": 14976,
+      "restored": null,
+      "excluded": null
+    },
+    {
+      "case": "reject/removed/L1/CTrue",
+      "signature": "fe2e3b290857cf1fcff65d97d76d2d00c716d7fb57430fbc8d5a273d37ed3c73",
+      "rejected": 14976,
+      "restored": null,
+      "excluded": null
+    },
+    {
+      "case": "reject/removed/L2/CFalse",
+      "signature": "fe2e3b290857cf1fcff65d97d76d2d00c716d7fb57430fbc8d5a273d37ed3c73",
+      "rejected": 14976,
+      "restored": null,
+      "excluded": null
+    },
+    {
+      "case": "reject/removed/L2/CTrue",
+      "signature": "fe2e3b290857cf1fcff65d97d76d2d00c716d7fb57430fbc8d5a273d37ed3c73",
+      "rejected": 14976,
+      "restored": null,
+      "excluded": null
+    },
+    {
+      "case": "reject/removed/L3/CFalse",
+      "signature": "45ca2294c8f4716ce2efb48dccd8fff5384dd428b32d187ce50f79eacd274cd5",
+      "rejected": 15252,
+      "restored": null,
+      "excluded": null
+    },
+    {
+      "case": "reject/removed/L3/CTrue",
+      "signature": "45ca2294c8f4716ce2efb48dccd8fff5384dd428b32d187ce50f79eacd274cd5",
+      "rejected": 15252,
+      "restored": null,
+      "excluded": null
+    },
+    {
+      "case": "ridge/off/R0",
+      "signature": "c357f925f8b424dbe181692c936e39434325dc7b0e65fc0ac147bd11504bb94d",
+      "rejected": 14850,
+      "restored": 0,
+      "excluded": null
+    },
+    {
+      "case": "ridge/off/R1",
+      "signature": "742f6f0e593d5822674c1fb665f14839c8e6930e27ffbcd9a3ad4fa810e6bfb8",
+      "rejected": 9822,
+      "restored": 5028,
+      "excluded": null
+    },
+    {
+      "case": "ridge/off/R2",
+      "signature": "c3395da2f3be23e0a84369699769c5319e881df1e3df6c6b15a0303218c44bcf",
+      "rejected": 8058,
+      "restored": 6792,
+      "excluded": null
+    },
+    {
+      "case": "ridge/off/R3",
+      "signature": "c3395da2f3be23e0a84369699769c5319e881df1e3df6c6b15a0303218c44bcf",
+      "rejected": 8058,
+      "restored": 6792,
+      "excluded": null
+    },
+    {
+      "case": "ridge/near-complete/R0",
+      "signature": "c357f925f8b424dbe181692c936e39434325dc7b0e65fc0ac147bd11504bb94d",
+      "rejected": 14850,
+      "restored": 0,
+      "excluded": 0
+    },
+    {
+      "case": "ridge/near-complete/R1",
+      "signature": "742f6f0e593d5822674c1fb665f14839c8e6930e27ffbcd9a3ad4fa810e6bfb8",
+      "rejected": 9822,
+      "restored": 5028,
+      "excluded": 0
+    },
+    {
+      "case": "ridge/near-complete/R2",
+      "signature": "c3395da2f3be23e0a84369699769c5319e881df1e3df6c6b15a0303218c44bcf",
+      "rejected": 8058,
+      "restored": 6792,
+      "excluded": 0
+    },
+    {
+      "case": "ridge/near-complete/R3",
+      "signature": "c3395da2f3be23e0a84369699769c5319e881df1e3df6c6b15a0303218c44bcf",
+      "rejected": 8058,
+      "restored": 6792,
+      "excluded": 0
+    },
+    {
+      "case": "ridge/redundant/R0",
+      "signature": "e44ad676d20bac811caddd5f15173d0d02b6e57352ae0d8e7556bc8ff11645bd",
+      "rejected": 30828,
+      "restored": 0,
+      "excluded": 15978
+    },
+    {
+      "case": "ridge/redundant/R1",
+      "signature": "d4d43a71af9996127127fb3f14b22e209b9767748b740250286bb47168fbd2f7",
+      "rejected": 25800,
+      "restored": 5028,
+      "excluded": 15978
+    },
+    {
+      "case": "ridge/redundant/R2",
+      "signature": "2f350cd93ed54b07869153775abaf4f0ac1ba6ea352550a13a99e771fcbb124d",
+      "rejected": 24036,
+      "restored": 6792,
+      "excluded": 15978
+    },
+    {
+      "case": "ridge/redundant/R3",
+      "signature": "2f350cd93ed54b07869153775abaf4f0ac1ba6ea352550a13a99e771fcbb124d",
+      "rejected": 24036,
+      "restored": 6792,
+      "excluded": 15978
+    },
+    {
+      "case": "ridge/off/single_R2",
+      "signature": "c3395da2f3be23e0a84369699769c5319e881df1e3df6c6b15a0303218c44bcf",
+      "rejected": 8058,
+      "restored": 6792,
+      "excluded": null
+    },
+    {
+      "case": "ridge/near-complete/single_R2",
+      "signature": "c3395da2f3be23e0a84369699769c5319e881df1e3df6c6b15a0303218c44bcf",
+      "rejected": 8058,
+      "restored": 6792,
+      "excluded": 0
+    },
+    {
+      "case": "ridge/redundant/single_R2",
+      "signature": "2f350cd93ed54b07869153775abaf4f0ac1ba6ea352550a13a99e771fcbb124d",
+      "rejected": 24036,
+      "restored": 6792,
+      "excluded": 15978
+    },
+    {
+      "case": "unknown/off/R0",
+      "signature": "b28b8c26ffb04cabbe4faca8025eb172ca00c49cf10443ae5ea2c73c39510185",
+      "rejected": 1200,
+      "restored": 0,
+      "excluded": null
+    },
+    {
+      "case": "unknown/off/R1",
+      "signature": "ba0c98358a30ebd1f9b95c190497f9e3c5dd13573aeef65934c86438b4352f84",
+      "rejected": 0,
+      "restored": 1200,
+      "excluded": null
+    },
+    {
+      "case": "unknown/off/R2",
+      "signature": "ba0c98358a30ebd1f9b95c190497f9e3c5dd13573aeef65934c86438b4352f84",
+      "rejected": 0,
+      "restored": 1200,
+      "excluded": null
+    },
+    {
+      "case": "unknown/off/R3",
+      "signature": "ba0c98358a30ebd1f9b95c190497f9e3c5dd13573aeef65934c86438b4352f84",
+      "rejected": 0,
+      "restored": 1200,
+      "excluded": null
+    },
+    {
+      "case": "unknown/near-complete/R0",
+      "signature": "b28b8c26ffb04cabbe4faca8025eb172ca00c49cf10443ae5ea2c73c39510185",
+      "rejected": 1200,
+      "restored": 0,
+      "excluded": 0
+    },
+    {
+      "case": "unknown/near-complete/R1",
+      "signature": "ba0c98358a30ebd1f9b95c190497f9e3c5dd13573aeef65934c86438b4352f84",
+      "rejected": 0,
+      "restored": 1200,
+      "excluded": 0
+    },
+    {
+      "case": "unknown/near-complete/R2",
+      "signature": "ba0c98358a30ebd1f9b95c190497f9e3c5dd13573aeef65934c86438b4352f84",
+      "rejected": 0,
+      "restored": 1200,
+      "excluded": 0
+    },
+    {
+      "case": "unknown/near-complete/R3",
+      "signature": "ba0c98358a30ebd1f9b95c190497f9e3c5dd13573aeef65934c86438b4352f84",
+      "rejected": 0,
+      "restored": 1200,
+      "excluded": 0
+    },
+    {
+      "case": "unknown/redundant/R0",
+      "signature": "b28b8c26ffb04cabbe4faca8025eb172ca00c49cf10443ae5ea2c73c39510185",
+      "rejected": 1200,
+      "restored": 0,
+      "excluded": 0
+    },
+    {
+      "case": "unknown/redundant/R1",
+      "signature": "ba0c98358a30ebd1f9b95c190497f9e3c5dd13573aeef65934c86438b4352f84",
+      "rejected": 0,
+      "restored": 1200,
+      "excluded": 0
+    },
+    {
+      "case": "unknown/redundant/R2",
+      "signature": "ba0c98358a30ebd1f9b95c190497f9e3c5dd13573aeef65934c86438b4352f84",
+      "rejected": 0,
+      "restored": 1200,
+      "excluded": 0
+    },
+    {
+      "case": "unknown/redundant/R3",
+      "signature": "ba0c98358a30ebd1f9b95c190497f9e3c5dd13573aeef65934c86438b4352f84",
+      "rejected": 0,
+      "restored": 1200,
+      "excluded": 0
+    },
+    {
+      "case": "unknown/off/single_R2",
+      "signature": "ba0c98358a30ebd1f9b95c190497f9e3c5dd13573aeef65934c86438b4352f84",
+      "rejected": 0,
+      "restored": 1200,
+      "excluded": null
+    },
+    {
+      "case": "unknown/near-complete/single_R2",
+      "signature": "ba0c98358a30ebd1f9b95c190497f9e3c5dd13573aeef65934c86438b4352f84",
+      "rejected": 0,
+      "restored": 1200,
+      "excluded": 0
+    },
+    {
+      "case": "unknown/redundant/single_R2",
+      "signature": "ba0c98358a30ebd1f9b95c190497f9e3c5dd13573aeef65934c86438b4352f84",
+      "rejected": 0,
+      "restored": 1200,
+      "excluded": 0
+    },
+    {
+      "case": "competing/off/R0",
+      "signature": "c357f925f8b424dbe181692c936e39434325dc7b0e65fc0ac147bd11504bb94d",
+      "rejected": 14850,
+      "restored": 0,
+      "excluded": null
+    },
+    {
+      "case": "competing/off/R1",
+      "signature": "e40d68c09e2301d65d21a3f4a675ac59c7bac3cc248b5aac0f13d0ea726f0263",
+      "rejected": 11498,
+      "restored": 3352,
+      "excluded": null
+    },
+    {
+      "case": "competing/off/R2",
+      "signature": "4272fa8ef5a7c5812d41623be3d2d015a226f8b237955181b6fadcff971a773c",
+      "rejected": 10322,
+      "restored": 4528,
+      "excluded": null
+    },
+    {
+      "case": "competing/off/R3",
+      "signature": "4272fa8ef5a7c5812d41623be3d2d015a226f8b237955181b6fadcff971a773c",
+      "rejected": 10322,
+      "restored": 4528,
+      "excluded": null
+    },
+    {
+      "case": "competing/near-complete/R0",
+      "signature": "c357f925f8b424dbe181692c936e39434325dc7b0e65fc0ac147bd11504bb94d",
+      "rejected": 14850,
+      "restored": 0,
+      "excluded": 0
+    },
+    {
+      "case": "competing/near-complete/R1",
+      "signature": "e40d68c09e2301d65d21a3f4a675ac59c7bac3cc248b5aac0f13d0ea726f0263",
+      "rejected": 11498,
+      "restored": 3352,
+      "excluded": 0
+    },
+    {
+      "case": "competing/near-complete/R2",
+      "signature": "4272fa8ef5a7c5812d41623be3d2d015a226f8b237955181b6fadcff971a773c",
+      "rejected": 10322,
+      "restored": 4528,
+      "excluded": 0
+    },
+    {
+      "case": "competing/near-complete/R3",
+      "signature": "4272fa8ef5a7c5812d41623be3d2d015a226f8b237955181b6fadcff971a773c",
+      "rejected": 10322,
+      "restored": 4528,
+      "excluded": 0
+    },
+    {
+      "case": "competing/redundant/R0",
+      "signature": "e44ad676d20bac811caddd5f15173d0d02b6e57352ae0d8e7556bc8ff11645bd",
+      "rejected": 30828,
+      "restored": 0,
+      "excluded": 15978
+    },
+    {
+      "case": "competing/redundant/R1",
+      "signature": "738043c061db56bcebef35300505a1ef56303caa75e936c27622803b08a30de9",
+      "rejected": 27476,
+      "restored": 3352,
+      "excluded": 15978
+    },
+    {
+      "case": "competing/redundant/R2",
+      "signature": "60d261ed0b4ebeff6e7199f6c00ba07ed8762955817036e40f8b1c4a25c8a17a",
+      "rejected": 26300,
+      "restored": 4528,
+      "excluded": 15978
+    },
+    {
+      "case": "competing/redundant/R3",
+      "signature": "60d261ed0b4ebeff6e7199f6c00ba07ed8762955817036e40f8b1c4a25c8a17a",
+      "rejected": 26300,
+      "restored": 4528,
+      "excluded": 15978
+    },
+    {
+      "case": "competing/off/single_R2",
+      "signature": "4272fa8ef5a7c5812d41623be3d2d015a226f8b237955181b6fadcff971a773c",
+      "rejected": 10322,
+      "restored": 4528,
+      "excluded": null
+    },
+    {
+      "case": "competing/near-complete/single_R2",
+      "signature": "4272fa8ef5a7c5812d41623be3d2d015a226f8b237955181b6fadcff971a773c",
+      "rejected": 10322,
+      "restored": 4528,
+      "excluded": 0
+    },
+    {
+      "case": "competing/redundant/single_R2",
+      "signature": "60d261ed0b4ebeff6e7199f6c00ba07ed8762955817036e40f8b1c4a25c8a17a",
+      "rejected": 26300,
+      "restored": 4528,
+      "excluded": 15978
+    }
+  ]
+}

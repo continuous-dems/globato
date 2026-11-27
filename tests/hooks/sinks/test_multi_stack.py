@@ -140,3 +140,33 @@ def test_fusion_state_persists_reducer_contract_metadata(tmp_path):
         assert json.loads(tags["GLOBATO_WEIGHT_TIERS"]) == [0.25, 0.5, 1.0]
     finally:
         acc.close()
+
+
+def test_independent_accumulator_keeps_hook_lifecycle_and_native_stack_tags(tmp_path):
+    import rasterio
+    from globato.hooks.sinks.multi_stack import MultiStackHook, MULTISTACK_BANDS
+
+    hook = MultiStackHook(
+        res="1",
+        crs="EPSG:4326",
+        strategy="mixed",
+        output=str(tmp_path / "production.tif"),
+    )
+    acc = hook.create_accumulator(
+        [0, 2, 0, 2],
+        output=str(tmp_path / "context.tif"),
+        state=str(tmp_path / "context.state.tif"),
+    )
+    try:
+        acc.update_state(_state(z=-20, count=2, weight=1), Window(0, 0, 1, 1))
+        acc.finalize(statistics=False)
+        assert hook._accumulator is None
+        assert hook.output == str(tmp_path / "production.tif")
+        with rasterio.open(acc.output_fn) as ds:
+            assert ds.descriptions == MULTISTACK_BANDS
+            assert ds.tags()["GLOBATO_DATATYPE"] == "MULTI_STACK"
+            assert ds.tags()["GLOBATO_STACK_STRATEGY"] == "mixed"
+            assert ds.read(1)[0, 0] == -20
+            assert "STATISTICS_MEAN" not in ds.tags(1)
+    finally:
+        acc.close()

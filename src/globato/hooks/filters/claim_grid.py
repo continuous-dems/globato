@@ -8,7 +8,7 @@ from __future__ import annotations
 import numpy as np
 import shapely
 from fetchez.hooks import FetchHook
-from fetchez.utils import str2inc
+from globato.utils import parse_increment
 from pyproj import CRS, Transformer
 from shapely.ops import transform as shapely_transform
 
@@ -29,6 +29,13 @@ class ClaimGridFilter(FetchHook):
     meta_category = "stream-filter"
     meta_desc = "Enforce manifest spatial claims on point streams at DEM-cell scale."
 
+    def sidestack_entry_identity(self, entry):
+        """A changed accepted footprint must invalidate the processed cache."""
+        return {
+            key: entry.get(key)
+            for key in (self.accepted_key, self.excluded_key, self.required_key)
+        }
+
     def __init__(
         self,
         res=None,
@@ -39,7 +46,7 @@ class ClaimGridFilter(FetchHook):
         **kwargs,
     ):
         super().__init__(**kwargs)
-        self.res = str2inc(res)
+        self.res = parse_increment(res)
         self.accepted_key = accepted_key
         self.excluded_key = excluded_key
         self.required_key = required_key

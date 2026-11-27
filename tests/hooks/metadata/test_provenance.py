@@ -218,3 +218,87 @@ def test_grouped_vector_output_is_independent_of_registration_order(tmp_path):
     assert tnm["SOURCE_COUNT"] == 2
     assert tnm["DATASET"] == "Alpha, Beta"
     assert tnm["URL"] == "a.example.test, z.example.test"
+
+
+@pytest.mark.parametrize("consumer", ["provenance", "source_masks"])
+def test_fusion_coverage_retains_stream_and_horizontal_compound_crs(tmp_path, consumer):
+    from types import SimpleNamespace
+    from globato.hooks.metadata.provenance import ProvenanceHook, SourceMasks
+    from rasterio.transform import from_origin
+
+    region = Region(-118, -118 + 4 / 3600, 34 - 4 / 3600, 34, srs="EPSG:4269")
+    profile = dict(
+        width=4,
+        height=4,
+        count=7,
+        crs="EPSG:4269+5703",
+        transform=from_origin(-118, 34, 1 / 3600, 1 / 3600),
+    )
+    data = np.zeros((7, 2, 2))
+    data[1] = [[1, 0], [0, 3]]
+    chunk = (
+        Window(1, 1, 2, 2),
+        Window(1, 1, 2, 2),
+        data,
+        None,
+        rasterio.windows.transform(Window(1, 1, 2, 2), profile["transform"]),
+    )
+    hook = (
+        ProvenanceHook(res="1s", output=str(tmp_path / "modules.tif"))
+        if consumer == "provenance"
+        else SourceMasks(res="1s", output=str(tmp_path / "sources.vrt"))
+    )
+    entry = dict(
+        stream=iter([profile, chunk]),
+        stream_type="raster-stream",
+        data_type="fusion-state",
+        _stack_qc_source_id="accepted-source",
+    )
+    hook.run([(SimpleNamespace(region=region, name="fixture"), entry)])
+    emitted = list(entry["stream"])
+    assert emitted[0] is profile and emitted[1] is chunk
+    hook.teardown()
+    with rasterio.open(hook.output) as ds:
+        expected = np.zeros((4, 4), bool)
+        expected[1, 1] = expected[2, 2] = True
+        np.testing.assert_array_equal(ds.read(1) > 0, expected)
+
+
+def test_fusion_coverage_refuses_misaligned_grid_and_invalid_counts():
+    from globato.hooks.metadata.provenance import fusion_coverage
+    from rasterio.transform import from_origin
+
+    profile = dict(
+        width=4,
+        height=4,
+        count=7,
+        crs="EPSG:32611",
+        transform=from_origin(350000, 3750000, 3, 3),
+    )
+    bad = dict(profile, transform=from_origin(350001, 3750000, 3, 3))
+    with pytest.raises(ValueError, match="same horizontal CRS"):
+        list(fusion_coverage(iter([bad]), profile))
+    data = np.zeros((7, 1, 1))
+    data[1, 0, 0] = np.nan
+    with pytest.raises(ValueError, match="coverage count"):
+        list(
+            fusion_coverage(iter([profile, (Window(0, 0, 1, 1), None, data)]), profile)
+        )
+
+
+def test_module_coverage_empty_teardown_is_valid(tmp_path):
+    from globato.hooks.metadata.provenance import ProvenanceHook
+
+    hook = ProvenanceHook(res=3, output=str(tmp_path / "empty.tif"))
+    hook._init_raster(Region(0, 12, 0, 12))
+    hook.teardown()  # No measured source: legend can be empty.
+    with rasterio.open(hook.output) as ds:
+        assert not ds.read(1).any()
+
+
+@pytest.mark.parametrize("value", [10, 30, "10", "30"])
+def test_numeric_coverage_resolutions_retain_final_zero(value):
+    from globato.hooks.metadata.provenance import ProvenanceHook, SourceMasks
+
+    assert ProvenanceHook(res=value).res == float(value)
+    assert SourceMasks(res=value).res == float(value)

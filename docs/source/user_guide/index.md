@@ -11,6 +11,9 @@ cli_usage
 point_pixels
 dem_generation
 tnm_hydroflat
+stack_qc
+stack_qc_examples
+stack_qc_maintainers
 ../raster_viz/README
 
 ```

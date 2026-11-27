@@ -23,6 +23,16 @@ modifiers:
       pct: 10
       # Must match the DEM written by the global_hooks preset.
       outname: "%name%_%batch_name%"
+  - name: ensure-hook
+    args:
+      when:
+        hook: stack_qc
+        args:
+          viz: true
+      ensure:
+        name: stack_qc_review
+        scope: global
+        position: append
 
 modules:
   - bundle: cudem-bathy-topo

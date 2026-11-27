@@ -1,49 +1,132 @@
 name: mr-globato-cudem
-description: "The standard CUDEM step-down, trim, and visualize pipeline."
+description: "The standard CUDEM side-stack, Stack QC, step-down, trim, and visualize pipeline."
 tags:
   - globato-dem
   - dem
+# A complete hook list rather than overrides of mr-globato: preset overrides
+# only change hooks the base preset already has, and mr-globato stacks with
+# multi_stack. This one stacks side-stacks with stack_combine, after Stack QC
+# has filtered the multibeam (mbdb) side-stacks on the 1/9" CUDEM grid itself.
 hooks:
-  - preset: mr-globato
+  - name: spatial-crop
+  - name: audit
+  - name: enrich
+  - name: transfer_log
+  - name: drop_class
+
+  - name: side_stack_check
     args:
-      - name: ms_binary_cudem
-        args:
-          steps: 5
-          resolutions: .1111111s/.3333333s/1s/3s/9s/15s
-          weights:
-            - 2.0
-            - 1.0
-            - .5
-            - 0.25
-            - 0.1
-          blend_dists: 64/32/16/8/4/2
-          # blend_dists: 0
-          # previous_tier_mode: points
-          algos: raster_fill/raster_fill/raster_fill/raster_fill/raster_fill/interp_gmt:tension=.95
-          # algos: raster_fill/raster_fill/raster_fill/raster_fill/raster_fill/raster_fill
-          # interp_gmt:tension=1,verbose=True
-      - name: side_stack_check
-        args:
-          res: .11111111s
-          crs: "EPSG:4269+5703"
-      - name: side_stack
-        args:
-          res: .11111111s
-          crs: "EPSG:4269+5703"
-      - name: multi_stack
-        args:
-          res: .1111111s
-          crs: "EPSG:4269+5703"
-      - name: source_masks
-        args:
-          res: .1111111s
-      - name: provenance
-        args:
-          res: .1111111s
-      - name: raster_metadata
-        args:
-          tags: "Project=CUDEM,Author=NCEI"
-      - name: viz_geoshade
-        args:
-          z_min: -2000
-          z_max: 1000
+      res: .1111111s
+      crs: "EPSG:4269+5703"
+  - name: side_stack
+    args:
+      res: .1111111s
+      crs: "EPSG:4269+5703"
+
+  # Multibeam filtering on the 1/9" CUDEM grid itself, in place of rq (see
+  # crm-bathy-topo). The interpolation block mirrors ms_binary_cudem below.
+  - name: stack_qc
+    args:
+      modules: mbdb
+      res: .1111111s
+      crs: "EPSG:4269+5703"
+      interpolation:
+        steps: 5
+        resolutions: .1111111s/.3333333s/1s/3s/9s/15s
+        weights: [2.0, 1.0, 0.5, 0.25, 0.1]
+        algos: raster_fill/raster_fill/raster_fill/raster_fill/raster_fill/interp_gmt:tension=.95
+        blend_dists: 64/32/16/8/4/2
+        barrier: osm
+        previous_tier_resampling: cubic_spline
+        bathy_max_z: "ocean:-0.01,river:0,lake:None,wetland:None,estuary:0"
+
+  - name: stack_combine
+    args:
+      res: .1111111s
+      crs: "EPSG:4269+5703"
+      strategy: mixed
+      weight_threshold: 3/2/1/.75/.5/.4/.3/.2/.1
+      source_artifact: qc-side-stack
+      output: "%name%_%batch_name%_stack.tif"
+
+  # Provenance from the stacked (filtered) side-stacks.
+  - name: provenance
+    args:
+      res: .1111111s
+      source_artifact: qc-side-stack
+      output: "%name%_%batch_name%_provenance.tif"
+  - name: source_masks
+    args:
+      res: .1111111s
+      source_artifact: qc-side-stack
+      output: "%name%_%batch_name%_sources.vrt"
+  - name: stack_provenance
+    args:
+      source_artifact: qc-side-stack
+      storage: disk
+      output: "%name%_%batch_name%_stack_sources.vrt"
+      vector_output: "%name%_%batch_name%_sm.gpkg"
+      group_by: MODULE/WEIGHT
+
+  - name: focus_sink
+    args:
+      target: multi_stack
+
+  - name: raster_stream
+    args:
+      stream_type: raster
+      chunk_size: 2048
+      stage: collection
+
+  - name: ms_binary_cudem
+    args:
+      steps: 5
+      resolutions: .1111111s/.3333333s/1s/3s/9s/15s
+      weights:
+        - 2.0
+        - 1.0
+        - .5
+        - 0.25
+        - 0.1
+      blend_dists: 64/32/16/8/4/2
+      algos: raster_fill/raster_fill/raster_fill/raster_fill/raster_fill/interp_gmt:tension=.95
+      barrier: osm
+      previous_tier_resampling: "cubic_spline"
+      bathy_max_z: "ocean:-0.01,river:0,lake:None,wetland:None,estuary:0"
+      output: "%name%_%batch_name%.tif"
+
+  - name: focus_sink
+    args: {target: "ms_binary_cudem"}
+
+  - name: raster_metadata
+    args:
+      tags: "Project=CUDEM,Author=NCEI"
+      bands: "Elevation (meters)"
+
+  - name: format_cog
+    args:
+      overviews: 2/4/8/16/32
+      resampling: average
+
+  - name: viz_geoshade
+    args:
+      output: "%name%_%batch_name%_hs.tif"
+      cmap: coastal_relief
+      cog: true
+      z_min: -2000
+      z_max: 1000
+
+  - name: cleanup_tmp
+    args: {"target_dir": "tmp"}
+
+  - name: copy_artifact
+    args:
+      target_dir: "%outdir%/delivery"
+      match:
+        - "%name%_%batch_name%.tif"
+
+  - name: copy_artifact
+    args:
+      target_dir: "%outdir%/delivery/hs"
+      match:
+        - "%name%_%batch_name%_hs.tif"
